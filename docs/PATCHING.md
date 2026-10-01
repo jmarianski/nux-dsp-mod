@@ -23,8 +23,31 @@ my_hook:
     ret
 .end
 
-.string "2.DSP:V1.0.7" "2.DSP:V9.0.7"  ; same-length UI string replacement
+.string "2.DSP:V1.0.7" "2.DSP:V9.0.7"  ; UI string replacement (NEW may be shorter;
+                                        ; any Unicode character is one word, see polish_font)
+
+.bitmap 0x26                            ; redraw image/glyph 0x26 of the glyph table
+    .################################.  ; exactly its width x height, '#' = pixel on
+    ...
+.end
 ```
+
+Inside `.code`, an `.art` … `.endart` block turns '#'/'.' rows into column words (bit 0 = top row,
+terminated by `0xf000`) that your code can read with `ldc` — see `patches/polish_font.patch`.
+
+## Translations
+
+UI texts are partly strings (drawn with a font) and partly **images with text in them** (buttons,
+headers, dialogs). `python3 -m nek100mod disasm` gives you the strings; to see the images, render the glyph
+table locally (layout in [FIRMWARE_MAP.md](FIRMWARE_MAP.md)) and redraw them with `.bitmap`.
+Strings may contain any character `polish_font` (or a similar patch for your language) can draw.
+Watch the space: the screen is 128 px wide, a button 34 px.
+
+## Testing code without the instrument
+
+`nek100mod/sim.py` runs patch code under our ISA model against fake RAM, see
+`tests/test_polish_font.py`. It catches logic bugs before flashing (it found one: `ó` is U+00F3,
+below 0x100), not mistakes in the ISA model.
 
 Names from the map (`touch`, `sustain_cc64`, `load_user_preset`, …) and your parameters can be used in
 any expression (`#BOOT_PRESET-1`, `[sustain_cc64+1]`). Assembler syntax is described in `nek100mod/asm.py`,

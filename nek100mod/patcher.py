@@ -11,7 +11,14 @@ Patch file syntax (see docs/PATCHING.md):
         label:
         instructions                               labels starting with '.' are local to the patch
     .end
-    .string "OLD" "NEW"                            replace a UI string (1 char per word, same length)
+    .string "OLD" "NEW"                            replace a UI string (1 char per word); NEW may be
+                                                   shorter, any Unicode character is one word
+    .bitmap GLYPH                                  redraw a glyph/image of the glyph table:
+        rows of '#' (pixel on) and '.'             exactly its width x height
+    .end
+Inside .code, an .art block becomes column data for program memory (ldc):
+    .art                                           rows of '#'/'.', top row first
+    .endart                                        -> one word per column, bit 0 = top row, then 0xf000
 """
 import os
 import re
@@ -21,8 +28,9 @@ from dataclasses import dataclass, field
 from . import asm, container
 
 PATCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "patches")
-# Canonical order: also the pool layout order used by the web patcher.
-DEFAULT_ORDER = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag"]
+# Canonical order: also the pool layout order used by the web patcher. These are the defaults;
+# other patches (e.g. unfinished translations) are available but must be selected explicitly.
+DEFAULT_ORDER = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag", "polish_font"]
 
 
 class PatchError(Exception):
@@ -54,17 +62,42 @@ class Patch:
     hooks: list = field(default_factory=list)
     code: list = field(default_factory=list)
     strings: list = field(default_factory=list)
+    bitmaps: list = field(default_factory=list)
     path: str = ""
 
 
+def art_words(rows, where):
+    if not rows or len({len(r) for r in rows}) != 1 or len(rows) > 12:
+        raise PatchError("%s: .art rows must have equal length, at most 12 rows" % where)
+    return [sum(1 << y for y, r in enumerate(rows) if r[x] == "#") for x in range(len(rows[0]))] + [0xF000]
+
+
 def parse(text, path="<patch>"):
-    p, block, cur = None, None, None
+    p, block, cur, art = None, None, None, None
     for n, raw in enumerate(text.splitlines(), 1):
         stripped = raw.split(";", 1)[0].strip()
         where = "%s:%d" % (path, n)
+        if art is not None:
+            if stripped == ".endart":
+                p.code.append("    .dw " + ", ".join("%#06x" % v for v in art_words(art, where)))
+                art = None
+            elif stripped:
+                if set(stripped) - set("#."):
+                    raise PatchError("%s: .art rows use only '#' and '.'" % where)
+                art.append(stripped)
+            continue
         if block:
             if stripped == ".end":
                 block = cur = None
+                continue
+            if block == "code" and stripped == ".art":
+                art = []
+                continue
+            if block == "bitmap":
+                if stripped:
+                    if set(stripped) - set("#."):
+                        raise PatchError("%s: bitmap rows use only '#' and '.'" % where)
+                    cur[1].append(stripped)
                 continue
             (cur.lines if block == "hook" else p.code).append(raw)
             continue
@@ -90,9 +123,13 @@ def parse(text, path="<patch>"):
         elif d == ".code":
             block = "code"
         elif d == ".string":
-            if len(t[1]) != len(t[2]):
-                raise PatchError("%s: .string OLD and NEW must have the same length" % where)
+            if len(t[2]) > len(t[1]):
+                raise PatchError("%s: .string NEW must not be longer than OLD" % where)
             p.strings.append((t[1], t[2]))
+        elif d == ".bitmap":
+            cur = (int(t[1], 0), [], n)
+            p.bitmaps.append(cur)
+            block = "bitmap"
         else:
             raise PatchError("%s: unknown directive %r" % (where, d))
     if block:
@@ -118,6 +155,10 @@ def load(name_or_path):
 def available():
     names = sorted(f[:-6] for f in os.listdir(PATCH_DIR) if f.endswith(".patch"))
     return [n for n in DEFAULT_ORDER if n in names] + [n for n in names if n not in DEFAULT_ORDER]
+
+
+def defaults():
+    return [n for n in available() if n in DEFAULT_ORDER]
 
 
 def code_size(p):
@@ -248,10 +289,16 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
                                                                fmt_words([words[a] for a in sorted(words)])))
             for old, new in p.strings:
                 at = find_string(orig, fwmap, old)
-                for i, c in enumerate(new):
-                    if old[i] != c:
-                        put(at + i, ord(c), p.name)
+                padded = [ord(c) for c in new] + [0] * (len(old) - len(new))
+                for i, v in enumerate(padded):
+                    if ord(old[i]) != v:
+                        put(at + i, v, p.name)
                 report.append("%-18s text  %r -> %r" % (p.name, old, new))
+            for idx, rows, line in p.bitmaps:
+                for a, v in bitmap_words(orig, fwmap, idx, rows, "%s:%d" % (p.path, line)).items():
+                    if v != orig[a]:
+                        put(a, v, p.name)
+                report.append("%-18s image %#04x (%dx%d)" % (p.name, idx, len(rows[0]), len(rows)))
         except asm.AsmError as e:
             raise PatchError("%s: %s" % (p.name, e))
     out = container.pack(container.fix_checksum(w))
@@ -259,6 +306,40 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
     if probs:
         raise PatchError("internal error, output invalid: " + "; ".join(probs))
     return out, report
+
+
+def glyph_info(w, fwmap, idx):
+    """-> (byte offset, size in bytes, width, height) of glyph idx."""
+    if not fwmap.glyphs:
+        raise PatchError("map has no glyph table")
+    table, _, count = fwmap.glyphs
+    if not 0 <= idx < count:
+        raise PatchError("glyph %#x out of range" % idx)
+    a = table + 8 * idx
+    return tuple(w[a + 2 * k] | w[a + 2 * k + 1] << 16 for k in range(4))
+
+
+def bitmap_words(w, fwmap, idx, rows, where):
+    """Encode '#'/'.' rows into the glyph's bitmap words {file address: word}."""
+    off, size, width, height = glyph_info(w, fwmap, idx)
+    if len(rows) != height or any(len(r) != width for r in rows):
+        raise PatchError("%s: glyph %#x is %dx%d, bitmap is %dx%d"
+                         % (where, idx, width, height, len(rows[0]) if rows else 0, len(rows)))
+    cb = (height + 7) // 8
+    if cb * width != size:
+        raise PatchError("%s: unexpected bitmap size for glyph %#x" % (where, idx))
+    data = bytearray(size)
+    for x in range(width):
+        for y in range(height):
+            if rows[y][x] == "#":
+                data[x * cb + y // 8] |= 0x80 >> (y % 8)
+    base = fwmap.glyphs[1]
+    out = {}
+    for i, b in enumerate(data):
+        a = base + (off + i) // 2
+        cur = out.get(a, w[a])
+        out[a] = (cur & 0xFF00) | b if (off + i) % 2 == 0 else (cur & 0x00FF) | b << 8
+    return out
 
 
 def fmt_words(ws):

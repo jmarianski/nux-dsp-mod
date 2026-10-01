@@ -43,7 +43,9 @@ def format_insn(a, x, lit, fmt_target, var_name):
         s = "r%d" % src[1] if isinstance(src, tuple) else "#%#x" % src
         return "%-5s r%d, %s" % (op, dst, s), None
     if op in ("shl", "shr"):
-        return "%-5s r%d, 8" % (op, args[0]), None
+        return "%-5s r%d, %d" % (op, args[0], args[1]), None
+    if op == "ldc":
+        return "ldc   r%d, [r1+%d]" % args, None
     if op in ("ld", "st"):
         r, m = args
         mem = "[%s]" % (var_name(m[1]) or "%#06x" % m[1]) if m[0] == "abs" else "[%s+%d]" % m

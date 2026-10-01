@@ -1,5 +1,5 @@
 """Turn an experiment (modified firmware) back into a shareable .patch with only your changes."""
-from . import container, disasm, isa
+from . import container, disasm, isa, patcher
 
 
 def changed_ranges(a, b, lo, hi):
@@ -47,6 +47,26 @@ def decode_block(w, s, e, labels, fwmap):
     return lines
 
 
+def glyph_rows(w, fwmap, idx):
+    off, size, width, height = patcher.glyph_info(w, fwmap, idx)
+    base, cb = fwmap.glyphs[1], (height + 7) // 8
+    byte = lambda i: (w[base + i // 2] >> (8 * (i & 1))) & 0xFF
+    return ["".join("#" if byte(off + x * cb + y // 8) >> (7 - y % 8) & 1 else "." for x in range(width))
+            for y in range(height)]
+
+
+def extract_bitmaps(a, b, fwmap):
+    """Changed glyph/image bitmaps -> .bitmap blocks (your new pixels only)."""
+    if not fwmap.glyphs:
+        return []
+    out = []
+    for idx in range(fwmap.glyphs[2]):
+        new = glyph_rows(b, fwmap, idx)
+        if new != glyph_rows(a, fwmap, idx):
+            out += ["", ".bitmap %#04x" % idx] + ["    " + r for r in new] + [".end"]
+    return out
+
+
 def extract(orig_img, mod_img, fwmap, name="my_patch"):
     a, b = container.words(orig_img), container.words(mod_img)
     if len(a) != len(b):
@@ -80,6 +100,7 @@ def extract(orig_img, mod_img, fwmap, name="my_patch"):
         out.append(".hook %#07x expect %s" % (s, " ".join("%#06x" % v for v in a[s:e])))
         out.append("    .dw   " + ", ".join("%#06x" % v for v in b[s:e]))
         out.append(".end")
+    out += extract_bitmaps(a, b, fwmap)
     if in_pool:
         out += ["", ".code"]
         for s, e in in_pool:

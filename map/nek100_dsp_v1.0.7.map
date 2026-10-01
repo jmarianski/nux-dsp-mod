@@ -8,6 +8,8 @@ code    0x00400 0x0f0a3     ; code bank 0
 code    0x10400 0x128ab     ; code bank 1 (reached how? unknown)
 ramdata 0x155f7 0x17f23     ; initialised data, copied to RAM address 0 at boot
 pool    0x09ad4 0x09bd4     ; unreferenced function (no calls, branches or pointers) — patch code goes here (C)
+pool    0x062f3 0x06558     ; unreferenced function, same checks (C: polish_font runs here)
+glyphs  0x12cf7 0x1348f 243 ; glyph/image table (8 words each: u32 byte offset, size, width, height) + bitmaps
 
 # --- startup / system ------------------------------------------------------------------------
 func  0x005f8 main                    ; init_all(), then forever main_loop_tick()
@@ -66,3 +68,16 @@ var   0x030c1 presets_header 2        ; read from flash with current_preset; +1 
 var   0x030c3 current_preset          ; last loaded preset number (also written to flash)
 var   0x07276 port1_q_head
 var   0x07277 port1_q_tail
+
+# --- display ---------------------------------------------------------------------------------
+func  0x04941 lcd_set_pixel           ; (x, y, on) into the framebuffer, pages of 8 rows
+func  0x0496b draw_glyph              ; (glyph index, x, y, ...) from the glyph table
+func  0x04af6 draw_text_impl          ; per char: char -> glyph (two fonts), draw_glyph, advance
+func  0x04bce char_to_glyph           ; (H) alternative mapping for a compact font
+func  0x04e14 lcd_command             ; (H) byte to the LCD controller (0xaf display on, 0x81 contrast)
+func  0x04f5e draw_text               ; (x, y, font, color, ..., string)
+var   0x03a2a glyph_table 1944        ; 243 x {u32 byte offset, u32 size, u32 width, u32 height}; file 0x12cf7
+var   0x041c2 glyph_bitmaps 8552      ; column-major, each column byte-aligned, MSB = top; file 0x1348f
+var   0x0662a framebuffer 1024        ; 128 x 64, 8 pages x 128 bytes
+label 0x0e1e3 font_medium_chars       ; program-memory table: char -> glyph index, main 7x12 font
+label 0x0e2af font_small_chars        ; same for the small font

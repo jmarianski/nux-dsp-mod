@@ -10,6 +10,8 @@ any NUX code. You bring the official firmware file, the patcher adds the feature
 | `touch_off` | new Touch setting **OFF**: every note at a fixed velocity (default 127), first in the menu |
 | `sustain_in_preset` | the **Sustain** value (pedal level) is saved in user presets |
 | `version_tag` | version screen shows `DSP:V9.0.7`, so you can see the mod is installed |
+| `polish_font` | Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font, strings in Unicode — base for translations |
+| `lang_pl` *(optional, in progress)* | Polish UI: buttons and headers ZAPISZ / WCZYTAJ so far |
 
 All of them were tested on a real NEK-100. Presets saved with the stock firmware keep working.
 
@@ -63,6 +65,8 @@ rozpowszechnia kodu NUX: oficjalny plik firmware masz u siebie, a patcher dokła
 | `touch_off` | nowe ustawienie Touch **OFF**: każda nuta ze stałą siłą (domyślnie 127), pierwsze w menu |
 | `sustain_in_preset` | wartość **Sustain** (poziom pedału) zapisuje się w user presetach |
 | `version_tag` | ekran wersji pokazuje `DSP:V9.0.7`, więc widać, że mod jest wgrany |
+| `polish_font` | polskie litery w głównym foncie UI, napisy w Unicode. To baza pod tłumaczenia |
+| `lang_pl` *(opcjonalny, w toku)* | polski interfejs: na razie przyciski i nagłówki ZAPISZ / WCZYTAJ |
 
 Wszystkie patche są przetestowane na prawdziwym NEK-100. Presety zapisane na oryginalnym firmware dalej działają.
 

@@ -24,7 +24,11 @@ Descriptions marked `(C)` were confirmed on the instrument, `(H)` are hypotheses
   velocity curve. Touch OFF therefore rewrites the note-on velocity in `task_key_events`, which affects
   both the internal sound and USB MIDI out.
 - Sustain (`sustain_cc64`, one value per part) is the CC64 value sent when the pedal is pressed.
-- The pool is a function that nothing calls, jumps into or points to (checked over the whole image).
+- The display (128×64 mono) is driven by the DSP. All UI graphics are one table of 243 glyphs/images
+  (`glyphs` line in the map): 8 words per entry (u32 byte offset, size, width, height), bitmaps stored
+  by columns, each column starting on a byte, MSB = top pixel. It holds three fonts (main 7×12, small
+  4×5, big digits), buttons and headers with English text, dialogs and icons.
+- The pools are functions that nothing calls, jumps into or points to (checked over the whole image).
 
 ## Other firmware versions
 

@@ -144,7 +144,7 @@ const box = $("patches");
 for (const p of DATA.patches) {
   const lab = document.createElement("label");
   lab.className = "patch";
-  lab.innerHTML = `<input type="checkbox" checked data-patch="${p.name}"><span><b>${p.name}</b><br><span class="desc"></span></span>`;
+  lab.innerHTML = `<input type="checkbox" ${p.default ? "checked" : ""} data-patch="${p.name}"><span><b>${p.name}</b><br><span class="desc"></span></span>`;
   lab.querySelector(".desc").textContent = p.title;
   box.appendChild(lab);
   for (const prm of p.params) {
