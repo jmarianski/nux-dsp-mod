@@ -1,0 +1,24 @@
+name: tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # firmware-dependent tests are skipped here (the vendor file is not in the repository)
+      - run: python3 -m unittest discover -s tests -t . -v
+      - name: web page lists every target data file
+        run: |
+          node --check web/patcher.js
+          for f in web/targets/*.js; do
+            node --check "$f"
+            grep -q "src=\"targets/$(basename "$f")\"" web/index.html || { echo "index.html misses $f"; exit 1; }
+          done

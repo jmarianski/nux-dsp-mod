@@ -5,9 +5,9 @@ It is designed so that **no NUX or Dream code or data is distributed**:
 
 | Distributed here | Not distributed |
 |---|---|
-| tools (patcher, assembler, disassembler) written from scratch | firmware files (`.bin`), modified or not |
-| a map of addresses with our own descriptions | generated listings (`.s`) of the firmware |
-| patches: our instructions + short `expect` checks | NUX updater, Dream documentation, sound banks, styles |
+| tools (patcher, assembler, disassembler, porting helper) written from scratch | firmware files (`.bin`), modified or not |
+| maps of addresses with our own descriptions, one per supported firmware file | generated listings (`.s`) of the firmware |
+| patches: our instructions + short `expect` checks; web data: only the words our patches write | NUX updater, Dream documentation, sound banks, styles |
 
 Users obtain the official firmware from NUX themselves, and the tools only work on that exact file
 (SHA-256 check). The listing produced by `disasm` contains the vendor's code and is for the user's own
@@ -20,7 +20,7 @@ permission. Information obtained that way must not be used to create a competing
 others beyond what is necessary. We kept the published information to the minimum needed to apply the
 patches.
 
-**Trademarks.** "NUX", "NEK-100" and "Dream" are used only to say which device and chip this works with.
+**Trademarks.** "NUX", "NEK-100", "NEK-110" and "Dream" are used only to say which device and chip this works with.
 This project is not affiliated with, authorised or endorsed by NUX or Dream.
 
 **Warranty.** Modified firmware may void your warranty. Everything is provided "as is" (see LICENSE).

@@ -1,17 +1,18 @@
-"""Tests against the official firmware. Set NEK100_FW=/path/to/NEK100_DSP_V1.0.7.bin to run them."""
+"""Tests against the official NEK-100 firmware. Set NEK100_FW=/path/to/NEK100_DSP_V1.0.7.bin to run them."""
 import os
 import shutil
+import json
 import subprocess
 import tempfile
 import unittest
 
-from nek100mod import asm, container, disasm, extract, fwmap, patcher, web
+from nuxdsp import asm, container, disasm, extract, fwmap, patcher, web
 
 FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
-# All bundled patches with default parameters. Same code as TEST9/TEST10 tested on hardware
-# (those differ only in test strings, the version string and the shape of one glyph).
-ALL_SHA = "1cea4257cc9818fa9ab41691322073020748f278b9afcbc19c8f1ca4a2bff1c1"
+# All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
+# relocated, plus boot_preset's DEFAULT_LABEL (new).
+ALL_SHA = "dfe6aa2846bec3b2cd7ee3d0b69d7ca56757952f8b6a71cdbcacb8a5f06984e9"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -78,20 +79,30 @@ class TestFirmware(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_web_page_matches_cli(self):
         with tempfile.TemporaryDirectory() as d:
-            page = os.path.join(d, "p.html")
-            with open(page, "w") as f:
-                f.write(web.export(self.img, self.map, patcher.available()))
-            cases = [({}, {}), ({"BOOT_PRESET": 4, "OFF_VELOCITY": 90}, {"boot_preset": {"BOOT_PRESET": 4},
-                                                                        "touch_off": {"OFF_VELOCITY": 90}})]
+            shutil.copy(os.path.join(web.WEB_DIR, "index.html"), d)
+            shutil.copy(os.path.join(web.WEB_DIR, "patcher.js"), d)
+            os.mkdir(os.path.join(d, "targets"))
+            web.write_target(self.img, self.map, d)
+            cases = [({}, {}), ({"BOOT_PRESET": 4, "DEFAULT_LABEL": 0, "OFF_VELOCITY": 90},
+                                {"boot_preset": {"BOOT_PRESET": 4, "DEFAULT_LABEL": 0},
+                                 "touch_off": {"OFF_VELOCITY": 90}})]
             for params, sel in cases:
                 names = list(sel) or patcher.available()
                 sel = sel or {n: {} for n in names}
                 cli, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names), params)
                 outp = os.path.join(d, "o.bin")
-                import json
-                subprocess.check_call(["node", os.path.join(HERE, "web_check.js"), page, FW, outp, json.dumps(sel)])
+                subprocess.check_call(["node", os.path.join(HERE, "web_check.js"), d, FW, outp, json.dumps(sel)])
                 with open(outp, "rb") as f:
                     self.assertEqual(f.read(), cli)
+
+    def test_committed_web_data_is_current(self):
+        path = os.path.join(web.WEB_DIR, "targets", self.map.id + ".js")
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), web.target_js(self.img, self.map),
+                             "run: python3 -m nuxdsp web %s" % self.map.input)
+
+    def test_detected_by_sha(self):
+        self.assertEqual(fwmap.find(container.sha256(self.img)).id, self.map.id)
 
 
 if __name__ == "__main__":

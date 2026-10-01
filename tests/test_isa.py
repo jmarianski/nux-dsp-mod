@@ -1,7 +1,7 @@
 """Tests that need no firmware file: ISA encode/decode, assembler, patch parser, map."""
 import unittest
 
-from nek100mod import asm, disasm, fwmap, isa, patcher
+from nuxdsp import asm, disasm, fwmap, isa, patcher
 
 
 class TestISA(unittest.TestCase):

@@ -1,16 +1,21 @@
 # Firmware map
 
-`map/nek100_dsp_v1.0.7.map` is our description of one exact firmware file. It holds addresses and short
+`targets/<id>/target.map` (e.g. `targets/nek100-dsp-1.0.7/target.map`) is our description of one exact
+firmware file. It holds addresses and short
 descriptions written by contributors — no code or data copied from the firmware.
 
 ```
 firmware NAME sha256 HEX         the only file the map (and the patches) apply to
+device   "Brand Model"           shown by the web page and `nuxdsp targets`
+input    FILE.bin                official file name; output FILE.bin: suggested name of the result
+defaults NAME...                 patches applied by default (and the pool layout order); optional NAME...
 code    START END                code ranges, END exclusive (word addresses)
 ramdata START END                file words copied to RAM address 0 at boot
 pool    START END                free space for patch code (must be provably unused)
 func    ADDR NAME ; text         function entry
 label   ADDR NAME ; text         named place inside a function
 var     ADDR NAME [SIZE] ; text  RAM variable (RAM word address), optional size in words
+glyphs  TABLE BITMAPS COUNT      glyph/image table and its bitmaps (file word addresses)
 ```
 
 Descriptions marked `(C)` were confirmed on the instrument, `(H)` are hypotheses.
@@ -30,7 +35,7 @@ Descriptions marked `(C)` were confirmed on the instrument, `(H)` are hypotheses
   4×5, big digits), buttons and headers with English text, dialogs and icons.
 - The pools are functions that nothing calls, jumps into or points to (checked over the whole image).
 
-## Other firmware versions
+## Other firmware versions and models
 
-A new firmware version needs its own map: new SHA-256, re-found addresses. The patches will refuse to
-apply to anything else, which is intended — check the hook sites in the new listing and update `expect`.
+Every firmware file needs its own target directory: new SHA-256, re-found addresses. The patches refuse
+to apply to anything else, which is intended. See [NEW_TARGET.md](NEW_TARGET.md).

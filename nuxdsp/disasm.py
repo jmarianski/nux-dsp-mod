@@ -1,6 +1,6 @@
 """Disassembler: firmware image + our map -> annotated assembly listing (generated locally).
 
-The listing re-assembles to a byte-identical image (`nek100mod asm`), so it can be edited directly
+The listing re-assembles to a byte-identical image (`nuxdsp asm`), so it can be edited directly
 for experiments. Do not redistribute generated listings: they contain the vendor's code.
 """
 from . import container, isa
@@ -84,7 +84,7 @@ class Listing:
         return format_insn(a, x, lit, self.fmt_target, self.map.var_name)
 
     def render(self):
-        out = ["; NEK-100 DSP %s — generated locally by nek100mod from your firmware file." % self.map.firmware,
+        out = ["; NEK-100 DSP %s — generated locally by nuxdsp from your firmware file." % self.map.firmware,
                "; Contains the vendor's code: keep it for yourself, share patches instead.", ""]
         for e in self.map.by_kind("var"):
             c = ("    ; " + e.comment) if e.comment else ""
