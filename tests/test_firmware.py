@@ -11,7 +11,7 @@ FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as TEST9/TEST10 tested on hardware
 # (those differ only in test strings, the version string and the shape of one glyph).
-ALL_SHA = "d33e6ec64b5a98d0423e149e4817cfd5d33bf6a11307a784a71b72eac4c41cf1"
+ALL_SHA = "73c65213363e17c329b149af4d6c3536468d4c49f2f9f512bff51915b562cba9"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
