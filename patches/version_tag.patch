@@ -1,4 +1,5 @@
 .patch version_tag
-.title "Mark the version screen as modified: 2.DSP:V9.0.7 (9 = community mod of 1.0.7)"
+.title "Mark the version screen as modified: 2.DSP:1.0.7b (b = community mod of 1.0.7)"
 
-.string "2.DSP:V1.0.7" "2.DSP:V9.0.7"
+; The string has room for exactly 12 characters, so "V1.0.7b" would not fit: the V goes.
+.string "2.DSP:V1.0.7" "2.DSP:1.0.7b"
