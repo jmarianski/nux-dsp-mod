@@ -66,4 +66,4 @@ Because `call` keeps `fp`, your code sees the same `[fp+k]` as the hooked functi
 1. redo whatever the replaced instructions did (the `expect` words), and
 2. leave registers and flags the way the following original code needs them.
 
-Look at the generated listing around the hook site (`nek100mod disasm`) before choosing which words to replace.
+Look at the generated listing around the hook site (`nuxdsp disasm`) before choosing which words to replace.

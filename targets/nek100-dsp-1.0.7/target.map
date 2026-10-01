@@ -3,6 +3,11 @@
 # Descriptions: (C) confirmed on hardware, (H) inferred from code, unmarked = strong evidence from code.
 
 firmware NEK100_DSP_V1.0.7 sha256 b072b6bda1971697ebb0624cd11a05dac0bb81ce9996cabce2092c1f1e3bffc0
+device   "NUX NEK-100"
+input    NEK100_DSP_V1.0.7.bin
+output   NEK100_DSP_V1.0.7B_mod.bin
+defaults boot_preset touch_off sustain_in_preset version_tag
+optional polish_font lang_pl
 
 code    0x00400 0x0f0a3     ; code bank 0
 code    0x10400 0x128ab     ; code bank 1 (reached how? unknown)
@@ -76,8 +81,11 @@ func  0x04af6 draw_text_impl          ; per char: char -> glyph (two fonts), dra
 func  0x04bce char_to_glyph           ; (H) alternative mapping for a compact font
 func  0x04e14 lcd_command             ; (H) byte to the LCD controller (0xaf display on, 0x81 contrast)
 func  0x04f5e draw_text               ; (x, y, font, color, ..., string)
+func  0x04f81 draw_text_centered      ; (H) like draw_text, x = centre (measures the string first)
+func  0x04fc5 preset_label            ; (n) preset screen: builds "N.UserN" in text_buf, draws it centred
 var   0x03a2a glyph_table 1944        ; 243 x {u32 byte offset, u32 size, u32 width, u32 height}; file 0x12cf7
 var   0x041c2 glyph_bitmaps 8552      ; column-major, each column byte-aligned, MSB = top; file 0x1348f
 var   0x0662a framebuffer 1024        ; 128 x 64, 8 pages x 128 bytes
+var   0x06a2e text_buf 16             ; (H) scratch buffer for labels built in code, 1 char per word
 label 0x0e1e3 font_medium_chars       ; program-memory table: char -> glyph index, main 7x12 font
 label 0x0e2af font_small_chars        ; same for the small font

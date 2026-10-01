@@ -1,6 +1,6 @@
 # Writing patches
 
-A patch is a small text file in `patches/`. It never contains vendor code: only *where* to change
+A patch is a small text file in `targets/<target>/patches/` (one directory per supported firmware file). It never contains vendor code: only *where* to change
 something (with a few `expect` words as a safety check) and *what* to put there (your instructions).
 
 ```
@@ -33,24 +33,24 @@ my_hook:
 ```
 
 Inside `.code`, an `.art` … `.endart` block turns '#'/'.' rows into column words (bit 0 = top row,
-terminated by `0xf000`) that your code can read with `ldc` — see `patches/polish_font.patch`.
+terminated by `0xf000`) that your code can read with `ldc` — see `targets/nek100-dsp-1.0.7/patches/polish_font.patch`.
 
 ## Translations
 
 UI texts are partly strings (drawn with a font) and partly **images with text in them** (buttons,
-headers, dialogs). `python3 -m nek100mod disasm` gives you the strings; to see the images, render the glyph
+headers, dialogs). `python3 -m nuxdsp disasm` gives you the strings; to see the images, render the glyph
 table locally (layout in [FIRMWARE_MAP.md](FIRMWARE_MAP.md)) and redraw them with `.bitmap`.
 Strings may contain any character `polish_font` (or a similar patch for your language) can draw.
 Watch the space: the screen is 128 px wide, a button 34 px.
 
 ## Testing code without the instrument
 
-`nek100mod/sim.py` runs patch code under our ISA model against fake RAM, see
-`tests/test_polish_font.py`. It catches logic bugs before flashing (it found one: `ó` is U+00F3,
+`nuxdsp/sim.py` runs patch code under our ISA model against fake RAM, see
+`tests/test_polish_font.py` and `tests/test_boot_preset.py`. It catches logic bugs before flashing (it found one: `ó` is U+00F3,
 below 0x100), not mistakes in the ISA model.
 
 Names from the map (`touch`, `sustain_cc64`, `load_user_preset`, …) and your parameters can be used in
-any expression (`#BOOT_PRESET-1`, `[sustain_cc64+1]`). Assembler syntax is described in `nek100mod/asm.py`,
+any expression (`#BOOT_PRESET-1`, `[sustain_cc64+1]`). Assembler syntax is described in `nuxdsp/asm.py`,
 instructions in [ISA.md](ISA.md).
 
 ## Safety rules enforced by the builder
@@ -65,23 +65,24 @@ instructions in [ISA.md](ISA.md).
 ## Workflow
 
 ```sh
-python3 -m nek100mod disasm NEK100_DSP_V1.0.7.bin fw.s        # annotated listing, keep it local
+python3 -m nuxdsp disasm NEK100_DSP_V1.0.7.bin fw.s        # annotated listing, keep it local
 # experiment: edit fw.s directly …
-python3 -m nek100mod asm NEK100_DSP_V1.0.7.bin fw.s test.bin
+python3 -m nuxdsp asm NEK100_DSP_V1.0.7.bin fw.s test.bin
 # … flash test.bin, try it. When it works, turn it into a shareable patch:
-python3 -m nek100mod extract NEK100_DSP_V1.0.7.bin test.bin patches/my_feature.patch --name my_feature
-python3 -m nek100mod build NEK100_DSP_V1.0.7.bin out.bin -p my_feature -p version_tag
+python3 -m nuxdsp extract NEK100_DSP_V1.0.7.bin test.bin targets/nek100-dsp-1.0.7/patches/my_feature.patch --name my_feature
+python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin out.bin -p my_feature -p version_tag
 ```
 
 `extract` writes hooks for changed code, a `.code` block for anything you put into the pool (with
 symbolic labels so it can be relocated) and `.hook … .dw` for changed data. Review it, add comments and
-parameters, then add the name to `DEFAULT_ORDER` in `patcher.py` if it should be bundled.
+parameters, then add its name to the `defaults` (or `optional`) line of the target's `target.map`, and
+regenerate the web data: `python3 -m nuxdsp web NEK100_DSP_V1.0.7.bin`.
 
 Always include `version_tag` in test builds so the version screen shows that the instrument runs a mod.
 Keep the official file: flashing it back restores the original state.
 
 ## Improving the map
 
-If you work out what a function does, add a `func`/`label`/`var` line to `map/…map` with a short
+If you work out what a function does, add a `func`/`label`/`var` line to the target's `target.map` with a short
 description in **your own words** (mark it C if you confirmed it on the instrument). See
 [FIRMWARE_MAP.md](FIRMWARE_MAP.md).

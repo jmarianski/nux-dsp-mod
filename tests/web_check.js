@@ -1,11 +1,17 @@
-// node tests/web_check.js PAGE.html FW.bin OUT.bin 'SELECTION_JSON'  -> runs the page's own patch code
-const fs = require("fs");
-const [page, fw, outp, selJson] = process.argv.slice(2);
-const html = fs.readFileSync(page, "utf8");
-const script = html.slice(html.indexOf("<script>") + 8, html.indexOf("// --- UI ---"));
-const api = new Function(script + "; return {DATA, applyPatches, sha256js};")();
+// node tests/web_check.js WEB_DIR FW.bin OUT.bin 'SELECTION_JSON'  -> runs the page's own patch code
+const fs = require("fs"), path = require("path"), vm = require("vm");
+const [webDir, fw, outp, selJson] = process.argv.slice(2);
+const ctx = vm.createContext({});
+const html = fs.readFileSync(path.join(webDir, "index.html"), "utf8");
+for (const m of html.matchAll(/<script src="([^"]+)"><\/script>/g))
+  vm.runInContext(fs.readFileSync(path.join(webDir, m[1]), "utf8"), ctx, {filename: m[1]});
+const api = vm.runInContext("({TARGETS, applyPatches, identify, sha256js, containerOk})", ctx);
 const bytes = new Uint8Array(fs.readFileSync(fw));
-const require_sha = require("crypto").createHash("sha256").update(bytes).digest("hex");
-if (api.sha256js(bytes) !== require_sha) { console.error("sha256js mismatch"); process.exit(1); }
-if (require_sha !== api.DATA.sha256) { console.error("not the official firmware"); process.exit(1); }
-fs.writeFileSync(outp, api.applyPatches(bytes, JSON.parse(selJson)));
+const sha = require("crypto").createHash("sha256").update(bytes).digest("hex");
+if (api.sha256js(bytes) !== sha) { console.error("sha256js mismatch"); process.exit(1); }
+api.identify(bytes).then(id => {
+  if (!id.target) { console.error("not a supported firmware: " + sha); process.exit(1); }
+  const out = api.applyPatches(id.target, bytes, JSON.parse(selJson));
+  if (!api.containerOk(out)) { console.error("output container invalid"); process.exit(1); }
+  fs.writeFileSync(outp, out);
+});

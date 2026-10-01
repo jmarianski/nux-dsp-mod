@@ -1,7 +1,7 @@
 """Simulate the polish_font patch code (no firmware needed): character mapping and glyph drawing."""
 import unittest
 
-from nek100mod import asm, fwmap, patcher, sim
+from nuxdsp import asm, fwmap, patcher, sim
 
 FB = 0x662a
 

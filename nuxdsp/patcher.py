@@ -25,15 +25,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 
-from . import asm, container
-
-PATCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "patches")
-# Canonical order: also the pool layout order used by the web patcher. These are the defaults;
-# other patches (e.g. unfinished translations) are available but must be selected explicitly.
-DEFAULT_ORDER = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag"]
-# Optional patches, in pool layout order after the defaults.
-OPTIONAL_ORDER = ["polish_font", "lang_pl"]
-
+from . import asm, container, fwmap as fwmap_mod
 
 class PatchError(Exception):
     pass
@@ -148,20 +140,32 @@ def split_directive(raw):
     return list(lex)
 
 
-def load(name_or_path):
-    path = name_or_path if os.path.exists(name_or_path) else os.path.join(PATCH_DIR, name_or_path + ".patch")
+# Bundled patches live in targets/<id>/patches/. The map's `defaults` line lists the patches applied
+# when none are selected, `optional` the others; together they fix the pool layout order.
+
+def _map(m):
+    return m if m is not None else fwmap_mod.load()
+
+
+def load(name_or_path, m=None):
+    """A patch by file path, or by name from the target's patches/ directory."""
+    path = name_or_path
+    if not os.path.exists(path):
+        path = os.path.join(_map(m).patch_dir, name_or_path + ".patch")
     with open(path, encoding="utf-8") as f:
         return parse(f.read(), path)
 
 
-def available():
-    names = sorted(f[:-6] for f in os.listdir(PATCH_DIR) if f.endswith(".patch"))
-    order = DEFAULT_ORDER + OPTIONAL_ORDER
+def available(m=None):
+    m = _map(m)
+    names = sorted(f[:-6] for f in os.listdir(m.patch_dir) if f.endswith(".patch"))
+    order = m.defaults + m.optional
     return [n for n in order if n in names] + [n for n in names if n not in order]
 
 
-def defaults():
-    return [n for n in available() if n in DEFAULT_ORDER]
+def defaults(m=None):
+    m = _map(m)
+    return [n for n in available(m) if n in m.defaults]
 
 
 def code_size(p):
@@ -196,12 +200,12 @@ def allocate(patches, fwmap, layout=None):
 
 
 def canonical_layout(fwmap):
-    """Pool positions of the bundled patches when all are applied, in DEFAULT_ORDER.
+    """Pool positions of the bundled patches when all are applied, in the map's order.
 
     Used for every selection, so a given set of patches always produces the same image
     (CLI and web patcher agree, and unselected patches leave their space untouched).
     """
-    return {k: v for k, v in allocate(resolve_patches(available()), fwmap).items() if v is not None}
+    return {k: v for k, v in allocate(resolve_patches(available(fwmap), fwmap), fwmap).items() if v is not None}
 
 
 def find_string(w, fwmap, s):
@@ -245,7 +249,7 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
     if layout is None:
         bundled = canonical_layout(fwmap)
         layout = {p.name: bundled[p.name] for p in patches
-                  if p.name in bundled and os.path.dirname(os.path.abspath(p.path)) == os.path.abspath(PATCH_DIR)}
+                  if p.name in bundled and os.path.dirname(os.path.abspath(p.path)) == os.path.abspath(fwmap.patch_dir)}
     place = allocate(patches, fwmap, layout)
     # pass 1 over all code blocks: global labels (so patches can call each other)
     for p in patches:
@@ -349,8 +353,8 @@ def fmt_words(ws):
     return " ".join("%04x" % x for x in ws)
 
 
-def resolve_patches(names):
-    return [load(n) for n in names]
+def resolve_patches(names, m=None):
+    return [load(n, m) for n in names]
 
 
 def parse_params(items):

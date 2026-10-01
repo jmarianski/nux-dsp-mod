@@ -1,0 +1,162 @@
+"""Draft a new target from an existing one: find the same code in another firmware file.
+
+Both firmware files stay on your machine; the draft only holds addresses (map entries, hook sites)
+and the `expect` words the patches already need. Everything is matched by *code signature*: a window of
+instruction words starting at the address, with the literal word of two-word instructions masked
+(absolute addresses and imm16 differ between builds, opcodes and relative branches mostly do not).
+RAM variables are carried over through those literals: if `ld r7, [0x0144]` in the old firmware is
+`ld r7, [0x0150]` at the matching place in the new one, `touch` moves to 0x0150.
+
+The result is a starting point, not a port: review every entry, re-check pools and hooks in a listing
+of the new firmware, and test on the instrument.
+"""
+import os
+import re
+from collections import Counter, defaultdict
+
+from . import container, fwmap as fwmap_mod, isa, patcher
+
+WINDOW = 12  # instructions per signature
+
+
+def signature(w, a, n=WINDOW):
+    """Masked instruction words from a: tuple of (word, is_literal_masked) and the literal positions."""
+    sig, lits = [], []
+    while len(sig) < n and a < len(w):
+        x = w[a]
+        if isa.is_two_words(x) and a + 1 < len(w):
+            sig += [x, None]
+            lits.append(a + 1)
+            a += 2
+        else:
+            sig.append(x)
+            a += 1
+    return tuple(sig), lits
+
+
+class Finder:
+    def __init__(self, w):
+        self.w = w
+        self.index = defaultdict(list)
+        for a in range(len(w) - 2):
+            self.index[tuple(w[a:a + 2])].append(a)
+
+    def find(self, sig):
+        """Addresses in the new image whose masked window equals sig (None: window has no anchor)."""
+        start = next((i for i in range(len(sig) - 1) if None not in sig[i:i + 2]), None)
+        if start is None:
+            return None
+        out = []
+        for b in self.index.get(tuple(sig[start:start + 2]), []):
+            a = b - start
+            if a < 0 or a + len(sig) > len(self.w):
+                continue
+            if all(v is None or self.w[a + i] == v for i, v in enumerate(sig)):
+                out.append(a)
+        return out
+
+
+def match(old_w, finder, a):
+    """-> (new address or None, number of candidates, {old literal: new literal}).
+
+    The window grows until it is unique (short functions and prologues repeat a lot)."""
+    for n in (WINDOW, 2 * WINDOW, 4 * WINDOW, 8 * WINDOW):
+        sig, lits = signature(old_w, a, n)
+        hits = finder.find(sig)
+        if hits is not None and len(hits) <= 1:
+            break
+    if not hits or len(hits) != 1:
+        return None, len(hits or []), {}
+    b = hits[0]
+    return b, 1, {old_w[x]: finder.w[b + (x - a)] for x in lits}
+
+
+def walk(old_w, new_w, a, b, limit=2000):
+    """Follow identical code from a (old) and b (new): {old literal: Counter of new literals}."""
+    out = defaultdict(Counter)
+    for _ in range(limit):
+        if a + 1 >= len(old_w) or b + 1 >= len(new_w) or old_w[a] != new_w[b]:
+            break
+        if isa.is_two_words(old_w[a]):
+            out[old_w[a + 1]][new_w[b + 1]] += 1
+            a, b = a + 2, b + 2
+        else:
+            a, b = a + 1, b + 1
+    return out
+
+
+def port(old_img, new_img, m, out_dir, new_id=None):
+    """Write a draft target directory. Returns report lines."""
+    old_w, new_w = container.words(old_img), container.words(new_img)
+    finder = Finder(new_w)
+    report, votes = [], defaultdict(Counter)
+    moved = {}
+    for e in m.by_kind("func", "label"):
+        b, n, lits = match(old_w, finder, e.addr)
+        moved[e.name] = b
+        report.append("%-6s %-24s %#07x -> %s" % (e.kind, e.name, e.addr,
+                                                  "%#07x" % b if b is not None else "NOT FOUND (%d candidates)" % n))
+        if b is not None:
+            for o, c in walk(old_w, new_w, e.addr, b).items():
+                votes[o].update(c)
+    var_new = {}
+    for e in m.by_kind("var"):
+        c = Counter()  # literals pointing anywhere into the variable vote for its new base address
+        for k in range(e.size):
+            for v, n in votes.get(e.addr + k, {}).items():
+                c[(v - k) & 0xFFFF] += n
+        var_new[e.name] = c.most_common(1)[0][0] if c else None
+        report.append("var    %-24s %#07x -> %s" % (e.name, e.addr, "%#07x" % var_new[e.name] if c else
+                                                    "unknown (no matched code uses it)"))
+    pools = []
+    for s, e in m.pools:
+        b, n, _ = match(old_w, finder, s)
+        pools.append((s, e, b))
+        report.append("pool   %#07x..%#07x -> %s" % (s, e, "%#07x (verify it is unreferenced!)" % b
+                                                    if b is not None else "NOT FOUND"))
+
+    new_id = new_id or os.path.basename(os.path.abspath(out_dir))
+    os.makedirs(os.path.join(out_dir, "patches"), exist_ok=True)
+    lines = ["# DRAFT generated by `nuxdsp port` from target %s. Every entry is unverified:" % m.id,
+             "# check it in a listing of the new firmware, then remove this notice.", "",
+             "firmware TODO_NAME sha256 %s" % container.sha256(new_img),
+             'device   "TODO brand model"', "input    TODO_official_file.bin", "output   TODO_mod.bin",
+             "defaults " + " ".join(m.defaults), "optional " + " ".join(m.optional), "",
+             "# TODO: code / ramdata / glyphs ranges of the new file (old values for reference)"]
+    lines += ["# code    %#07x %#07x" % r for r in m.code]
+    if m.ramdata:
+        lines.append("# ramdata %#07x %#07x" % m.ramdata)
+    if m.glyphs:
+        lines.append("# glyphs  %#07x %#07x %d" % m.glyphs)
+    for s, e, b in pools:
+        lines.append(("pool    %#07x %#07x     ; ported, VERIFY unreferenced" % (b, b + e - s)) if b is not None
+                     else "# pool %#07x %#07x not found" % (s, e))
+    lines.append("")
+    for e in m.entries:
+        new = moved.get(e.name) if e.kind != "var" else var_new.get(e.name)
+        size = " %d" % e.size if e.kind == "var" and e.size != 1 else ""
+        text = "%-5s %#07x %s%s" % (e.kind, new, e.name, size) if new is not None else \
+            "# %-5s ??????? %s%s" % (e.kind, e.name, size)
+        lines.append("%-38s ; (ported) %s" % (text, e.comment) if e.comment else text + "    ; (ported)")
+    with open(os.path.join(out_dir, "target.map"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    for name in patcher.available(m):
+        p = patcher.load(name, m)
+        with open(p.path, encoding="utf-8") as f:
+            src = f.read()
+
+        def fix(mo):
+            a = int(mo.group(1), 0)
+            k = len(mo.group(2).split())
+            b, n, _ = match(old_w, finder, a)
+            if b is None:
+                report.append("hook   %-24s %#07x -> NOT FOUND (%d candidates)" % (name, a, n))
+                return "; TODO port: " + mo.group(0)
+            report.append("hook   %-24s %#07x -> %#07x" % (name, a, b))
+            return ".hook %#07x expect %s" % (b, " ".join("%#06x" % v for v in new_w[b:b + k]))
+        src = re.sub(r"^\.hook\s+(\S+)\s+expect\s+([0-9a-fA-Fx ]*[0-9a-fA-F])", fix, src, flags=re.M)
+        with open(os.path.join(out_dir, "patches", name + ".patch"), "w", encoding="utf-8") as f:
+            f.write(src)
+    return report
+
