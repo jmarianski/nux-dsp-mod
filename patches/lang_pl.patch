@@ -1,5 +1,5 @@
 .patch lang_pl
-.title "Polish UI texts (work in progress): buttons and headers redrawn"
+.title "Polish UI texts (proof of concept): buttons and headers redrawn"
 
 ; Our own pixel art. Image numbers are glyph table indices (see docs/FIRMWARE_MAP.md).
 
