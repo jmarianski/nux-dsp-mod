@@ -30,7 +30,9 @@ from . import asm, container
 PATCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "patches")
 # Canonical order: also the pool layout order used by the web patcher. These are the defaults;
 # other patches (e.g. unfinished translations) are available but must be selected explicitly.
-DEFAULT_ORDER = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag", "polish_font"]
+DEFAULT_ORDER = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag"]
+# Optional patches, in pool layout order after the defaults.
+OPTIONAL_ORDER = ["polish_font", "lang_pl"]
 
 
 class PatchError(Exception):
@@ -154,7 +156,8 @@ def load(name_or_path):
 
 def available():
     names = sorted(f[:-6] for f in os.listdir(PATCH_DIR) if f.endswith(".patch"))
-    return [n for n in DEFAULT_ORDER if n in names] + [n for n in names if n not in DEFAULT_ORDER]
+    order = DEFAULT_ORDER + OPTIONAL_ORDER
+    return [n for n in order if n in names] + [n for n in names if n not in order]
 
 
 def defaults():
