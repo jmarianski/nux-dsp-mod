@@ -1,0 +1,68 @@
+# NUX NEK-100 DSP firmware V1.0.7 — community map (our own descriptions, no vendor code).
+# Addresses are 16-bit word addresses (file word index == code address).
+# Descriptions: (C) confirmed on hardware, (H) inferred from code, unmarked = strong evidence from code.
+
+firmware NEK100_DSP_V1.0.7 sha256 b072b6bda1971697ebb0624cd11a05dac0bb81ce9996cabce2092c1f1e3bffc0
+
+code    0x00400 0x0f0a3     ; code bank 0
+code    0x10400 0x128ab     ; code bank 1 (reached how? unknown)
+ramdata 0x155f7 0x17f23     ; initialised data, copied to RAM address 0 at boot
+pool    0x09ad4 0x09bd4     ; unreferenced function (no calls, branches or pointers) — patch code goes here (C)
+
+# --- startup / system ------------------------------------------------------------------------
+func  0x005f8 main                    ; init_all(), then forever main_loop_tick()
+func  0x00c88 init_all                ; calls ~25 init routines, boot_presets near the end
+func  0x07c90 main_loop_tick
+func  0x02774 tasks_create            ; creates the RTOS tasks below via task_create
+func  0x0c591 task_create             ; r2 = message queue, r5 = stack, r7 = entry point
+func  0x0c5aa task_send_msg           ; r2 = destination queue
+func  0x0282b task_key_events         ; task(msg_type @fp+14, msg @fp+15); type 0 = MIDI event from the keys (C)
+func  0x02d3e task_ext_events         ; task for events coming from outside (H: USB MIDI in)
+
+# --- MIDI ------------------------------------------------------------------------------------
+func  0x01330 synth_send              ; (status|channel, d1<<8|d2) -> internal synthesizer
+func  0x01340 midi_parse_byte         ; MIDI byte parser with running status
+func  0x020d8 send_internal_cc        ; (cc, value): CC on channel 1 into the port-1 queue (to the MCU, H)
+func  0x02e40 midi_out_packet         ; (port, packet): port 1 -> queue at port1_q, port 2 -> 0x2cbe
+func  0x02e5b midi_out_byte
+func  0x0be50 port1_queue_put         ; put one byte into the port-1 ring buffer
+func  0x0be88 port1_put_usbpacket     ; split a USB-MIDI packet (CIN -> length) into port1_queue_put calls
+label 0x033c4 pedal_send_cc64         ; sustain pedal: for k in 0..3: synth_send(0xB0|k, 64<<8 | sustain_cc64[k])
+
+# --- presets ---------------------------------------------------------------------------------
+func  0x02290 collect_preset          ; (ptr) current settings -> 31-word preset
+func  0x02370 apply_preset            ; (ptr) 31-word preset -> settings, applies them (field 12 = touch)
+func  0x02492 flash_write_words
+func  0x024c4 preset_write_flash      ; (ptr, n)
+func  0x024f9 presets_read_flash      ; reads the 3-word preset header from flash
+func  0x02523 presets_load_all        ; reads the 5 user presets from flash into user_presets
+func  0x02565 save_user_preset        ; (n): collect_preset + write to flash
+func  0x0258c load_user_preset        ; (n = 0..4): current_preset = n, apply_preset(user_presets + 31n) (C)
+func  0x025a3 load_factory_preset     ; (n): apply_preset(factory_presets + 31n)
+func  0x025ba presets_factory_reset   ; copies factory presets to user presets, sends CC 0x7c
+func  0x025e7 boot_presets            ; init flash, read presets, ends with load_factory_preset(0) (C)
+func  0x07b6d flash_put_word
+func  0x07b77 flash_get_word
+
+# --- user interface / settings ---------------------------------------------------------------
+func  0x03410 panel_buttons           ; (H) preset buttons: load / save / factory reset
+func  0x03f6a touch_setting           ; parameter handler (op, delta): op 1 = get, op 5 = add delta + clamp 0..max
+func  0x0504b draw_touch_name         ; (v) draws touch_names[v]
+func  0x05028 draw_style_name
+label 0x03a7c menu_edit_sustain       ; sustain menu: sustain_cc64[ui_part] += delta, clamp 0..127
+func  0x0c72f param_get               ; (H) generic "current value of parameter" helper, result in r0
+func  0x0c7b8 param_change            ; (H) generic "change parameter by r2" helper
+
+# --- RAM variables ---------------------------------------------------------------------------
+var   0x0000f ui_part                 ; (H) index of the part being edited (0 = main voice)
+var   0x00069 factory_presets 155     ; 5 x 31 words, initialised data
+var   0x00144 touch                   ; Touch 0..4 = LIGHT2 LIGHT1 NORMAL HARD1 HARD2 (C); sent to MCU as CC 0x32
+var   0x0015e sustain_cc64 4          ; CC64 value per part used by the pedal, defaults 90,64,64,64 (C)
+var   0x0275c str_off                 ; "OFF"
+var   0x027c7 touch_names 5           ; pointers to "LIGHT2".."HARD2"
+var   0x027dc reverb_names 4          ; pointers to "OFF","ROOM","HALL","PLATE"
+var   0x03026 user_presets 155        ; 5 x 31 words, loaded from flash
+var   0x030c1 presets_header 2        ; read from flash with current_preset; +1 = 0x4e5b when valid
+var   0x030c3 current_preset          ; last loaded preset number (also written to flash)
+var   0x07276 port1_q_head
+var   0x07277 port1_q_tail

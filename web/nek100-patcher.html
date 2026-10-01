@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEK-100 DSP Patcher</title>
+<style>
+:root {
+  --bg: #f6f5f2; --card: #ffffff; --fg: #1d1d1b; --muted: #6b6a66; --line: #dddbd5;
+  --accent: #2f5fd0; --ok: #1f7a3a; --bad: #b3261e; --warn-bg: #fff4d6; --warn-fg: #6a4b00;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --card: #20201e; --fg: #ecebe7; --muted: #a09f99; --line: #3a3936;
+    --accent: #7ea2ff; --ok: #6fd08c; --bad: #ff8a80; --warn-bg: #3a3112; --warn-fg: #f2d98a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --card: #20201e; --fg: #ecebe7; --muted: #a09f99; --line: #3a3936;
+  --accent: #7ea2ff; --ok: #6fd08c; --bad: #ff8a80; --warn-bg: #3a3112; --warn-fg: #f2d98a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 0 0 14px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+.warn { background: var(--warn-bg); color: var(--warn-fg); border-radius: 10px; padding: 12px 16px; margin: 0 0 14px; font-size: 14px; }
+label.patch { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
+label.patch:first-of-type { border-top: 0; }
+label.patch b { font-weight: 600; }
+.desc { color: var(--muted); font-size: 13px; }
+.param { margin: 6px 0 0 28px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.param input { width: 80px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+code, .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+.status { margin-top: 10px; font-size: 14px; }
+.ok { color: var(--ok); } .bad { color: var(--bad); }
+input[type=file] { max-width: 100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>NEK-100 DSP Patcher</h1>
+  <p class="sub">Unofficial community mod for NEK100_DSP_V1.0.7 · works offline, your file never leaves this page.<br>
+  Nieoficjalna modyfikacja społeczności · działa offline, plik nie opuszcza tej strony.</p>
+
+  <div class="warn">Use at your own risk. Not affiliated with or endorsed by NUX or Dream. Keep the official
+  firmware file to go back. / Na własne ryzyko. Projekt niezwiązany z NUX ani Dream. Zachowaj oryginalny plik,
+  żeby móc wrócić.</div>
+
+  <div class="card">
+    <h2>1. Official firmware file / Oryginalny plik firmware</h2>
+    <input type="file" id="file" accept=".bin">
+    <div class="status" id="fstatus">Select NEK100_DSP_V1.0.7.bin from the official NUX update package.</div>
+  </div>
+
+  <div class="card">
+    <h2>2. Patches / Poprawki</h2>
+    <div id="patches"></div>
+  </div>
+
+  <div class="card">
+    <h2>3. Build / Zbuduj</h2>
+    <button id="build" disabled>Download patched firmware</button>
+    <div class="status" id="bstatus"></div>
+  </div>
+</main>
+<script>
+const DATA = {"firmware":"NEK100_DSP_V1.0.7","sha256":"b072b6bda1971697ebb0624cd11a05dac0bb81ce9996cabce2092c1f1e3bffc0","words":107136,"patches":[{"name":"boot_preset","title":"Load a user preset at power-on (factory firmware loads the factory default)","words":{"9727":0,"9728":55240,"9729":9612},"params":[{"name":"BOOT_PRESET","default":1,"lo":1,"hi":5,"desc":"User preset loaded at power-on","values":{"1":{},"2":{"9727":1},"3":{"9727":2},"4":{"9727":3},"5":{"9727":4}}}]},{"name":"touch_off","title":"Touch OFF: fixed velocity, first in the Touch menu (OFF, LIGHT2 .. HARD2)","words":{"8415":54984,"8416":39651,"10291":54984,"10292":39636,"16240":1797,"16261":54984,"16262":39667,"16286":54984,"16287":39675,"20567":54984,"20568":39659,"39636":49599,"39637":51091,"39638":3849,"39639":58122,"39640":65408,"39641":324,"39642":3845,"39643":58117,"39644":51093,"39645":3840,"39646":57858,"39647":1919,"39648":53141,"39649":51091,"39650":53706,"39651":51127,"39652":50870,"39653":3890,"39654":58115,"39655":3589,"39656":58113,"39657":1536,"39658":53706,"39659":2309,"39660":58115,"39661":53576,"39662":10204,"39663":53706,"39664":53578,"39665":10183,"39666":53706,"39667":65408,"39668":324,"39669":3845,"39670":58114,"39671":1792,"39672":53706,"39673":5889,"39674":53706,"39675":3840,"39676":58114,"39677":1797,"39678":30722,"39679":6143,"39680":8191,"39681":65424,"39682":324,"39683":53706},"params":[{"name":"OFF_VELOCITY","default":127,"lo":1,"hi":127,"desc":"Velocity of every note when Touch = OFF","values":{"1":{"39647":1793},"2":{"39647":1794},"3":{"39647":1795},"4":{"39647":1796},"5":{"39647":1797},"6":{"39647":1798},"7":{"39647":1799},"8":{"39647":1800},"9":{"39647":1801},"10":{"39647":1802},"11":{"39647":1803},"12":{"39647":1804},"13":{"39647":1805},"14":{"39647":1806},"15":{"39647":1807},"16":{"39647":1808},"17":{"39647":1809},"18":{"39647":1810},"19":{"39647":1811},"20":{"39647":1812},"21":{"39647":1813},"22":{"39647":1814},"23":{"39647":1815},"24":{"39647":1816},"25":{"39647":1817},"26":{"39647":1818},"27":{"39647":1819},"28":{"39647":1820},"29":{"39647":1821},"30":{"39647":1822},"31":{"39647":1823},"32":{"39647":1824},"33":{"39647":1825},"34":{"39647":1826},"35":{"39647":1827},"36":{"39647":1828},"37":{"39647":1829},"38":{"39647":1830},"39":{"39647":1831},"40":{"39647":1832},"41":{"39647":1833},"42":{"39647":1834},"43":{"39647":1835},"44":{"39647":1836},"45":{"39647":1837},"46":{"39647":1838},"47":{"39647":1839},"48":{"39647":1840},"49":{"39647":1841},"50":{"39647":1842},"51":{"39647":1843},"52":{"39647":1844},"53":{"39647":1845},"54":{"39647":1846},"55":{"39647":1847},"56":{"39647":1848},"57":{"39647":1849},"58":{"39647":1850},"59":{"39647":1851},"60":{"39647":1852},"61":{"39647":1853},"62":{"39647":1854},"63":{"39647":1855},"64":{"39647":1856},"65":{"39647":1857},"66":{"39647":1858},"67":{"39647":1859},"68":{"39647":1860},"69":{"39647":1861},"70":{"39647":1862},"71":{"39647":1863},"72":{"39647":1864},"73":{"39647":1865},"74":{"39647":1866},"75":{"39647":1867},"76":{"39647":1868},"77":{"39647":1869},"78":{"39647":1870},"79":{"39647":1871},"80":{"39647":1872},"81":{"39647":1873},"82":{"39647":1874},"83":{"39647":1875},"84":{"39647":1876},"85":{"39647":1877},"86":{"39647":1878},"87":{"39647":1879},"88":{"39647":1880},"89":{"39647":1881},"90":{"39647":1882},"91":{"39647":1883},"92":{"39647":1884},"93":{"39647":1885},"94":{"39647":1886},"95":{"39647":1887},"96":{"39647":1888},"97":{"39647":1889},"98":{"39647":1890},"99":{"39647":1891},"100":{"39647":1892},"101":{"39647":1893},"102":{"39647":1894},"103":{"39647":1895},"104":{"39647":1896},"105":{"39647":1897},"106":{"39647":1898},"107":{"39647":1899},"108":{"39647":1900},"109":{"39647":1901},"110":{"39647":1902},"111":{"39647":1903},"112":{"39647":1904},"113":{"39647":1905},"114":{"39647":1906},"115":{"39647":1907},"116":{"39647":1908},"117":{"39647":1909},"118":{"39647":1910},"119":{"39647":1911},"120":{"39647":1912},"121":{"39647":1913},"122":{"39647":1914},"123":{"39647":1915},"124":{"39647":1916},"125":{"39647":1917},"126":{"39647":1918},"127":{}}}]},{"name":"sustain_in_preset","title":"Store the Sustain value (pedal CC64 level of the main voice) in user presets","words":{"8942":54984,"8943":39684,"9210":54984,"9211":39692,"39684":4364,"39685":65408,"39686":350,"39687":5889,"39688":63384,"39689":38656,"39690":53136,"39691":53706,"39692":33031,"39693":51100,"39694":34311,"39695":63192,"39696":7935,"39697":3584,"39698":57860,"39699":5887,"39700":7935,"39701":65168,"39702":350,"39703":8191,"39704":53706},"params":[]},{"name":"version_tag","title":"Mark the version screen as modified: 2.DSP:V9.0.7 (9 = community mod of 1.0.7)","words":{"97818":57},"params":[]}]};
+
+// --- SHA-256 (fallback when crypto.subtle is unavailable, e.g. some file:// setups) ---
+function sha256js(bytes) {
+  const K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,
+    0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,
+    0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,
+    0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,
+    0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+  const H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
+  const n = bytes.length, total = Math.ceil((n + 9) / 64) * 64;
+  const m = new Uint8Array(total); m.set(bytes); m[n] = 0x80;
+  const dv = new DataView(m.buffer);
+  dv.setUint32(total - 8, Math.floor(n / 0x20000000)); dv.setUint32(total - 4, (n * 8) >>> 0);
+  const w = new Uint32Array(64), r = (x, s) => (x >>> s) | (x << (32 - s));
+  for (let o = 0; o < total; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + 4 * i);
+    for (let i = 16; i < 64; i++) {
+      const s0 = r(w[i-15], 7) ^ r(w[i-15], 18) ^ (w[i-15] >>> 3), s1 = r(w[i-2], 17) ^ r(w[i-2], 19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+      const t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+  }
+  return Array.from(H, x => x.toString(16).padStart(8, "0")).join("");
+}
+async function sha256(bytes) {
+  try {
+    const d = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(d), x => x.toString(16).padStart(2, "0")).join("");
+  } catch (e) { return sha256js(bytes); }
+}
+
+// --- patching: selection = {patchName: {PARAM: value}} -> new image bytes (tested in tests/) ---
+function applyPatches(bytes, selection) {
+  const out = new Uint8Array(bytes), dv = new DataView(out.buffer);
+  const n = out.length / 2, owner = {};
+  for (const p of DATA.patches) {
+    if (!(p.name in selection)) continue;
+    const words = Object.assign({}, p.words);
+    for (const prm of p.params) {
+      const v = selection[p.name][prm.name] ?? prm.default;
+      if (!Number.isInteger(v) || v < prm.lo || v > prm.hi) throw `${prm.name} must be ${prm.lo}..${prm.hi}`;
+      Object.assign(words, prm.values[v]);
+    }
+    for (const [a, w] of Object.entries(words)) {
+      if (owner[a]) throw `${owner[a]} and ${p.name} both modify word ${a}`;
+      owner[a] = p.name; dv.setUint16(2 * a, w, true);
+    }
+  }
+  if (!Object.keys(owner).length) throw "select at least one patch";
+  let s = 0;
+  for (let i = 0; i < n - 1; i++) s += dv.getUint16(2 * i, true);
+  dv.setUint16(2 * (n - 1), (-s) & 0xffff, true);
+  let check = 0;
+  for (let i = 0; i < n; i++) check += dv.getUint16(2 * i, true);
+  if ((check & 0xffff) || dv.getUint16(0, true) !== 0x6472) throw "internal error: output container invalid";
+  return out;
+}
+
+// --- UI ---
+const $ = id => document.getElementById(id);
+let input = null;
+const box = $("patches");
+for (const p of DATA.patches) {
+  const lab = document.createElement("label");
+  lab.className = "patch";
+  lab.innerHTML = `<input type="checkbox" checked data-patch="${p.name}"><span><b>${p.name}</b><br><span class="desc"></span></span>`;
+  lab.querySelector(".desc").textContent = p.title;
+  box.appendChild(lab);
+  for (const prm of p.params) {
+    const d = document.createElement("div");
+    d.className = "param";
+    d.innerHTML = `<span class="mono">${prm.name}</span><input type="number" min="${prm.lo}" max="${prm.hi}" value="${prm.default}" data-param="${p.name}.${prm.name}"><span class="desc"></span>`;
+    d.querySelector(".desc").textContent = `${prm.desc} (${prm.lo}..${prm.hi})`;
+    box.appendChild(d);
+  }
+}
+
+$("file").addEventListener("change", async ev => {
+  input = null; $("build").disabled = true; $("bstatus").textContent = "";
+  const f = ev.target.files[0]; if (!f) return;
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  const sha = await sha256(bytes);
+  if (sha !== DATA.sha256 || bytes.length !== DATA.words * 2) {
+    $("fstatus").innerHTML = `<span class="bad">✗ Not the official ${DATA.firmware} file — refusing to patch.</span><br><span class="mono">${sha}</span>`;
+    return;
+  }
+  input = bytes;
+  $("fstatus").innerHTML = `<span class="ok">✓ Official ${DATA.firmware}</span><br><span class="mono">${sha}</span>`;
+  $("build").disabled = false;
+});
+
+$("build").addEventListener("click", async () => {
+  const sel = {};
+  for (const p of DATA.patches) {
+    if (!document.querySelector(`[data-patch="${p.name}"]`).checked) continue;
+    sel[p.name] = {};
+    for (const prm of p.params)
+      sel[p.name][prm.name] = Number(document.querySelector(`[data-param="${p.name}.${prm.name}"]`).value);
+  }
+  try {
+    const out = applyPatches(input, sel);
+    const sha = await sha256(out);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([out], {type: "application/octet-stream"}));
+    a.download = "NEK100_DSP_V9.0.7_mod.bin";
+    a.click();
+    const desc = Object.entries(sel).map(([k, ps]) =>
+      [k].concat(Object.entries(ps).map(([n, v]) => `${n}=${v}`)).join(" ")).join(", ");
+    $("bstatus").innerHTML = `<span class="ok">✓ Downloaded NEK100_DSP_V9.0.7_mod.bin</span><br><span class="desc"></span><br><span class="mono">${sha}</span>`;
+    $("bstatus").querySelector(".desc").textContent = desc;
+  } catch (e) {
+    $("bstatus").innerHTML = `<span class="bad"></span>`;
+    $("bstatus").firstChild.textContent = "✗ " + e;
+  }
+});
+</script>
+</body>
+</html>

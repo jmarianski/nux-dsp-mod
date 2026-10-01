@@ -1,0 +1,39 @@
+.patch sustain_in_preset
+.title "Store the Sustain value (pedal CC64 level of the main voice) in user presets"
+
+; All 31 preset words are used, but field 12 (touch) only needs values 0..5.
+; New layout: field12 = touch | (sustain + 1) << 8. High byte 0 (factory presets, presets
+; saved with the original firmware) = keep the current sustain value.
+
+.hook 0x022ee expect 0x110c 0xc890      ; collect_preset: field 12 <- touch (r0)
+    call  save_touch_sus
+.end
+.hook 0x023fa expect 0x8107 0xc79c      ; apply_preset: r7 <- field 12
+    call  load_touch_sus
+.end
+
+.code
+save_touch_sus:
+    add   r1, #12             ; (replaced) r1 = &preset[12]
+    ld    r7, [sustain_cc64]
+    add   r7, #1
+    shl   r7, 8
+    add   r7, r0              ; | touch
+    st    [r1+0], r7
+    ret
+
+load_touch_sus:
+    mov   r1, r7              ; (replaced) r1 = preset
+    ld    r7, [r1+12]         ; (replaced) field 12
+    mov   r6, r7
+    shr   r6, 8
+    and   r6, #0xff
+    cmp   r6, #0              ; no sustain stored?
+    beq   .touch
+    add   r6, #0xff           ; sustain = high byte - 1
+    and   r6, #0xff
+    st    [sustain_cc64], r6
+.touch:
+    and   r7, #0xff           ; touch only
+    ret
+.end
