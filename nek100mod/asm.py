@@ -5,7 +5,7 @@ Syntax (one statement per line, `;` starts a comment):
     .org  EXPR                 set location counter (word address)
     .equ  NAME, EXPR           define a constant / RAM variable name
     .dw   EXPR[, EXPR...]      raw words
-    OP    OPERANDS             e.g.  ld r7, [r1+5]   st [touch], r7   mov r7, #0x7f   call load_user_preset
+    OP    OPERANDS             e.g.  ld r7, [r1+5]   ldc r7, [r1+0] (program memory)   st [touch], r7   mov r7, #0x7f   call load_user_preset
 
 Operands: rN | #EXPR | [r1+EXPR] | [fp+EXPR] | [EXPR] | EXPR (branch/call target).
 EXPR: numbers, symbols, + - * & | << >> and parentheses.
@@ -137,15 +137,18 @@ def encode_op(op, rest, pc, symbols):
         return isa.encode("ret", ())
     if op in ("mov", "cmp", "add", "and", "or") and kinds[0] == "reg":
         if kinds[1:] == ("reg",):
-            need(op != "and", "and rD, rS is not a known encoding")
             return isa.encode(op, (reg(ops[0]), ("r", reg(ops[1]))))
         need(kinds[1:] == ("imm",) and op != "or", "%s needs rD, #imm8 or rD, rS" % op)
         v = ops[1][1]
         need(-128 <= v <= 255, "imm8 out of range: %d" % v)
         return isa.encode(op, (reg(ops[0]), v & 0xFF))
     if op in ("shl", "shr"):
-        need(kinds == ("reg", "expr") and ops[1][1] == 8, "only shl/shr rN, 8 is known")
-        return isa.encode(op, (reg(ops[0]), 8))
+        need(kinds == ("reg", "expr") and 1 <= ops[1][1] <= 15, "shl/shr rN, 1..15")
+        return isa.encode(op, (reg(ops[0]), ops[1][1]))
+    if op == "ldc":
+        need(kinds == ("reg", "mem") and ops[1][1] == "r1" and 0 <= ops[1][2] <= 15,
+             "ldc rR, [r1+k] (k = 0..15) reads program memory")
+        return isa.encode(op, (reg(ops[0]), ops[1][2]))
     if op in ("ld", "st"):
         r, m = (ops[0], ops[1]) if op == "ld" else (ops[1], ops[0])
         need(r[0] == "reg" and m[0] == "mem", "%s operands" % op)

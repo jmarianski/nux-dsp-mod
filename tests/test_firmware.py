@@ -9,9 +9,9 @@ from nek100mod import asm, container, disasm, extract, fwmap, patcher, web
 
 FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
-# All bundled patches with default parameters. Code identical to the build tested on hardware
-# (only the version string differs).
-ALL_SHA = "c089c287f0ffd9be64ad3569267df096fcaa5cea3f833355a3c5e95e96cd782c"
+# All bundled patches with default parameters. Same code as TEST9/TEST10 tested on hardware
+# (those differ only in test strings, the version string and the shape of one glyph).
+ALL_SHA = "d33e6ec64b5a98d0423e149e4817cfd5d33bf6a11307a784a71b72eac4c41cf1"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -52,10 +52,20 @@ class TestFirmware(unittest.TestCase):
             patcher.build(bytes(bad), self.map, [patcher.load("boot_preset")])
 
     def test_extract_round_trip(self):
+        # one pool in use: the extracted patch rebuilds the identical image
+        names = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag", "lang_pl"]
+        out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
+        text = extract.extract(self.img, out, self.map)
+        self.assertIn(".bitmap 0x26", text)
+        again, _ = patcher.build(self.img, self.map, [patcher.parse(text)])
+        self.assertEqual(again, out)
+
+    def test_extract_everything_builds(self):
+        # code from several pools is merged into one relocatable block
         out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(patcher.available()))
         text = extract.extract(self.img, out, self.map)
         again, _ = patcher.build(self.img, self.map, [patcher.parse(text)])
-        self.assertEqual(again, out)
+        self.assertEqual(len(again), len(out))
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_web_page_matches_cli(self):

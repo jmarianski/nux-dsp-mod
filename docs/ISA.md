@@ -25,10 +25,12 @@ variable `X` lives at file word `ramdata_start + X`.
 | `add rD, #imm8` | `1Dii` | sign extension of imm8 not settled: for −1 on a byte use `add r, #0xff` + `and r, #0xff` | C |
 | `and rD, #imm8` | `1(D+8)ii` | | C |
 | `mov rD, rS` | `8D0S` | | C |
-| `cmp rD, rS` | `8(D+8)0S` | | H |
+| `cmp rD, rS` | `8(D+8)0S` | | C |
 | `add rD, rS` | `9D0S` | | C |
-| `or rD, rS` | `aD0S` | | H |
-| `shl rN, 8` / `shr rN, 8` | `fN98` / `fNd8` | only the shift by 8 is known | C |
+| `and rD, rS` | `9(D+8)0S` | | C |
+| `or rD, rS` | `aD0S` | | C |
+| `shl rN, k` / `shr rN, k` | `fN9k` / `fNdk` | k = 1..15 (`fN90` is `st [abs]`); shr is logical | C |
+| `ldc rR, [r1+k]` | `dR9k` | read **program memory** (tables, patch data), k = 0..15 | C |
 | `ld rR, [r1+k]` / `st [r1+k], rR` | `cR9k` / `c(R+8)9k` | k = 0..15 | C |
 | `ld rR, [fp+k]` / `st [fp+k], rR` | `cRbk` / `c(R+8)bk` | function arguments / locals | C |
 | `ld rR, [abs]` / `st [abs], rR` | `fR80 a` / `fR90 a` | two words | C |
@@ -52,6 +54,8 @@ variable `X` lives at file word `ramdata_start + X`.
 | `c04c n` | prologue with n words of locals |
 | `d5cN` | epilogue: return and drop N argument words |
 | `d0ce a` | branch/jump with 16-bit target |
+| `b7kk` / `bfkk` | skip kk words if r7 is zero / not zero (H) |
+| `830d 2b0N` | recompute fp after a call (`ccall` clobbers it) |
 | `fXf1 …` | possibly a three-word form with a 32-bit address; the length rule counts it as one word, which can misalign a few lines of the listing locally (the round trip stays exact) |
 
 ## Writing hook code

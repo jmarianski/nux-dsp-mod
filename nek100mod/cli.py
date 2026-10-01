@@ -62,7 +62,7 @@ def cmd_asm(a, m):
 
 def cmd_build(a, m):
     img = load_checked(a.firmware, m)
-    names = a.patch or patcher.available()
+    names = a.patch or patcher.defaults()
     pats = patcher.resolve_patches(names)
     out, report = patcher.build(img, m, pats, patcher.parse_params(a.param))
     for line in report:
@@ -74,7 +74,7 @@ def cmd_build(a, m):
 def cmd_list(a, m):
     for n in patcher.available():
         p = patcher.load(n)
-        print("%-20s %s" % (n, p.title))
+        print("%-20s %s%s" % (n, p.title, "" if n in patcher.DEFAULT_ORDER else "  [optional]"))
         for prm in p.params:
             print("%22s%s=%d (%d..%d) %s" % ("", prm.name, prm.default, prm.lo, prm.hi, prm.desc))
 
@@ -104,7 +104,7 @@ def main(argv=None):
     s = sub.add_parser("build", help="apply patches to the official firmware")
     s.add_argument("firmware")
     s.add_argument("out")
-    s.add_argument("-p", "--patch", action="append", help="patch name or file (repeatable; default: all)")
+    s.add_argument("-p", "--patch", action="append", help="patch name or file (repeatable; default: the non-optional ones)")
     s.add_argument("--param", action="append", help="NAME=VALUE")
     s = sub.add_parser("disasm", help="annotated listing of your firmware (for local use)")
     s.add_argument("firmware")

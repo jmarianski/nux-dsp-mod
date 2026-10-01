@@ -43,12 +43,16 @@ def decode(x, lit):
             return ("cmp" if hi & 8 else "mov"), (hi & 7, ("r", lo))
         if (x & 0xF8F8) == 0x9000:
             return "add", (hi & 7, ("r", lo))
+        if (x & 0xF8F8) == 0x9800:
+            return "and", (hi & 7, ("r", lo))
         if (x & 0xF8F8) == 0xA000:
             return "or", (hi & 7, ("r", lo))
-        if (x & 0xF8FF) == 0xF098:
-            return "shl", (hi & 7, 8)
-        if (x & 0xF8FF) == 0xF0D8:
-            return "shr", (hi & 7, 8)
+        if (x & 0xF8F0) == 0xF090 and lo & 0xF:  # fR90 is st [abs]
+            return "shl", (hi & 7, lo & 0xF)
+        if (x & 0xF8F0) == 0xF0D0 and lo & 0xF:
+            return "shr", (hi & 7, lo & 0xF)
+        if (x & 0xF8F0) == 0xD090:
+            return "ldc", (hi & 7, lo & 0xF)
         if 0xC0 <= hi < 0xD0 and (lo >> 4) in (0x9, 0xB):
             base = "r1" if lo >> 4 == 0x9 else "fp"
             return ("st" if hi & 8 else "ld"), (hi & 7, (base, lo & 0xF))
@@ -84,12 +88,14 @@ def encode(op, args):
     if op in ("mov", "cmp", "add", "and", "or"):
         d, s = args
         if isinstance(s, tuple):  # register form
-            base = {"mov": 0x8000, "cmp": 0x8800, "add": 0x9000, "or": 0xA000}[op]
+            base = {"mov": 0x8000, "cmp": 0x8800, "add": 0x9000, "and": 0x9800, "or": 0xA000}[op]
             return [base | d << 8 | s[1]]
         base = {"mov": 0x0000, "cmp": 0x0800, "add": 0x1000, "and": 0x1800}[op]
         return [base | d << 8 | (s & 0xFF)]
     if op in ("shl", "shr"):
-        return [(0xF098 if op == "shl" else 0xF0D8) | args[0] << 8]
+        return [(0xF090 if op == "shl" else 0xF0D0) | args[0] << 8 | args[1]]
+    if op == "ldc":
+        return [0xD090 | args[0] << 8 | args[1]]
     if op in ("ld", "st"):
         r, m = args
         if m[0] == "abs":

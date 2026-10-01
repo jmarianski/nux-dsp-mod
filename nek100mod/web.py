@@ -27,7 +27,8 @@ def export_data(image, fwmap, names):
     for n in names:
         p = patcher.load(n)
         base = patch_words(image, fwmap, p)
-        entry = {"name": p.name, "title": p.title, "words": base, "params": []}
+        entry = {"name": p.name, "title": p.title, "words": base, "params": [],
+                 "default": p.name in patcher.DEFAULT_ORDER}
         seen = set()
         for prm in p.params:
             values = {}

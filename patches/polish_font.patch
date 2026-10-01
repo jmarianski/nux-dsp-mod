@@ -1,0 +1,442 @@
+.patch polish_font
+.title "Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font; strings use Unicode code points"
+
+; Each character of a UI string is one 16-bit word, so a string may hold any Unicode code point.
+; Characters >= 0x80 are drawn in two steps:
+;  1. uni_map gives the base letter (ą -> a): the firmware draws it, measures and advances as usual;
+;  2. pl_redraw then overwrites that glyph cell (same width, 12 rows) with our bitmap, straight
+;     into the framebuffer. Only font 0 (the main 7x12 font) is handled; others show the base letter.
+; Unknown characters >= 0x80 are shown as '?'.
+
+.hook 0x04b0d expect 0xd14a 0xe1e3      ; draw_text_impl: char -> font-0 table address
+    call  uni_map
+.end
+.hook 0x04ac6 expect 0xd14a 0xe1e3      ; text_width: same lookup (centered text)
+    call  uni_map
+.end
+.hook 0x04b2e expect 0xd148 0x3a26      ; draw_text_impl, right after draw_glyph
+    call  pl_redraw
+.end
+
+.code
+; r1 = character -> r1 = font-0 char table address of the character or of its base letter
+uni_map:
+    mov   r7, r1
+    shr   r7, 7               ; ASCII (< 0x80)?
+    cmp   r7, #0
+    beq   .ascii
+    mov   r7, r1
+    li    r1, #pl_chars
+.find:
+    ldc   r6, [r1+0]
+    cmp   r6, #0
+    beq   .unknown
+    cmp   r6, r7
+    beq   .found
+    add   r1, #3
+    jmp   .find
+.found:
+    ldc   r1, [r1+1]          ; base letter
+    jmp   .ascii
+.unknown:
+    mov   r1, #0x3f           ; '?'
+.ascii:
+    addi  r1, #font_medium_chars
+    ret
+
+; draw_text_impl frame: [fp+0] spare local, [fp+1] char index, [fp+2] glyph, [fp+5] x, [fp+6] y,
+; [fp+7] invert, [fp+8] string, [fp+9] font, [fp+10] spacing.
+; [fp+0] and [fp+2] are used as scratch and reset to 0 (0 is never a kerned glyph).
+pl_redraw:
+    ld    r7, [fp+9]
+    cmp   r7, #0
+    bne   .out                ; not the main font
+    ld    r7, [fp+8]
+    ld    r1, [fp+1]
+    add   r1, r7
+    ld    r7, [r1+0]          ; character
+    mov   r6, r7
+    shr   r6, 7
+    cmp   r6, #0
+    beq   .out
+    li    r1, #pl_chars
+.rfind:
+    ldc   r6, [r1+0]
+    cmp   r6, #0
+    beq   .out
+    cmp   r6, r7
+    beq   .rfound
+    add   r1, #3
+    jmp   .rfind
+.rfound:
+    ldc   r0, [r1+2]          ; r0 = column data
+    ld    r4, [fp+5]          ; r4 = x
+.col:
+    mov   r1, r0
+    ldc   r2, [r1+0]          ; r2 = column bits, bit 0 = top row
+    mov   r7, r2
+    shr   r7, 12
+    cmp   r7, #0
+    bne   .done               ; 0xf000 ends the glyph
+    mov   r7, #0
+    st    [fp+0], r7          ; row = 0
+.row:
+    mov   r7, r2
+    and   r7, #1
+    shr   r2, 1
+    ld    r6, [fp+7]
+    cmp   r6, #0
+    beq   .noinv
+    add   r7, #1
+    and   r7, #1
+.noinv:
+    st    [fp+2], r7          ; pixel on / off
+    ld    r6, [fp+0]
+    ld    r7, [fp+6]
+    add   r7, r6              ; r7 = y
+    mov   r6, r7
+    shr   r6, 6
+    cmp   r6, #0
+    bne   .next               ; y outside 0..63
+    mov   r6, r4
+    shr   r6, 7
+    cmp   r6, #0
+    bne   .next               ; x outside 0..127
+    mov   r5, r7
+    shr   r5, 3
+    shl   r5, 7
+    add   r5, r4
+    addi  r5, #framebuffer    ; r5 = framebuffer word: page (y / 8) * 128 + x
+    and   r7, #7
+    mov   r1, r7
+    addi  r1, #pl_bits
+    ld    r7, [fp+2]
+    cmp   r7, #0
+    beq   .clear
+    ldc   r7, [r1+0]
+    mov   r1, r5
+    ld    r6, [r1+0]
+    or    r6, r7
+    st    [r1+0], r6
+    jmp   .next
+.clear:
+    ldc   r7, [r1+8]
+    mov   r1, r5
+    ld    r6, [r1+0]
+    and   r6, r7
+    st    [r1+0], r6
+.next:
+    ld    r6, [fp+0]
+    add   r6, #1
+    st    [fp+0], r6
+    cmp   r6, #12
+    blt   .row
+    add   r0, #1
+    add   r4, #1
+    jmp   .col
+.done:
+    mov   r7, #0
+    st    [fp+0], r7
+    st    [fp+2], r7
+.out:
+    ld    r7, [fp+10]         ; (replaced code needs r7 = spacing, r1 = 0x3a26)
+    li    r1, #0x3a26
+    ret
+
+pl_bits:                      ; set masks for bit 0..7, then clear masks
+    .dw   0x0001, 0x0002, 0x0004, 0x0008, 0x0010, 0x0020, 0x0040, 0x0080
+    .dw   0xfffe, 0xfffd, 0xfffb, 0xfff7, 0xffef, 0xffdf, 0xffbf, 0xff7f
+
+pl_chars:                     ; code point, base letter, column data
+
+    .dw   0x0105, 0x61, pl_a_ogonek    ; ą
+    .dw   0x0107, 0x63, pl_c_acute    ; ć
+    .dw   0x0119, 0x65, pl_e_ogonek    ; ę
+    .dw   0x0142, 0x6c, pl_l_stroke    ; ł
+    .dw   0x0144, 0x6e, pl_n_acute    ; ń
+    .dw   0x00f3, 0x6f, pl_o_acute    ; ó
+    .dw   0x015b, 0x73, pl_s_acute    ; ś
+    .dw   0x017a, 0x7a, pl_z_acute    ; ź
+    .dw   0x017c, 0x7a, pl_z_dot    ; ż
+    .dw   0x0104, 0x41, pl_a_ogonek_upper    ; Ą
+    .dw   0x0106, 0x43, pl_c_acute_upper    ; Ć
+    .dw   0x0118, 0x45, pl_e_ogonek_upper    ; Ę
+    .dw   0x0141, 0x4c, pl_l_stroke_upper    ; Ł
+    .dw   0x0143, 0x4e, pl_n_acute_upper    ; Ń
+    .dw   0x00d3, 0x4f, pl_o_acute_upper    ; Ó
+    .dw   0x015a, 0x53, pl_s_acute_upper    ; Ś
+    .dw   0x0179, 0x5a, pl_z_acute_upper    ; Ź
+    .dw   0x017b, 0x5a, pl_z_dot_upper    ; Ż
+    .dw   0
+
+pl_a_ogonek:                ; ą
+.art
+    ......
+    ......
+    ......
+    .####.
+    ....##
+    .#####
+    ##..##
+    ##..##
+    ######
+    .#####
+    ...#..
+    ....##
+.endart
+pl_c_acute:                ; ć
+.art
+    ...##.
+    ..##..
+    ......
+    .#####
+    ##....
+    ##....
+    ##....
+    ##....
+    ##....
+    .#####
+    ......
+    ......
+.endart
+pl_e_ogonek:                ; ę
+.art
+    .......
+    .......
+    .......
+    .#####.
+    ##...##
+    ##...##
+    #######
+    ##.....
+    ##.....
+    .######
+    ....#..
+    .....##
+.endart
+pl_l_stroke:                ; ł
+.art
+    ##...
+    ##...
+    ##...
+    ##..#
+    ##.##
+    ####.
+    ###..
+    ##...
+    ##...
+    .###.
+    .....
+    .....
+.endart
+pl_n_acute:                ; ń
+.art
+    ...##.
+    ..##..
+    ......
+    #####.
+    ######
+    ##..##
+    ##..##
+    ##..##
+    ##..##
+    ##..##
+    ......
+    ......
+.endart
+pl_o_acute:                ; ó
+.art
+    ...##.
+    ..##..
+    ......
+    .####.
+    ##..##
+    ##..##
+    ##..##
+    ##..##
+    ##..##
+    .####.
+    ......
+    ......
+.endart
+pl_s_acute:                ; ś
+.art
+    ....##.
+    ...##..
+    .......
+    .######
+    ##.....
+    ##.....
+    .#####.
+    .....##
+    .....##
+    ######.
+    .......
+    .......
+.endart
+pl_z_acute:                ; ź
+.art
+    ...##.
+    ..##..
+    ......
+    ######
+    ....##
+    ...##.
+    ..##..
+    .##...
+    ##....
+    ######
+    ......
+    ......
+.endart
+pl_z_dot:                ; ż
+.art
+    ..##..
+    ..##..
+    ......
+    ######
+    ....##
+    ...##.
+    ..##..
+    .##...
+    ##....
+    ######
+    ......
+    ......
+.endart
+pl_a_ogonek_upper:                ; Ą
+.art
+    ..###..
+    .##.##.
+    ##...##
+    ##...##
+    ##...##
+    #######
+    #######
+    ##...##
+    ##...##
+    ##...##
+    ....#..
+    .....##
+.endart
+pl_c_acute_upper:                ; Ć
+.art
+    ....##.
+    ...##..
+    .......
+    .######
+    ##.....
+    ##.....
+    ##.....
+    ##.....
+    ##.....
+    .######
+    .......
+    .......
+.endart
+pl_e_ogonek_upper:                ; Ę
+.art
+    #######
+    #######
+    ##.....
+    ##.....
+    ######.
+    ######.
+    ##.....
+    ##.....
+    #######
+    #######
+    ....#..
+    .....##
+.endart
+pl_l_stroke_upper:                ; Ł
+.art
+    ##.....
+    ##.....
+    ##.....
+    ##..#..
+    ##.##..
+    ####...
+    ###....
+    ##.....
+    #######
+    #######
+    .......
+    .......
+.endart
+pl_n_acute_upper:                ; Ń
+.art
+    ....##.
+    ...##..
+    .......
+    ##...##
+    ###..##
+    ####.##
+    ##.####
+    ##..###
+    ##...##
+    ##...##
+    .......
+    .......
+.endart
+pl_o_acute_upper:                ; Ó
+.art
+    ....##.
+    ...##..
+    .......
+    .#####.
+    ##...##
+    ##...##
+    ##...##
+    ##...##
+    ##...##
+    .#####.
+    .......
+    .......
+.endart
+pl_s_acute_upper:                ; Ś
+.art
+    ....##.
+    ...##..
+    .......
+    .######
+    ##.....
+    ##.....
+    .#####.
+    .....##
+    .....##
+    ######.
+    .......
+    .......
+.endart
+pl_z_acute_upper:                ; Ź
+.art
+    ....##.
+    ...##..
+    .......
+    #######
+    .....##
+    ....##.
+    ...##..
+    ..##...
+    .##....
+    #######
+    .......
+    .......
+.endart
+pl_z_dot_upper:                ; Ż
+.art
+    ..###..
+    ..###..
+    .......
+    #######
+    .....##
+    ....##.
+    ...##..
+    ..##...
+    .##....
+    #######
+    .......
+    .......
+.endart
+.end
