@@ -183,11 +183,11 @@ $("build").addEventListener("click", async () => {
     const sha = await sha256(out);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([out], {type: "application/octet-stream"}));
-    a.download = "NEK100_DSP_V1.0.7b_mod.bin";
+    a.download = "NEK100_DSP_V1.0.7B_mod.bin";
     a.click();
     const desc = Object.entries(sel).map(([k, ps]) =>
       [k].concat(Object.entries(ps).map(([n, v]) => `${n}=${v}`)).join(" ")).join(", ");
-    $("bstatus").innerHTML = `<span class="ok">✓ Downloaded NEK100_DSP_V1.0.7b_mod.bin</span><br><span class="desc"></span><br><span class="mono">${sha}</span>`;
+    $("bstatus").innerHTML = `<span class="ok">✓ Downloaded NEK100_DSP_V1.0.7B_mod.bin</span><br><span class="desc"></span><br><span class="mono">${sha}</span>`;
     $("bstatus").querySelector(".desc").textContent = desc;
   } catch (e) {
     $("bstatus").innerHTML = `<span class="bad"></span>`;

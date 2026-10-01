@@ -1,5 +1,6 @@
 .patch version_tag
-.title "Mark the version screen as modified: 2.DSP:1.0.7b (b = community mod of 1.0.7)"
+.title "Mark the version screen as modified: 2.DSP:1.0.7B (B = community mod of 1.0.7)"
 
-; The string has room for exactly 12 characters, so "V1.0.7b" would not fit: the V goes.
-.string "2.DSP:V1.0.7" "2.DSP:1.0.7b"
+; The string has room for exactly 12 characters, so "V1.0.7B" would not fit: the V goes.
+; The info screen uses the small font: uppercase, digits and a few signs only (no lowercase).
+.string "2.DSP:V1.0.7" "2.DSP:1.0.7B"

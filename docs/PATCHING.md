@@ -23,7 +23,7 @@ my_hook:
     ret
 .end
 
-.string "2.DSP:V1.0.7" "2.DSP:1.0.7b"  ; UI string replacement (NEW may be shorter;
+.string "2.DSP:V1.0.7" "2.DSP:1.0.7B"  ; UI string replacement (NEW may be shorter;
                                         ; any Unicode character is one word, see polish_font)
 
 .bitmap 0x26                            ; redraw image/glyph 0x26 of the glyph table
