@@ -1,0 +1,4 @@
+.patch version_tag
+.title "Mark the version screen as modified: 2.DSP:V9.0.7 (9 = community mod of 1.0.7)"
+
+.string "2.DSP:V1.0.7" "2.DSP:V9.0.7"

@@ -1,0 +1,12 @@
+.patch boot_preset
+.title "Load a user preset at power-on (factory firmware loads the factory default)"
+.param BOOT_PRESET 1 1 5 "User preset loaded at power-on"
+
+; boot_presets ends with a call load_factory_preset(0) (0x025fe: push #0, 0x02600: ccall).
+; Change its argument and target to load_user_preset(BOOT_PRESET-1), as the panel buttons do.
+.hook 0x025ff expect 0x0000             ; argument of the push #imm16
+    .dw   BOOT_PRESET-1
+.end
+.hook 0x02600 expect 0xd7c8 0x25a3      ; ccall load_factory_preset
+    ccall load_user_preset
+.end

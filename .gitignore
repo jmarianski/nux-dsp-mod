@@ -1,0 +1,9 @@
+# Never commit vendor files or anything derived from them
+*.bin
+*.s
+*.lst
+*.pdf
+*.zip
+*.exe
+__pycache__/
+*.pyc

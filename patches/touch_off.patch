@@ -1,0 +1,93 @@
+.patch touch_off
+.title "Touch OFF: fixed velocity, first in the Touch menu (OFF, LIGHT2 .. HARD2)"
+.param OFF_VELOCITY 127 1 127 "Velocity of every note when Touch = OFF"
+
+; The MCU applies the touch curve; the DSP only stores the setting (0..4) and sends it as CC 0x32.
+; OFF is stored as value 5: the MCU gets LIGHT2 (0) and the DSP replaces the note-on velocity.
+
+.hook 0x03f70 expect 0x0704             ; touch_setting: maximum value 4 -> 5
+    mov   r7, #5
+.end
+.hook 0x03f85 expect 0xff80 0x0144      ; touch_setting: value -> menu position before "+delta"
+    call  touch_load_pos
+.end
+.hook 0x03f9e expect 0xff90 0x0144      ; touch_setting: menu position -> value on store
+    call  touch_store_pos
+.end
+.hook 0x05057 expect 0xd14a 0x27c7      ; draw_touch_name: name pointer
+    call  touch_name_ptr
+.end
+.hook 0x020df expect 0xc7b7 0xc6b6      ; send_internal_cc: load (cc, value)
+    call  cc_fix
+.end
+.hook 0x02833 expect 0xc1bf 0xc793      ; task_key_events: MIDI event branch, loads event + type
+    call  vel_hook
+.end
+
+.code
+; in task_key_events: same result as the replaced code (r1 = event, r7 = event type),
+; with note-on velocity replaced when Touch = OFF
+vel_hook:
+    ld    r1, [fp+15]
+    ld    r7, [r1+3]          ; event type
+    cmp   r7, #9              ; note on?
+    bne   .done
+    ld    r7, [touch]
+    cmp   r7, #5              ; OFF?
+    bne   .restore
+    ld    r7, [r1+5]          ; velocity
+    cmp   r7, #0              ; 0 = note off, keep it
+    beq   .restore
+    mov   r7, #OFF_VELOCITY
+    st    [r1+5], r7
+.restore:
+    ld    r7, [r1+3]
+.done:
+    ret
+
+; send_internal_cc(cc, value): never send 5 to the MCU, OFF uses the LIGHT2 curve there
+cc_fix:
+    ld    r7, [fp+7]          ; cc
+    ld    r6, [fp+6]          ; value
+    cmp   r7, #0x32           ; touch CC?
+    bne   .cc_done
+    cmp   r6, #5
+    bne   .cc_done
+    mov   r6, #0
+.cc_done:
+    ret
+
+; draw_touch_name: r1 = touch value -> r1 = pointer to its name (5 -> "OFF" from reverb_names)
+touch_name_ptr:
+    cmp   r1, #5
+    bne   .normal
+    li    r1, #reverb_names
+    ret
+.normal:
+    addi  r1, #touch_names
+    ret
+
+; menu order OFF, LIGHT2..HARD2: position = (v == 5) ? 0 : v + 1
+touch_load_pos:
+    ld    r7, [touch]
+    cmp   r7, #5
+    bne   .pos_n
+    mov   r7, #0
+    ret
+.pos_n:
+    add   r7, #1
+    ret
+
+; value = (position == 0) ? 5 : position - 1
+touch_store_pos:
+    cmp   r7, #0
+    bne   .val_n
+    mov   r7, #5
+    jmp   .store
+.val_n:
+    add   r7, #0xff           ; - 1 (works for sign- and zero-extended imm8)
+    and   r7, #0xff
+.store:
+    st    [touch], r7
+    ret
+.end
