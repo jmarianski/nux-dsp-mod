@@ -11,7 +11,7 @@ FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as TEST9/TEST10 tested on hardware
 # (those differ only in test strings, the version string and the shape of one glyph).
-ALL_SHA = "73c65213363e17c329b149af4d6c3536468d4c49f2f9f512bff51915b562cba9"
+ALL_SHA = "1cea4257cc9818fa9ab41691322073020748f278b9afcbc19c8f1ca4a2bff1c1"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -44,6 +44,14 @@ class TestFirmware(unittest.TestCase):
             ow = container.words(one)
             for a in range(len(ow) - 1):
                 self.assertIn(ow[a], (orig[a], fw[a]), "%s @%#x" % (n, a))
+
+    def test_version_tag_uses_small_font_glyphs(self):
+        # the info screen draws with the small font; lowercase there maps to big-font glyphs
+        w = container.words(self.img)
+        small = self.map.symbols()["font_small_chars"]
+        for old, new in patcher.load("version_tag").strings:
+            for c in new:
+                self.assertTrue(0x90 <= w[small + ord(c)] <= 0xbb, c)
 
     def test_refuses_other_input(self):
         bad = bytearray(self.img)

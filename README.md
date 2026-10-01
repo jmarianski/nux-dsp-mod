@@ -9,7 +9,7 @@ any NUX code. You bring the official firmware file, the patcher adds the feature
 | `boot_preset` | loads a user preset (default 1) at power-on — the stock firmware loads the factory default |
 | `touch_off` | new Touch setting **OFF**: every note at a fixed velocity (default 127), first in the menu |
 | `sustain_in_preset` | the **Sustain** value (pedal level) is saved in user presets |
-| `version_tag` | version screen shows `DSP:1.0.7b`, so you can see the mod is installed |
+| `version_tag` | version screen shows `DSP:1.0.7B`, so you can see the mod is installed |
 | `polish_font` *(optional, example)* | Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font, strings in Unicode — base for translations |
 | `lang_pl` *(optional, example)* | buttons and headers ZAPISZ / WCZYTAJ — a translation proof of concept |
 
@@ -37,7 +37,7 @@ Both refuse any input other than the official V1.0.7 file (SHA-256 `b072b6bd…3
 
 **Flashing:** use the official NUX update tool and procedure for the DSP firmware, selecting the patched
 file instead of the original. Make sure the tool reports a non-zero amount programmed. Afterwards check
-*version* on the instrument: it should say `DSP:1.0.7b`. To go back, flash the official file the same way.
+*version* on the instrument: it should say `DSP:1.0.7B`. To go back, flash the official file the same way.
 
 ## Make your own patches
 
@@ -64,7 +64,7 @@ rozpowszechnia kodu NUX: oficjalny plik firmware masz u siebie, a patcher dokła
 | `boot_preset` | ładuje user preset (domyślnie 1) przy włączeniu. Fabrycznie ładuje się ustawienie domyślne |
 | `touch_off` | nowe ustawienie Touch **OFF**: każda nuta ze stałą siłą (domyślnie 127), pierwsze w menu |
 | `sustain_in_preset` | wartość **Sustain** (poziom pedału) zapisuje się w user presetach |
-| `version_tag` | ekran wersji pokazuje `DSP:1.0.7b`, więc widać, że mod jest wgrany |
+| `version_tag` | ekran wersji pokazuje `DSP:1.0.7B`, więc widać, że mod jest wgrany |
 | `polish_font` *(opcjonalny, przykład)* | polskie litery w głównym foncie UI, napisy w Unicode. To baza pod tłumaczenia |
 | `lang_pl` *(opcjonalny, przykład)* | przyciski i nagłówki ZAPISZ / WCZYTAJ jako dowód, że tłumaczenie jest wykonalne |
 
@@ -80,6 +80,6 @@ są opisane wyżej.
 
 **Wgrywanie:** użyj oficjalnego narzędzia i procedury aktualizacji DSP od NUX, wskazując zmodyfikowany
 plik. Sprawdź, czy narzędzie zgłasza niezerową ilość zaprogramowanych danych. Na instrumencie ekran wersji
-powinien pokazać `DSP:1.0.7b`. Powrót do oryginału to wgranie oficjalnego pliku w ten sam sposób.
+powinien pokazać `DSP:1.0.7B`. Powrót do oryginału to wgranie oficjalnego pliku w ten sam sposób.
 
 Własne patche, mapa firmware i ISA są opisane w `docs/` (po angielsku). Podstawy prawne: `docs/LEGAL.md`.
