@@ -5,7 +5,9 @@
 ; Characters >= 0x80 are drawn in two steps:
 ;  1. uni_map gives the base letter (ą -> a): the firmware draws it, measures and advances as usual;
 ;  2. pl_redraw then overwrites that glyph cell (same width, 12 rows) with our bitmap, straight
-;     into the framebuffer. Only font 0 (the main 7x12 font) is handled; others show the base letter.
+;     into the framebuffer. Only font 0 (the main 7x12 font) gets the accents.
+; The small 4x5 font has no room for accents and no lowercase letters (lowercase codes point at
+; unrelated glyphs): there both Polish and lowercase letters are shown as the uppercase base letter.
 ; Unknown characters >= 0x80 are shown as '?'.
 
 .hook 0x04b0d expect 0xd14a 0xe1e3      ; draw_text_impl: char -> font-0 table address
@@ -13,6 +15,12 @@
 .end
 .hook 0x04ac6 expect 0xd14a 0xe1e3      ; text_width: same lookup (centered text)
     call  uni_map
+.end
+.hook 0x04b1b expect 0xd14a 0xe2af      ; draw_text_impl: char -> small font table address
+    call  uni_map_small
+.end
+.hook 0x04ad4 expect 0xd14a 0xe2af      ; text_width: same lookup
+    call  uni_map_small
 .end
 .hook 0x04b2e expect 0xd148 0x3a26      ; draw_text_impl, right after draw_glyph
     call  pl_redraw
@@ -42,6 +50,39 @@ uni_map:
     mov   r1, #0x3f           ; '?'
 .ascii:
     addi  r1, #font_medium_chars
+    ret
+
+; r1 = character -> r1 = small font char table address of its uppercase base letter
+uni_map_small:
+    mov   r7, r1
+    shr   r7, 7
+    cmp   r7, #0
+    beq   .sascii
+    mov   r7, r1
+    li    r1, #pl_chars
+.sfind:
+    ldc   r6, [r1+0]
+    cmp   r6, #0
+    beq   .sunknown
+    cmp   r6, r7
+    beq   .sfound
+    add   r1, #3
+    jmp   .sfind
+.sfound:
+    ldc   r1, [r1+1]
+    jmp   .sascii
+.sunknown:
+    mov   r1, #0x3f
+.sascii:
+    cmp   r1, #0x61
+    blt   .sdone              ; below 'a'
+    cmp   r1, #0x7b
+    blt   .supper             ; 'a'..'z'
+    jmp   .sdone
+.supper:
+    addi  r1, #0xffe0         ; -0x20
+.sdone:
+    addi  r1, #font_small_chars
     ret
 
 ; draw_text_impl frame: [fp+0] spare local, [fp+1] char index, [fp+2] glyph, [fp+5] x, [fp+6] y,

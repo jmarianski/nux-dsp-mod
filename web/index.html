@@ -114,7 +114,12 @@ function renderPatches(t) {
     lab.querySelector("input").checked = p.default;
     lab.querySelector("input").dataset.patch = p.name;
     lab.querySelector("b").textContent = p.name + (p.default ? "" : " (optional)");
-    lab.querySelector(".desc").textContent = p.title;
+    lab.querySelector(".desc").textContent = p.title + ((p.requires || []).length ? ` (+ ${p.requires.join(", ")})` : "");
+    lab.querySelector("input").addEventListener("change", ev => {  // keep requirements selected
+      const on = ev.target.checked, byName = n => document.querySelector(`[data-patch="${n}"]`);
+      if (on) for (const r of p.requires || []) byName(r).checked = true;
+      else for (const q of t.patches) if ((q.requires || []).includes(p.name)) byName(q.name).checked = false;
+    });
     box.appendChild(lab);
     for (const prm of p.params) {
       const d = document.createElement("div");

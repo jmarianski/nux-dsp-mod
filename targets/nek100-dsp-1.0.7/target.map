@@ -66,6 +66,10 @@ var   0x0000f ui_part                 ; (H) index of the part being edited (0 = 
 var   0x00069 factory_presets 155     ; 5 x 31 words, initialised data
 var   0x00144 touch                   ; Touch 0..4 = LIGHT2 LIGHT1 NORMAL HARD1 HARD2 (C); sent to MCU as CC 0x32
 var   0x0015e sustain_cc64 4          ; CC64 value per part used by the pedal, defaults 90,64,64,64 (C)
+var   0x0233c sound_names 600         ; pointers to the 500 sound names, then the 100 demo song names
+var   0x025bc effect_names 5          ; pointers to the modulation effect names
+var   0x02617 section_names 9         ; pointers to style section names (PITCH:, CHANGE, ROLL, BRIDGE1..4, ENDING1..2)
+var   0x02745 style_names 20          ; pointers to the 20 style names
 var   0x0275c str_off                 ; "OFF"
 var   0x027c7 touch_names 5           ; pointers to "LIGHT2".."HARD2"
 var   0x027dc reverb_names 4          ; pointers to "OFF","ROOM","HALL","PLATE"

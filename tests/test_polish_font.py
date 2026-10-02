@@ -66,6 +66,16 @@ class TestPolishFont(unittest.TestCase):
             s.call(self.labels["uni_map"])
             self.assertEqual(s.r[1], base + ord(b), c)
 
+    def test_uni_map_small(self):
+        base = self.m.symbols()["font_small_chars"]
+        cases = {"A": "A", "Z": "Z", "9": "9", " ": " ", "`": "`", "{": "{", "a": "A", "z": "Z", "b": "B", "€": "?"}
+        cases.update({c: b.upper() for c, (b, _) in self.art.items()})
+        for c, b in cases.items():
+            s = sim.Sim(self.code)
+            s.r[1] = ord(c)
+            s.call(self.labels["uni_map_small"])
+            self.assertEqual(s.r[1], base + ord(b), c)
+
     def redraw(self, ch, x, y, inv, font=0, fill=0):
         fp = 0x7000
         ram = {0x5000: ord(ch), fp + 0: 0, fp + 1: 0, fp + 2: 0x4f, fp + 5: x & 0xFFFF, fp + 6: y, fp + 7: inv,
