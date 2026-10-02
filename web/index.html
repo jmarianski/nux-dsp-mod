@@ -63,7 +63,7 @@ a { color: var(--accent); }
       <div class="desc">or drop it here / albo upuść go tutaj</div>
     </div>
     <div class="status" id="fstatus"></div>
-    <details style="margin-top:10px"><summary class="desc">Supported firmware / Obsługiwane firmware</summary>
+    <details style="margin-top:10px" open><summary class="desc">Supported firmware / Obsługiwane firmware</summary>
       <ul class="targets" id="targets"></ul>
     </details>
   </div>
@@ -95,7 +95,13 @@ if (location.hostname.endsWith(".github.io")) {  // GitHub Pages: link back to t
 }
 for (const t of TARGETS) {
   const li = document.createElement("li");
-  li.textContent = `${t.device} — ${t.firmware} (${t.input})`;
+  li.textContent = `${t.device} — ${t.input} `;
+  if (t.download) {
+    const a = document.createElement("a");
+    a.href = t.download; a.textContent = "official download / oficjalne pobieranie";
+    a.target = "_blank"; a.rel = "noopener";
+    li.append("· ", a);
+  }
   $("targets").appendChild(li);
 }
 function renderPatches(t) {

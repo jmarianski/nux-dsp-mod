@@ -8,7 +8,7 @@ You bring the official firmware file, the patcher adds the features.
 
 | Instrument | Official file | Target |
 |---|---|---|
-| NUX NEK-100 | `NEK100_DSP_V1.0.7.bin` (SHA-256 `b072b6bd…3bffc0`) | [`targets/nek100-dsp-1.0.7`](targets/nek100-dsp-1.0.7) |
+| NUX NEK-100 | `NEK100_DSP_V1.0.7.bin` (SHA-256 `b072b6bd…3bffc0`), inside the official update package from [nuxaudio.com/product/nek100](https://nuxaudio.com/product/nek100/) (Support → Firmware) | [`targets/nek100-dsp-1.0.7`](targets/nek100-dsp-1.0.7) |
 
 Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one is described in
 [docs/NEW_TARGET.md](docs/NEW_TARGET.md), and `nuxdsp port` does most of the address hunting.
@@ -31,8 +31,8 @@ All of them were tested on a real NEK-100. Presets saved with the stock firmware
 
 ## Use it
 
-**Web (no installation):** open the project's GitHub Pages site, or `web/index.html` from a download of
-this repository (it works offline, your file never leaves the browser). Select the official DSP file from
+**Web (no installation):** open **https://jmarianski.github.io/nux-dsp-mod/**, or `web/index.html` from a
+download of this repository (it works offline, your file never leaves the browser). Select the official DSP file from
 the NUX update package; the page recognises the model and version, shows its patches, and gives you the
 patched file.
 
@@ -79,7 +79,8 @@ Legal background: [docs/LEGAL.md](docs/LEGAL.md). License: MIT.
 Poprawki społeczności do firmware DSP pianin cyfrowych **NUX**. Projekt nie rozpowszechnia kodu NUX:
 oficjalny plik firmware masz u siebie, a patcher dokłada do niego funkcje.
 
-**Obsługiwane:** NUX NEK-100, plik `NEK100_DSP_V1.0.7.bin`. Inne modele (NEK-110 i pozostałe) mają ten sam
+**Obsługiwane:** NUX NEK-100, plik `NEK100_DSP_V1.0.7.bin` z oficjalnej paczki aktualizacji
+([nuxaudio.com/product/nek100](https://nuxaudio.com/product/nek100/), sekcja Support → Firmware). Inne modele (NEK-110 i pozostałe) mają ten sam
 DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](docs/NEW_TARGET.md).
 
 | Patch | Co robi |
@@ -97,7 +98,7 @@ firmware dalej działają.
 > **Na własne ryzyko.** To nieoficjalny projekt, niezwiązany z NUX ani Dream. Zmodyfikowany firmware może
 > naruszać warunki gwarancji. Zachowaj oryginalny plik: wgranie go z powrotem przywraca fabryczny stan.
 
-**Przeglądarka:** otwórz stronę projektu na GitHub Pages albo `web/index.html` z pobranego repozytorium
+**Przeglądarka:** otwórz **https://jmarianski.github.io/nux-dsp-mod/** albo `web/index.html` z pobranego repozytorium
 (działa offline, plik nie opuszcza przeglądarki). Wskaż plik DSP z oficjalnej paczki aktualizacji NUX:
 strona rozpozna model i wersję, pokaże dostępne poprawki i da gotowy plik.
 **Linia poleceń:** `python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin wynik.bin`, a pozostałe polecenia
