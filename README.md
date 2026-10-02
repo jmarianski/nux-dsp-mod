@@ -17,7 +17,7 @@ Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one 
 
 | Patch | What it does |
 |---|---|
-| `boot_preset` | loads a user preset (default 1) at power-on, where the stock firmware loads the factory default. On the preset screen it is called `Default` and the other presets `User1`..`User4` (`DEFAULT_LABEL=0` turns that off) |
+| `boot_preset` | loads a user preset (default 1) at power-on, where the stock firmware loads the factory default. On the preset screen it is called `Default` and the others `User1`..`User4`; `PRESET_LABELS` picks the style (with or without the slot number `1.`, or stock names) |
 | `touch_off` | new Touch setting **OFF**: every note at a fixed velocity (default 127), first in the menu |
 | `sustain_in_preset` | the **Sustain** value (pedal level) is saved in user presets |
 | `version_tag` | version screen shows `DSP:1.0.7B`, so you can see the mod is installed |
@@ -85,7 +85,7 @@ DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](d
 
 | Patch | Co robi |
 |---|---|
-| `boot_preset` | ładuje user preset (domyślnie 1) przy włączeniu. Fabrycznie ładuje się ustawienie domyślne. Na ekranie presetów nazywa się `Default`, a pozostałe `User1`..`User4` (`DEFAULT_LABEL=0` to wyłącza) |
+| `boot_preset` | ładuje user preset (domyślnie 1) przy włączeniu. Fabrycznie ładuje się ustawienie domyślne. Na ekranie presetów nazywa się `Default`, a pozostałe `User1`..`User4`; `PRESET_LABELS` wybiera styl (z numerem slotu `1.` lub bez, albo nazwy fabryczne) |
 | `touch_off` | nowe ustawienie Touch **OFF**: każda nuta ze stałą siłą (domyślnie 127), pierwsze w menu |
 | `sustain_in_preset` | wartość **Sustain** (poziom pedału) zapisuje się w user presetach |
 | `version_tag` | ekran wersji pokazuje `DSP:1.0.7B`, więc widać, że mod jest wgrany |
