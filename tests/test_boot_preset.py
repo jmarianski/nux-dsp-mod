@@ -9,11 +9,11 @@ class Code(dict):
         return 0xFFFF
 
 
-def label(n, boot=1, enabled=1):
+def label(n, boot=1, style=1):
     """Run preset_label's tail for preset n: buffer holds "N.UserN", r1 = terminator index."""
     m = fwmap.load()
     p = patcher.load("boot_preset", m)
-    syms = dict(m.symbols(), BOOT_PRESET=boot, DEFAULT_LABEL=enabled)
+    syms = dict(m.symbols(), BOOT_PRESET=boot, PRESET_LABELS=style)
     words, labels = asm.assemble(p.code, syms, origin=0x9000, label_prefix=p.name)
     buf = syms["text_buf"]
     text = "%d.User%d" % (n + 1, n + 1)
@@ -33,17 +33,22 @@ def label(n, boot=1, enabled=1):
 
 
 class TestDefaultLabel(unittest.TestCase):
-    def test_boot_preset_is_default(self):
-        self.assertEqual(label(0), "1.Default")
-        self.assertEqual(label(2, boot=3), "3.Default")
+    def test_no_numbers(self):
+        self.assertEqual([label(n) for n in range(5)], ["Default", "User1", "User2", "User3", "User4"])
+        self.assertEqual([label(n, boot=3) for n in range(5)], ["User1", "User2", "Default", "User3", "User4"])
+        self.assertEqual([label(n, boot=5) for n in range(5)], ["User1", "User2", "User3", "User4", "Default"])
 
-    def test_others_numbered_user1_to_user4(self):
-        self.assertEqual([label(n) for n in range(1, 5)], ["2.User1", "3.User2", "4.User3", "5.User4"])
-        self.assertEqual([label(n, boot=3) for n in (0, 1, 3, 4)], ["1.User1", "2.User2", "4.User3", "5.User4"])
-        self.assertEqual([label(n, boot=5) for n in range(4)], ["1.User1", "2.User2", "3.User3", "4.User4"])
+    def test_numbered_user1_to_user4(self):
+        self.assertEqual([label(n, style=2) for n in range(5)], ["1.Default", "2.User1", "3.User2", "4.User3", "5.User4"])
+        self.assertEqual([label(n, boot=3, style=2) for n in range(5)],
+                         ["1.User1", "2.User2", "3.Default", "4.User3", "5.User4"])
 
-    def test_disabled(self):
-        self.assertEqual([label(n, enabled=0) for n in range(5)], ["%d.User%d" % (n + 1, n + 1) for n in range(5)])
+    def test_only_default(self):
+        self.assertEqual([label(n, boot=2, style=3) for n in range(5)],
+                         ["1.User1", "2.Default", "3.User3", "4.User4", "5.User5"])
+
+    def test_stock(self):
+        self.assertEqual([label(n, style=0) for n in range(5)], ["%d.User%d" % (n + 1, n + 1) for n in range(5)])
 
 
 if __name__ == "__main__":

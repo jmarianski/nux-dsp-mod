@@ -1,7 +1,7 @@
 .patch boot_preset
 .title "Load a user preset at power-on (factory firmware loads the factory default)"
 .param BOOT_PRESET 1 1 5 "User preset loaded at power-on"
-.param DEFAULT_LABEL 1 0 1 "1 = the preset screen calls that preset \"Default\" and the others User1..User4"
+.param PRESET_LABELS 1 0 3 "Preset screen names: 0 = stock 1.User1..5.User5, 1 = Default, User1..User4, 2 = 1.Default, 2.User1..5.User4, 3 = 1.Default, 2.User2..5.User5"
 
 ; boot_presets ends with a call load_factory_preset(0) (0x025fe: push #0, 0x02600: ccall).
 ; Change its argument and target to load_user_preset(BOOT_PRESET-1), as the panel buttons do.
@@ -13,23 +13,26 @@
 .end
 
 ; preset_label(n) builds the preset screen label "N.UserN" one character at a time in a RAM buffer.
-; Just before the terminating 0 it computes the buffer address: when n is the boot preset, write
-; "Default" over "UserN" there and return the address after it, so the 0 lands right behind "Default".
-; Presets after the boot preset get one number less, so the others read User1..User4 (the "N." prefix
-; is the slot number and is not visible on the screen).
+; Just before the terminating 0 it computes the buffer address. There we rewrite the label (the boot
+; preset becomes "Default", the others are renumbered User1..User4 and/or lose the "N." slot number,
+; as PRESET_LABELS says) and return the address of the terminator, so the 0 lands right behind it.
 .hook 0x0500b expect 0xd14a 0x6a2e      ; addi r1, #text_buf (r1 = index of the terminator)
     call  default_label
 .end
 
 .code
-default_label:
-    ld    r7, [fp+3]          ; preset number n, 0..4
-    cmp   r7, #BOOT_PRESET-1
-    bne   .plain
-    mov   r7, #DEFAULT_LABEL
+default_label:                ; may use r5..r7: the firmware sets them right after
+    mov   r7, #PRESET_LABELS
     cmp   r7, #0
-    beq   .plain
-    li    r1, #text_buf+2      ; after "N."
+    beq   .orig
+    ld    r6, [fp+3]          ; preset number n, 0..4
+    li    r1, #text_buf
+    cmp   r7, #1
+    beq   .start              ; 1: no "N." prefix
+    add   r1, #2              ; keep "N."
+.start:
+    cmp   r6, #BOOT_PRESET-1
+    bne   .user
     mov   r7, #0x44           ; D
     st    [r1+0], r7
     mov   r7, #0x65           ; e
@@ -44,19 +47,28 @@ default_label:
     st    [r1+5], r7
     mov   r7, #0x74           ; t
     st    [r1+6], r7
-    li    r1, #text_buf+9      ; terminator after "N.Default"
+    addi  r1, #7              ; terminator after "Default"
     ret
-.plain:
-    mov   r7, #DEFAULT_LABEL
-    cmp   r7, #0
-    beq   .orig
-    ld    r7, [fp+3]
-    cmp   r7, #BOOT_PRESET-1
-    blt   .orig               ; before the boot preset: numbers unchanged
-    addi  r1, #text_buf-1     ; the last digit, '1'+n
-    add   r7, #0x30           ; -> '0'+n
+.user:
+    mov   r5, r6
+    add   r5, #0x31           ; '1'+n
+    cmp   r6, #BOOT_PRESET-1
+    blt   .digit              ; before the boot preset: number unchanged
+    mov   r7, #PRESET_LABELS
+    cmp   r7, #3
+    beq   .digit              ; 3: others keep their slot number
+    addi  r5, #0xffff         ; after the boot preset: one less
+.digit:
+    mov   r7, #0x55           ; U
     st    [r1+0], r7
-    addi  r1, #1              ; terminator position, as the firmware expects
+    mov   r7, #0x73           ; s
+    st    [r1+1], r7
+    mov   r7, #0x65           ; e
+    st    [r1+2], r7
+    mov   r7, #0x72           ; r
+    st    [r1+3], r7
+    st    [r1+4], r5
+    addi  r1, #5              ; terminator after "UserN"
     ret
 .orig:
     addi  r1, #text_buf
