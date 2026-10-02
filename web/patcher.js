@@ -60,6 +60,7 @@ function applyPatches(target, bytes, selection) {
   const n = out.length / 2, owner = {};
   for (const p of target.patches) {
     if (!(p.name in selection)) continue;
+    for (const r of p.requires || []) if (!(r in selection)) throw `${p.name} needs ${r} too`;
     const words = Object.assign({}, p.words);
     for (const prm of p.params) {
       const v = selection[p.name][prm.name] ?? prm.default;

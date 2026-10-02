@@ -7,6 +7,7 @@ something (with a few `expect` words as a safety check) and *what* to put there 
 .patch my_feature
 .title "One line: what it does"
 .param LEVEL 100 1 127 "Shown to the user in the CLI and the web page"
+.requires polish_font                   ; (optional) patches that must be applied too
 
 .hook 0x02833 expect 0xc1bf 0xc793      ; replace exactly these 2 words ...
     call  my_hook                       ; ... with exactly 2 words
@@ -30,6 +31,18 @@ my_hook:
     .################################.  ; exactly its width x height, '#' = pixel on
     ...
 .end
+.bitmap 0x26 at 2 1                     ; ... or only a rectangle of it (top left 2, 1)
+    ...
+.end
+
+.draw 0x26 at 2 1 30 7 [inverse] [bold] ; clear a 30 x 7 rectangle of image 0x26 and centre
+    1 "ZAPISZ"                          ; text in it, letters' top at row 1 of the rectangle
+.end                                    ; (our pixel font, nuxdsp/pixfont.py)
+
+.table 0x27c7 5                         ; the strings a pointer table (RAM address, 5 pointers)
+    3 "ŚREDNI"                          ; points to, by position (1 = first) ...
+    "HARD1" "MOCNY"                     ; ... or by the original text; laid out anew in the
+.end                                    ; space the table's strings occupy
 ```
 
 Inside `.code`, an `.art` … `.endart` block turns '#'/'.' rows into column words (bit 0 = top row,
@@ -38,10 +51,24 @@ terminated by `0xf000`) that your code can read with `ldc` — see `targets/nek1
 ## Translations
 
 UI texts are partly strings (drawn with a font) and partly **images with text in them** (buttons,
-headers, dialogs). `python3 -m nuxdsp disasm` gives you the strings; to see the images, render the glyph
-table locally (layout in [FIRMWARE_MAP.md](FIRMWARE_MAP.md)) and redraw them with `.bitmap`.
-Strings may contain any character `polish_font` (or a similar patch for your language) can draw.
-Watch the space: the screen is 128 px wide, a button 34 px.
+headers, dialogs). `lang_pl.patch` is a complete example.
+
+- **Strings in pointer tables** (sound and demo names, Touch, reverb, style sections): `.table`. The
+  builder packs the new texts into the space the old ones took, so a translation may be longer when
+  others are shorter; it reports how many words are used. A string that the firmware may also
+  reference from elsewhere (a code literal or another pointer with its address) keeps its address:
+  translated in place if the new text fits, otherwise left as it is with a translated copy for the
+  table. Names stay within 18 characters, the longest original.
+- **Other strings** (ON, OFF, INTRO, …): `.string`, in place, not longer than the original.
+- **Images**: `.draw` writes text with our pixel font (`nuxdsp/pixfont.py`: capitals 5 px high, a
+  narrow form used automatically when the text is too wide, Polish accents in the row above and
+  ogonki in the row below, a bold 7 px font for big words) into a rectangle of the image, so the
+  frame and icons stay. `.bitmap … at X Y` does the same with hand-drawn pixels. To see the images,
+  render the glyph table locally (layout in [FIRMWARE_MAP.md](FIRMWARE_MAP.md)).
+
+Strings may contain any character `polish_font` (or a similar patch for your language) can draw; the
+small 4 x 5 font has no room for accents and shows capitals of the base letter. Watch the space: the
+screen is 128 px wide, a button 34 px.
 
 ## Testing code without the instrument
 

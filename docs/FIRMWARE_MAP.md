@@ -32,7 +32,14 @@ Descriptions marked `(C)` were confirmed on the instrument, `(H)` are hypotheses
 - The display (128×64 mono) is driven by the DSP. All UI graphics are one table of 243 glyphs/images
   (`glyphs` line in the map): 8 words per entry (u32 byte offset, size, width, height), bitmaps stored
   by columns, each column starting on a byte, MSB = top pixel. It holds three fonts (main 7×12, small
-  4×5, big digits), buttons and headers with English text, dialogs and icons.
+  4×5, big digits), buttons and headers with English text, dialogs and icons. Image numbers used by
+  `lang_pl`: buttons 34×9 in pairs normal/selected 0x00–0x33 and 30×9 0xed–0xf2, screen headers
+  64×8 0x34–0x43, dialogs 128×44 0xbe, 0xc5, 0xd1, 0xd8, 0xdf, power-on screen 0xd3.
+- UI strings live in the initialised data, one character per word, 0-terminated. The sound and demo
+  names, effect, section, style, Touch and reverb names are reached through pointer tables
+  (`sound_names`, `touch_names`, …); a few short ones (ON, OFF, INTRO, …) are used directly.
+  The small font has no lowercase letters: its character table points lowercase codes at
+  unrelated glyphs (`polish_font` maps them to capitals).
 - The pools are functions that nothing calls, jumps into or points to (checked over the whole image).
 
 ## Other firmware versions and models

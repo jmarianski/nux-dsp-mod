@@ -11,8 +11,9 @@ from nuxdsp import asm, container, disasm, extract, fwmap, patcher, web
 FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
-# relocated, plus boot_preset's DEFAULT_LABEL (confirmed on hardware too).
-ALL_SHA = "7e4cbab36b211e9f732922eef6da49a88126c28c44a1aa590aced87bfa711310"
+# relocated, plus boot_preset's DEFAULT_LABEL (confirmed on hardware too), polish_font's small font
+# mapping and the full lang_pl translation (not yet tested on hardware).
+ALL_SHA = "22bedbbe7b4b7eec1cbd1e1d5c481c219c4a6d1ca738e08e204ce690338a8d02"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -41,7 +42,8 @@ class TestFirmware(unittest.TestCase):
         full, _ = patcher.build(self.img, self.map, patcher.resolve_patches(patcher.available()))
         orig, fw = container.words(self.img), container.words(full)
         for n in patcher.available():
-            one, _ = patcher.build(self.img, self.map, [patcher.load(n)])
+            p = patcher.load(n)
+            one, _ = patcher.build(self.img, self.map, [patcher.load(r) for r in p.requires] + [p])
             ow = container.words(one)
             for a in range(len(ow) - 1):
                 self.assertIn(ow[a], (orig[a], fw[a]), "%s @%#x" % (n, a))
@@ -62,8 +64,9 @@ class TestFirmware(unittest.TestCase):
 
     def test_extract_round_trip(self):
         # one pool in use: the extracted patch rebuilds the identical image
-        names = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag", "lang_pl"]
-        out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
+        names = ["boot_preset", "touch_off", "sustain_in_preset", "version_tag"]
+        image = patcher.parse('.patch img\n.draw 0x26 at 2 1 30 7\n    1 "ZAPISZ"\n.end\n')
+        out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names) + [image])
         text = extract.extract(self.img, out, self.map)
         self.assertIn(".bitmap 0x26", text)
         again, _ = patcher.build(self.img, self.map, [patcher.parse(text)])
@@ -85,7 +88,8 @@ class TestFirmware(unittest.TestCase):
             web.write_target(self.img, self.map, d)
             cases = [({}, {}), ({"BOOT_PRESET": 4, "DEFAULT_LABEL": 0, "OFF_VELOCITY": 90},
                                 {"boot_preset": {"BOOT_PRESET": 4, "DEFAULT_LABEL": 0},
-                                 "touch_off": {"OFF_VELOCITY": 90}})]
+                                 "touch_off": {"OFF_VELOCITY": 90}}),
+                     ({}, {"version_tag": {}, "polish_font": {}, "lang_pl": {}})]
             for params, sel in cases:
                 names = list(sel) or patcher.available()
                 sel = sel or {n: {} for n in names}

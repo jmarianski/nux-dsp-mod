@@ -1,74 +1,831 @@
 .patch lang_pl
-.title "Polish UI texts (proof of concept): buttons and headers redrawn"
+.title "Polish UI: sound and demo names, menus, buttons, headers and dialogs (needs polish_font)"
+.requires polish_font
 
-; Our own pixel art. Image numbers are glyph table indices (see docs/FIRMWARE_MAP.md).
+; Translation of the user interface. Image texts are drawn at build time with our own pixel font
+; (nuxdsp/pixfont.py): ".draw IMAGE at X Y W H" clears that rectangle of the image and centres the
+; text in it, so frames and icons stay as they are. Accents go in the row above the letters and
+; ogonki in the row below. Image numbers: docs/FIRMWARE_MAP.md. Names and menu values are
+; laid out anew in the space of their pointer tables (".table"), so a name may grow when others
+; shrink. Strings use Unicode; polish_font draws the Polish letters.
 
-.bitmap 0x26                            ; SAVE button -> ZAPISZ
-    .################################.
-    #................................#
-    #..####..##..###..###..###.####..#
-    #.....#.#..#.#..#..#..#.......#..#
-    #....#..####.###...#...##....#...#
-    #...#...#..#.#.....#.....#..#....#
-    #..####.#..#.#....###.###..####..#
-    #................................#
-    ##################################
+; Buttons 34 x 9 (frame; text area 30 x 7, 1 px from the frame), each as a pair: normal and selected (inverse).
+.draw 0x00 at 2 1 30 7
+    1 "AKMP"
+.end
+.draw 0x01 at 2 1 30 7 inverse
+    1 "AKMP"
+.end
+.draw 0x04 at 2 1 30 7
+    1 "ALKAL."
+.end
+.draw 0x05 at 2 1 30 7 inverse
+    1 "ALKAL."
+.end
+.draw 0x06 at 2 1 30 7
+    1 "WRÓĆ"
+.end
+.draw 0x07 at 2 1 30 7 inverse
+    1 "WRÓĆ"
+.end
+.draw 0x08 at 2 1 30 7
+    1 "TAKT"
+.end
+.draw 0x09 at 2 1 30 7 inverse
+    1 "TAKT"
+.end
+.draw 0x0a at 2 1 30 7
+    1 "NA ŻYWO"
+.end
+.draw 0x0b at 2 1 30 7 inverse
+    1 "NA ŻYWO"
+.end
+.draw 0x0e at 2 1 30 7
+    1 "OK"
+.end
+.draw 0x0f at 2 1 30 7 inverse
+    1 "OK"
+.end
+.draw 0x12 at 2 1 30 7
+    1 "WCZYTAJ"
+.end
+.draw 0x13 at 2 1 30 7 inverse
+    1 "WCZYTAJ"
+.end
+.draw 0x18 at 2 1 30 7
+    1 "WYŁ"
+.end
+.draw 0x19 at 2 1 30 7 inverse
+    1 "WYŁ"
+.end
+.draw 0x1a at 2 1 30 7
+    1 "WŁ/WYŁ"
+.end
+.draw 0x1b at 2 1 30 7 inverse
+    1 "WŁ/WYŁ"
+.end
+.draw 0x1c at 2 1 30 7
+    1 "WŁ"
+.end
+.draw 0x1d at 2 1 30 7 inverse
+    1 "WŁ"
+.end
+.draw 0x1e at 2 1 30 7
+    1 "PUNKT"
+.end
+.draw 0x1f at 2 1 30 7 inverse
+    1 "PUNKT"
+.end
+.draw 0x22 at 2 1 30 7
+    1 "RYTM"
+.end
+.draw 0x23 at 2 1 30 7 inverse
+    1 "RYTM"
+.end
+.draw 0x26 at 2 1 30 7
+    1 "ZAPISZ"
+.end
+.draw 0x27 at 2 1 30 7 inverse
+    1 "ZAPISZ"
+.end
+.draw 0x28 at 2 1 30 7
+    1 "DŹWIĘK"
+.end
+.draw 0x29 at 2 1 30 7 inverse
+    1 "DŹWIĘK"
+.end
+.draw 0x2a at 2 1 30 7
+    1 "PODZIAŁ"
+.end
+.draw 0x2b at 2 1 30 7 inverse
+    1 "PODZIAŁ"
+.end
+.draw 0x2e at 2 1 30 7
+    1 "BRZM."
+.end
+.draw 0x2f at 2 1 30 7 inverse
+    1 "BRZM."
+.end
+.draw 0x30 at 2 1 30 7
+    1 "GŁOŚN."
+.end
+.draw 0x31 at 2 1 30 7 inverse
+    1 "GŁOŚN."
+.end
+.draw 0x32 at 2 1 30 7
+    1 "TAK"
+.end
+.draw 0x33 at 2 1 30 7 inverse
+    1 "TAK"
 .end
 
-.bitmap 0x27                            ; SAVE button, selected -> ZAPISZ
-    .################################.
-    ##################################
-    ###....##..##...##...##...#....###
-    ######.#.##.#.##.##.##.#######.###
-    #####.##....#...###.###..####.####
-    ####.###.##.#.#####.#####.##.#####
-    ###....#.##.#.####...#...##....###
-    ##################################
-    ##################################
+; Buttons 30 x 9 (DUAL, MAIN; SUS. stays).
+.draw 0xed at 2 1 26 7
+    1 "PODW."
+.end
+.draw 0xee at 2 1 26 7 inverse
+    1 "PODW."
+.end
+.draw 0xef at 2 1 26 7
+    1 "GŁÓWNE"
+.end
+.draw 0xf0 at 2 1 26 7 inverse
+    1 "GŁÓWNE"
 .end
 
-.bitmap 0x12                            ; LOAD button -> WCZYTAJ
-    .################################.
-    #................................#
-    #.#...#..##.###.#.#.###..#....#..#
-    #.#...#.#.....#.#.#..#..#.#...#..#
-    #.#.#.#.#....#...#...#..###...#..#
-    #.#.#.#.#...#....#...#..#.#.#.#..#
-    #..#.#...##.###..#...#..#.#..#...#
-    #................................#
-    ##################################
+; Screen headers 64 x 8: white text on the black bar left of its slanted end.
+.draw 0x34 at 0 1 56 7 inverse
+    1 "BATERIA"
+.end
+.draw 0x37 at 0 1 56 7 inverse
+    1 "PODZIAŁ"
+.end
+.draw 0x38 at 0 1 56 7 inverse
+    1 "2 BRZMIENIA"
+.end
+.draw 0x39 at 0 1 56 7 inverse
+    1 "FUNKCJE"
+.end
+.draw 0x3b at 0 1 56 7 inverse
+    1 "WCZYTAJ"
+.end
+.draw 0x3c at 0 1 56 7 inverse
+    1 "OKTAWA"
+.end
+.draw 0x3f at 0 1 56 7 inverse
+    1 "POGŁOS"
+.end
+.draw 0x40 at 0 1 56 7 inverse
+    1 "ZAPISZ"
+.end
+.draw 0x41 at 0 1 56 7 inverse
+    1 "PRZYC. SUS."
+.end
+.draw 0x42 at 0 1 56 7 inverse
+    1 "CZUŁOŚĆ"
 .end
 
-.bitmap 0x13                            ; LOAD button, selected -> WCZYTAJ
-    .################################.
-    ##################################
-    ##.###.##..#...#.#.#...##.####.###
-    ##.###.#.#####.#.#.##.##.#.###.###
-    ##.#.#.#.####.###.###.##...###.###
-    ##.#.#.#.###.####.###.##.#.#.#.###
-    ###.#.###..#...##.###.##.#.##.####
-    ##################################
-    ##################################
+; Dialogs 128 x 44: two lines right of the icon.
+.draw 0xbe at 40 10 88 22
+    4 "USTAW TYP"
+    15 "BATERII !"
+.end
+.draw 0xd1 at 40 10 88 22
+    4 "WCZYTAĆ PRESET?"
+    15 "NA PEWNO?"
+.end
+.draw 0xd8 at 40 10 88 22
+    4 "RESET FABRYCZNY?"
+    15 "NA PEWNO?"
+.end
+.draw 0xdf at 40 10 88 22
+    4 "ZAPISAĆ PRESET?"
+    15 "NA PEWNO?"
+.end
+.draw 0xc5 at 0 8 128 9                 ; above the tick
+    2 "GOTOWE!"
+.end
+.draw 0xd3 at 0 13 88 15 bold           ; power-on screen, below the logo
+    5 "WITAJ!"
 .end
 
-.bitmap 0x40                            ; SAVE header -> ZAPISZ
-    #########################################################.......
-    ##########################################################......
-    ##############....##..##...##...##...#....#################.....
-    #################.#.##.#.##.##.##.#######.##################....
-    ################.##....#...###.###..####.####################...
-    ###############.###.##.#.#####.#####.##.######################..
-    ##############....#.##.#.####...#...##....#####################.
-    ################################################################
+; Single strings, in place (not longer than the original).
+.string "ON" "WŁ"
+.string "OFF" "WYŁ"
+.string "ON/OFF" "WŁ/WYŁ"
+.string "INTRO" "WSTĘP"
+.string "ACMP" "AKMP"
+.string "BEAT" "TAKT"
+.string "VOICE" "BRZM."
+.string "VOL" "GŁ."
+
+; Touch (touch_names) and reverb types (reverb_names).
+.table 0x27c7 5
+    1 "LEKKI+"
+    2 "LEKKI"
+    3 "ŚREDNI"
+    4 "MOCNY"
+    5 "MOCNY+"
+.end
+.table 0x27dc 4
+    2 "MAŁA"
+    3 "DUŻA"
+    4 "PŁYTA"
 .end
 
-.bitmap 0x3b                            ; LOAD header -> WCZYTAJ
-    #########################################################.......
-    ##########################################################......
-    ##########.###.##...#....#.###.#.....##..#####.############.....
-    ##########.###.#.#######.##.#.####.###.##.####.#############....
-    ##########.#.#.#.######.####.#####.###....####.##############...
-    ##########.#.#.#.#####.#####.#####.###.##.#.##.###############..
-    ###########.#.###...#....###.#####.###.##.##..#################.
-    ################################################################
+; Style sections (section_names); FILTER and ENDING are separate strings.
+.table 0x2617 9
+    "CHANGE" "ZMIANA"
+    "BRIDGE1" "MOSTEK1"
+    "BRIDGE2" "MOSTEK2"
+    "BRIDGE3" "MOSTEK3"
+    "BRIDGE4" "MOSTEK4"
+    "ENDING1" "KONIEC1"
+    "ENDING2" "KONIEC2"
+.end
+.string "FILTER" "FILTR"
+.string "ENDING" "KONIEC"
+
+; Sounds 1..500 and demo songs 1..100 (sound_names, one table of 600 names). Style names stay.
+.table 0x233c 600
+    1 "1.Fortepian"
+    2 "2.Fortepian zwykły"
+    3 "3.Jasny fortepian"
+    4 "4.Fort.Filharmonia"
+    5 "5.Emo pianino"
+    6 "6.Jazz pianino"
+    7 "7.Pianino pop"
+    8 "8.Honky-tonk 1"
+    9 "9.Honky-tonk 2"
+    10 "10.Pianino tłum."
+    11 "11.Pianino stereo"
+    12 "12.E-pianino 1"
+    13 "13.E-pianino 2"
+    14 "14.E-pianino 3"
+    15 "15.E-pianino 4"
+    16 "16.E-pianino 5"
+    17 "17.EP 80s"
+    18 "18.Upiorne EP"
+    19 "19.Proste EP 1"
+    20 "20.Proste EP 2"
+    21 "21.Proste EP 3"
+    22 "22.Proste EP 4"
+    23 "23.Proste EP 5"
+    24 "24.Proste EP 6"
+    25 "25.Proste EP 7"
+    26 "26.Proste EP 8"
+    27 "27.Proste EP 9"
+    28 "28.Proste EP 10"
+    29 "29.Proste EP 11"
+    30 "30.EP dzwonek"
+    31 "31.EP złożone"
+    32 "32.EP księżyc"
+    33 "33.EP piszcz."
+    34 "34.EP osobliwe"
+    35 "35.Akordeon 1"
+    36 "36.Akordeon 2"
+    37 "37.Akordeon 3"
+    38 "38.Hammond"
+    39 "39.Organy 1"
+    40 "40.Organy 2"
+    41 "41.Organy 3"
+    42 "42.Organy 4"
+    43 "43.Organy 5"
+    44 "44.Organy 6"
+    45 "45.Organy 7"
+    46 "46.Organy 8"
+    47 "47.Organy 9"
+    48 "48.Organy 10"
+    49 "49.Organy 11"
+    50 "50.Organy 12"
+    51 "51.Org.kośc. 1"
+    52 "52.Org.kośc. 2"
+    53 "53.Org.kośc. 3"
+    54 "54.Org.kośc. 4"
+    55 "55.Harmoniczne"
+    56 "56.Fisharmonia"
+    57 "57.Klas.str.1"
+    58 "58.Klas.str.2"
+    59 "59.Klas.str.3"
+    60 "60.Klas.str.4"
+    61 "61.Klasyczna 1"
+    62 "62.Klasyczna 2"
+    63 "63.Klasyczna 3"
+    64 "64.Klasyczna 4"
+    65 "65.Klasyczna palce"
+    66 "66.Git.stalowa 1"
+    67 "67.Git.stalowa 2"
+    68 "68.Git.jazz 1"
+    69 "69.Git.jazz 2"
+    70 "70.Git.jazz palce"
+    71 "71.Jazz lśniąca"
+    72 "72.Git.czysta 1"
+    73 "73.Git.czysta 2"
+    74 "74.Git.czysta 3"
+    75 "75.Git.czysta 4"
+    76 "76.Git.czysta 5"
+    77 "77.Git.akust.1"
+    78 "78.Git.akust.2"
+    79 "79.Git.akust.3"
+    80 "80.Git.akust.4"
+    81 "81.Git.przest.1"
+    82 "82.Git.przest.2"
+    83 "83.Git.przest.3"
+    84 "84.Git.przest.4"
+    85 "85.Git.przest.5"
+    86 "86.Git.przest.6"
+    87 "87.Git.tłum.1"
+    88 "88.Git.tłum.2"
+    89 "89.Git.funk 1"
+    90 "90.Git.funk 2"
+    91 "91.Git.slap"
+    92 "92.Git.hawajska"
+    93 "93.Git.flażolet 1"
+    94 "94.Gitara 1"
+    95 "95.Gitara 2"
+    96 "96.Gitara 3"
+    97 "97.Gitara 4"
+    98 "98.Bas acid"
+    99 "99.Bas w dół"
+    100 "100.Bas w górę"
+    101 "101.Bas palcami"
+    102 "102.Bas kostką"
+    103 "103.Bas fretless"
+    104 "104.Bas synt.1"
+    105 "105.Bas synt.2"
+    106 "106.Bas synt.3"
+    107 "107.Bas synt.4"
+    108 "108.Szorstki bas"
+    109 "109.Szeroki bas 1"
+    110 "110.Szeroki bas 2"
+    111 "111.Szeroki bas 3"
+    112 "112.Bas acid lamp."
+    113 "113.Chwytliwy bas"
+    114 "114.Mocny bas"
+    115 "115.Bas disco"
+    116 "116.Bas 1"
+    117 "117.Bas przest.1"
+    118 "118.Bas przest.2"
+    119 "119.Skrzypce"
+    120 "120.Altówka"
+    121 "121.Wiolonczela"
+    122 "122.Wiolonczela 1"
+    123 "123.Wiolonczela 2"
+    124 "124.Kontrabas"
+    125 "125.Smyczki 1"
+    126 "126.Smyczki 2"
+    127 "127.Smyczki 3"
+    128 "128.Smyczki pizz."
+    129 "129.Tutti 1"
+    130 "130.Tutti 2"
+    131 "131.Tutti 3"
+    132 "132.Tutti 4"
+    133 "133.Róg"
+    134 "134.Waltornia 1"
+    135 "135.Waltornia 2"
+    136 "136.Waltornia 3"
+    137 "137.Saksofon 1"
+    138 "138.Sax tenorowy"
+    139 "139.Sax sopranowy"
+    140 "140.Sax basowy"
+    141 "141.Sax altowy 1"
+    142 "142.Sax altowy 2"
+    143 "143.Sax jazzowy"
+    144 "144.Trąbka"
+    145 "145.Puzon"
+    146 "146.Tuba"
+    147 "147.Rogi"
+    148 "148.Trąbki"
+    149 "149.Puzony"
+    150 "150.Tuby"
+    151 "151.Blacha 1"
+    152 "152.Blacha 2"
+    153 "153.Blacha 3"
+    154 "154.Flet 1"
+    155 "155.Flet 2"
+    156 "156.Flety"
+    157 "157.Pikolo 1"
+    158 "158.Obój 1"
+    159 "159.Oboje"
+    160 "160.Rożek ang.1"
+    161 "161.Rożek ang.2"
+    162 "162.Rożek ang.3"
+    163 "163.Klarnet 1"
+    164 "164.Klarnet 2"
+    165 "165.Klarnety"
+    166 "166.Fagot 1"
+    167 "167.Fagot 2"
+    168 "168.Fagoty"
+    169 "169.Harfa 1"
+    170 "170.Harfa 2"
+    171 "171.Harfa 3"
+    172 "172.Harfa 4"
+    173 "173.Klawesyn 1"
+    174 "174.Klawesyn 2"
+    175 "175.Klawesyn 3"
+    176 "176.Bas perkus."
+    177 "177.E-banjo"
+    178 "178.Banjo 1"
+    179 "179.Wibra"
+    180 "180.Nowy FM"
+    181 "181.Saite"
+    182 "182.Guqin"
+    183 "183.E-guqin"
+    184 "184.Erhu"
+    185 "185.Pipa"
+    186 "186.Chińska lutnia"
+    187 "187.Etno szarpane"
+    188 "188.Feed 1"
+    189 "189.Feed 2"
+    190 "190.Stroik 1"
+    191 "191.Stroik 2"
+    192 "192.Sitar"
+    193 "193.Shakuhachi 1"
+    194 "194.Dzwon Shape"
+    195 "195.Senny dzwonek"
+    196 "196.Klawikord 1"
+    197 "197.Suona+smyczki"
+    198 "198.Kastaniety"
+    199 "199.Okaryna"
+    200 "200.Bando"
+    201 "201.Syntezator"
+    202 "202.Butelka"
+    203 "203.Vox"
+    204 "204.Bęben fusion"
+    205 "205.Kotły"
+    206 "206.Czelesta"
+    207 "207.Dzwonki 1"
+    208 "208.Dzwonki 2"
+    209 "209.Dzwonki 3"
+    210 "210.Dzwonki 4"
+    211 "211.Dzwonki 5"
+    212 "212.Marimba 1"
+    213 "213.Marimba 2"
+    214 "214.Marimba 3"
+    215 "215.Ksylofon"
+    216 "216.Dzwoneczek"
+    217 "217.Mroczny dzwon"
+    218 "218.Wibrafon 1"
+    219 "219.Wibrafon 2"
+    220 "220.Piła muzyczna"
+    221 "221.Kuranty"
+    222 "222.Dzwony 1"
+    223 "223.Dzwony 2"
+    224 "224.Dzwony 3"
+    225 "225.Szklany dzwon"
+    226 "226.Metal.dzwon"
+    227 "227.Bęben chiński"
+    228 "228.Gong"
+    229 "229.Bęben taiko"
+    230 "230.Tom-tom"
+    231 "231.Bęben synt."
+    232 "232.Pusher"
+    233 "233.Woodblock"
+    234 "234.Kalimba"
+    235 "235.Mandolina 1"
+    236 "236.Mandolina 2"
+    237 "237.Harmonijka"
+    238 "238.Lutnia"
+    239 "239.Santur"
+    240 "240.Fletnia Pana"
+    241 "241.Dawny flet"
+    242 "242.Butelka"
+    243 "243.Dudy"
+    244 "244.Suona wysoka"
+    245 "245.Chór Aah"
+    246 "246.Głos Ooh"
+    247 "247.Głos Doo"
+    248 "248.Chór"
+    249 "249.Cukr.wróżka"
+    250 "250.Git.synt.1"
+    251 "251.Git.synt.2"
+    252 "252.Git.synt.3"
+    253 "253.Git.synt.4"
+    254 "254.Git.synt.5"
+    255 "255.Blacha synt.1"
+    256 "256.Blacha synt.2"
+    257 "257.E-kryształ"
+    258 "258.Neon"
+    259 "259.Smyczki synt."
+    260 "260.Prostokąt"
+    261 "261.Kryształ 1"
+    262 "262.Ciepły 1"
+    263 "263.Ciepły 2"
+    264 "264.Fantastyczny"
+    265 "265.Lead 1"
+    266 "266.Smyczek"
+    267 "267.Halo"
+    268 "268.Ścieżka dźw."
+    269 "269.Gobliny 1"
+    270 "270.Gobliny 2"
+    271 "271.Bas+lead"
+    272 "272.Echa 1"
+    273 "273.Sci-fi"
+    274 "274.Mroczne w.1"
+    275 "275.Mroczne w.2"
+    276 "276.Erhu syntez."
+    277 "277.Pad miękki"
+    278 "278.Pad Aah"
+    279 "279.Pad retro"
+    280 "280.Bezmiar 1"
+    281 "281.Bezmiar 2"
+    282 "282.Szczęście 1"
+    283 "283.Szczęście 2"
+    284 "284.Ciemność"
+    285 "285.Warp"
+    286 "286.Piła+prost."
+    287 "287.Migotanie 1"
+    288 "288.Migotanie 2"
+    289 "289.Brokat 1"
+    290 "290.Brokat 2"
+    291 "291.Metal"
+    292 "292.Synt.szarp.1"
+    293 "293.Synt.szarp.2"
+    294 "294.Synt.szarp.3"
+    295 "295.Synt.szarp.4"
+    296 "296.Synt.szarp.5"
+    297 "297.Synt.szarp.6"
+    298 "298.Lead flet syn."
+    299 "299.Lead etniczny"
+    300 "300.Lead płacz"
+    301 "301.Jasny 1"
+    302 "302.Jasny 2"
+    303 "303.Bębny stalowe"
+    304 "304.Lead Nek 1"
+    305 "305.Lead Nek 2"
+    306 "306.Lead Psy"
+    307 "307.Lead Slate"
+    308 "308.Lead 1984"
+    309 "309.Lead prosty 1"
+    310 "310.Lead prosty 2"
+    311 "311.Lead prosty 3"
+    312 "312.Lead prosty 4"
+    313 "313.Lead prosty 5"
+    314 "314.Bounce Drive"
+    315 "315.Bounce czysty"
+    316 "316.Lead blacha"
+    317 "317.Lead chór 1"
+    318 "318.Lead chór 2"
+    319 "319.Ciemny tancerz"
+    320 "320.Usunięcie"
+    321 "321.Krasnolud"
+    322 "322.Szkło"
+    323 "323.Brokat"
+    324 "324.Ponury"
+    325 "325.Rozbłysk"
+    326 "326.Gorąco"
+    327 "327.Marginalny"
+    328 "328.Silnik"
+    329 "329.Prostok.filtr."
+    330 "330.Kosmos 1"
+    331 "331.Zjazd 1"
+    332 "332.Szum narast."
+    333 "333.FX lód 1"
+    334 "334.FX wah-wah"
+    335 "335.FX zmiana"
+    336 "336.FX dzwoneczki"
+    337 "337.FX narast."
+    338 "338.FX nauka"
+    339 "339.FX bong"
+    340 "340.FX strzelanie"
+    341 "341.FX pukanie"
+    342 "342.FX łomot"
+    343 "343.FX ptaki"
+    344 "344.FX sygnał"
+    345 "345.FX wystrzał"
+    346 "346.FX dno 1"
+    347 "347.FX dno 2"
+    348 "348.FX morze"
+    349 "349.FX ptak"
+    350 "350.FX rozszerz.1"
+    351 "351.FX rozszerz.2"
+    352 "352.FX wah wah"
+    353 "353.FX dzwonek"
+    354 "354.FX silnik"
+    355 "355.FX panika"
+    356 "356.FX prędkość"
+    357 "357.FX cios"
+    358 "358.FX alarm"
+    359 "359.FX pociąg"
+    360 "360.FX wiatr"
+    361 "361.FX wzrost"
+    362 "362.FX telefon"
+    363 "363.FX śmigło"
+    364 "364.FX deszcz"
+    365 "365.FX śmiech"
+    366 "366.FX krzyk"
+    367 "367.FX głos"
+    368 "368.FX nerwowy"
+    369 "369.FX obcasy"
+    370 "370.FX broń 1"
+    371 "371.FX broń 2"
+    372 "372.FX broń 3"
+    373 "373.Fortep.akust."
+    374 "374.Jasny fortep."
+    375 "375.E-pianino 1"
+    376 "376.E-pianino 2"
+    377 "377.Honky-tonk"
+    378 "378.Rhodes"
+    379 "379.Klawesyn"
+    380 "380.Klawikord"
+    381 "381.Czelesta"
+    382 "382.Dzwonki"
+    383 "383.Pozytywka"
+    384 "384.Wibrafon"
+    385 "385.Marimba"
+    386 "386.Ksylofon"
+    387 "387.Dzwony rurowe"
+    388 "388.Santur"
+    389 "389.Organy 1"
+    390 "390.Organy 2"
+    391 "391.Organy 3"
+    392 "392.Org.kośc."
+    393 "393.Fisharmonia"
+    394 "394.Akordeon"
+    395 "395.Harmonijka"
+    396 "396.Bandoneon"
+    397 "397.Git.klasyczna"
+    398 "398.Git.stalowa"
+    399 "399.Git.jazz"
+    400 "400.Git.wyciszona"
+    401 "401.Git.stłumiona"
+    402 "402.Git.overdrive"
+    403 "403.Git.przest."
+    404 "404.Git.flażolety"
+    405 "405.Bas akust."
+    406 "406.E-bas palcami"
+    407 "407.E-bas kostką"
+    408 "408.Bas fretless"
+    409 "409.Bas slap 1"
+    410 "410.Bas slap 2"
+    411 "411.Bas synt.1"
+    412 "412.Bas synt.2"
+    413 "413.Skrzypce"
+    414 "414.Altówka"
+    415 "415.Wiolonczela"
+    416 "416.Kontrabas"
+    417 "417.Smyczki trem."
+    418 "418.Smyczki pizz."
+    419 "419.Harfa"
+    420 "420.Kotły"
+    421 "421.Smyczki"
+    422 "422.Kojące str.1"
+    423 "423.Kojące str.2"
+    424 "424.Smyczki synt."
+    425 "425.Chór Aah"
+    426 "426.Głos Doo"
+    427 "427.Głos syntez."
+    428 "428.Orkiestra hit"
+    429 "429.Trąbka"
+    430 "430.Puzon"
+    431 "431.Tuba"
+    432 "432.Trąbka tłum."
+    433 "433.Waltornia"
+    434 "434.Sekcja dęta"
+    435 "435.Blacha synt.1"
+    436 "436.Blacha synt.2"
+    437 "437.Sax sopranowy"
+    438 "438.Sax altowy"
+    439 "439.Sax tenorowy"
+    440 "440.Sax basowy"
+    441 "441.Obój"
+    442 "442.Rożek ang."
+    443 "443.Fagot"
+    444 "444.Klarnet"
+    445 "445.Pikolo"
+    446 "446.Flet"
+    447 "447.Piszczałka"
+    448 "448.Fletnia Pana"
+    449 "449.Butelka"
+    450 "450.Shakuhachi"
+    451 "451.Gwizdek"
+    452 "452.Okaryna"
+    453 "453.Lead prostok."
+    454 "454.Lead piła"
+    455 "455.Lead 1"
+    456 "456.Lead 2"
+    457 "457.Lead 3"
+    458 "458.Lead głos"
+    459 "459.Lead kwinty"
+    460 "460.Bas+lead"
+    461 "461.Lead senny"
+    462 "462.Pad ciepły"
+    463 "463.Pad polisynt."
+    464 "464.Pad kosmos"
+    465 "465.Pad smyczek"
+    466 "466.Pad metaliczny"
+    467 "467.Pad halo"
+    468 "468.Pad sweep"
+    469 "469.FX lód"
+    470 "470.FX ścieżka"
+    471 "471.FX kryształ"
+    472 "472.FX atmosfera"
+    473 "473.FX jasny"
+    474 "474.FX gobliny"
+    475 "475.FX echa"
+    476 "476.FX sci-fi"
+    477 "477.Sitar"
+    478 "478.Banjo"
+    479 "479.Shamisen"
+    480 "480.Koto"
+    481 "481.Kalimba"
+    482 "482.Suona"
+    483 "483.Erhu"
+    484 "484.Suona wysoka"
+    485 "485.Dzwoneczek"
+    486 "486.Agogo"
+    487 "487.Bębny stalowe"
+    488 "488.Woodblock"
+    489 "489.Bęben taiko"
+    490 "490.Tom melodycz."
+    491 "491.Bęben synt."
+    492 "492.Talerz wstecz"
+    493 "493.Szum progów"
+    494 "494.Trąbienie"
+    495 "495.Brzeg morza"
+    496 "496.Śpiew ptaków"
+    497 "497.Telefon"
+    498 "498.Helikopter"
+    499 "499.Oklaski"
+    500 "500.Strzał"
+    501 "1.Marzenie"
+    502 "2.Taniec elfów"
+    503 "3.Kukułka"
+    504 "4.Etiuda op10-10"
+    505 "5.Marta"
+    506 "6.Trzmiel"
+    507 "7.Etiuda 740-49"
+    508 "8.Etiuda 105-8"
+    509 "9.Perła"
+    510 "10.Jaskółka"
+    511 "11.Impromptu"
+    512 "12.Źródlana woda"
+    513 "13.Marsz"
+    514 "14.Gaduła"
+    515 "15.Etiuda 105-2"
+    516 "16.Burza"
+    517 "17.Sonata Dussek"
+    518 "18.Pieśń wiosenna"
+    519 "19.Uroda"
+    520 "20.Etiuda 100 nr20"
+    521 "21.Op.10 nr 5"
+    522 "22.Wahanie"
+    523 "23.Op.25 nr 11"
+    524 "24.Etiuda 105-9"
+    525 "25.Etiuda 740-35"
+    526 "26.Szybki krok"
+    527 "27.Nokturn Chopin"
+    528 "28.Etiuda Motylek"
+    529 "29.Ballada"
+    530 "30.Psi walc"
+    531 "31.Irytacja"
+    532 "32.Sen lalki"
+    533 "33.Blue"
+    534 "34.Pastorałka"
+    535 "35.Na polowanie"
+    536 "36.Etiuda 105-1"
+    537 "37.Humoreska"
+    538 "38.Szybki taniec"
+    539 "39.Naprzód"
+    540 "40.Walc pożegn."
+    541 "41.Rozstanie"
+    542 "42.Czysty strumień"
+    543 "43.Deszczowe"
+    544 "44.Melodia F-dur"
+    545 "45.Aria"
+    546 "46.Księżycowa"
+    547 "47.Powrót"
+    548 "48.Sonata Clementi"
+    549 "49.Etiuda 105-7"
+    550 "50.Tarantela"
+    551 "51.Żegnaj"
+    552 "52.Etiuda 105-4"
+    553 "53.Paplanie"
+    554 "54.Poranny dzwon"
+    555 "55.Etiuda 105-3"
+    556 "56.Ukojenie"
+    557 "57.Patetyczna"
+    558 "58.Etiuda109 nr18"
+    559 "59.Op.36 nr 6"
+    560 "60.Inwencja nr 1"
+    561 "61.Walc op64-2"
+    562 "62.Menuet Bach"
+    563 "63.Nocny taniec"
+    564 "64.Cyganie"
+    565 "65.Wykonawca"
+    566 "66.Szept"
+    567 "67.Maple Leaf Rag"
+    568 "68.Polonez"
+    569 "69.Op.28 nr 3"
+    570 "70.Op.28 nr 4"
+    571 "71.Op.28 nr 8"
+    572 "72.Op.28 nr 11"
+    573 "73.Op.28 nr 12"
+    574 "74.Op.28 nr 14"
+    575 "75.Op.28 nr 16"
+    576 "76.Op.28 nr 17"
+    577 "77.Op.28 nr 18"
+    578 "78.Op.28 nr 19"
+    579 "79.Op.28 nr 22"
+    580 "80.Op.28 nr 23"
+    581 "81.Op.28 nr 24"
+    582 "82.Op.72 nr 1"
+    583 "83.Wielka przygoda"
+    584 "84.Chochlik"
+    585 "85.Op.25 nr 1"
+    586 "86.Op.25 nr 3"
+    587 "87.Op.25 nr 4"
+    588 "88.Op.25 nr 11"
+    589 "89.Etiuda op36-3"
+    590 "90.Etiuda op36-5"
+    591 "91.Etiuda op36-6"
+    592 "92.Etiuda op36-7"
+    593 "93.Etiuda op36-9"
+    594 "94.Etiuda op36-10"
+    595 "95.Etiuda op36-11"
+    596 "96.Etiuda op36-12"
+    597 "97.Etiuda op36-13"
+    598 "98.Etiuda op36-16"
+    599 "99.Etiuda op36-17"
+    600 "100.Etiuda op38-2"
 .end
