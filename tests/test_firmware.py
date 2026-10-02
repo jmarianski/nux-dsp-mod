@@ -12,7 +12,7 @@ FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus boot_preset's DEFAULT_LABEL (confirmed on hardware too), polish_font's small font
-# mapping and the full lang_pl translation (not yet tested on hardware).
+# mapping and the full lang_pl translation (all confirmed on hardware).
 ALL_SHA = "22bedbbe7b4b7eec1cbd1e1d5c481c219c4a6d1ca738e08e204ce690338a8d02"
 
 

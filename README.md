@@ -24,8 +24,7 @@ Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one 
 | `polish_font` *(optional)* | Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font, strings in Unicode. A base for translations |
 | `lang_pl` *(optional, needs `polish_font`)* | Polish UI: the 500 sound and 100 demo names, Touch and reverb values, style sections, buttons, screen headers and dialogs |
 
-All of them were tested on a real NEK-100, except the full `lang_pl` (so far only ZAPISZ / WCZYTAJ were).
-Presets saved with the stock firmware keep working.
+All of them were tested on a real NEK-100. Presets saved with the stock firmware keep working.
 
 > **Use at your own risk.** Unofficial, not affiliated with NUX or Dream. Modified firmware may void your
 > warranty. Keep the official file: flashing it back restores the original firmware.
@@ -93,8 +92,8 @@ DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](d
 | `polish_font` *(opcjonalny)* | polskie litery w głównym foncie UI, napisy w Unicode. Baza pod tłumaczenia |
 | `lang_pl` *(opcjonalny, wymaga `polish_font`)* | polski interfejs: 500 nazw brzmień i 100 dem, wartości Touch i pogłosu, sekcje stylów, przyciski, nagłówki ekranów i okna dialogowe |
 
-Wszystkie patche są przetestowane na prawdziwym NEK-100, poza pełnym `lang_pl` (na razie
-sprawdzone były tylko ZAPISZ / WCZYTAJ). Presety zapisane na oryginalnym firmware dalej działają.
+Wszystkie patche są przetestowane na prawdziwym NEK-100. Presety zapisane na oryginalnym
+firmware dalej działają.
 
 > **Na własne ryzyko.** To nieoficjalny projekt, niezwiązany z NUX ani Dream. Zmodyfikowany firmware może
 > naruszać warunki gwarancji. Zachowaj oryginalny plik: wgranie go z powrotem przywraca fabryczny stan.
