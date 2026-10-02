@@ -17,10 +17,19 @@ from collections import Counter, defaultdict
 from . import container, fwmap as fwmap_mod, isa, patcher
 
 WINDOW = 12  # instructions per signature
+FUZZY_WINDOW = 64  # words compared by the fallback
+FUZZY_MIN = 0.75   # fraction of equal words a fuzzy match needs
+RARE = 64          # anchors occurring more often than this are not used by the fallback
+
+
+def norm(x):
+    """Word as compared: short branches lose their offset (it changes when code in between changes)."""
+    d = isa.decode(x, 0) if not isa.is_two_words(x) else None
+    return x & 0xFF00 if d and any(isinstance(t, tuple) and t[0] == "rel8" for t in d[1]) else x
 
 
 def signature(w, a, n=WINDOW):
-    """Masked instruction words from a: tuple of (word, is_literal_masked) and the literal positions."""
+    """Normalised words from a (literal words of two-word instructions -> None), literal positions."""
     sig, lits = [], []
     while len(sig) < n and a < len(w):
         x = w[a]
@@ -29,7 +38,7 @@ def signature(w, a, n=WINDOW):
             lits.append(a + 1)
             a += 2
         else:
-            sig.append(x)
+            sig.append(norm(x))
             a += 1
     return tuple(sig), lits
 
@@ -37,45 +46,79 @@ def signature(w, a, n=WINDOW):
 class Finder:
     def __init__(self, w):
         self.w = w
+        self.n = [norm(x) for x in w]
         self.index = defaultdict(list)
         for a in range(len(w) - 2):
-            self.index[tuple(w[a:a + 2])].append(a)
+            self.index[(self.n[a], self.n[a + 1])].append(a)
+
+    def anchors(self, sig):
+        return [i for i in range(len(sig) - 1) if None not in sig[i:i + 2]]
+
+    def score(self, sig, a):
+        if a < 0 or a + len(sig) > len(self.n):
+            return 0
+        return sum(1 for i, v in enumerate(sig) if v is not None and self.n[a + i] == v)
 
     def find(self, sig):
-        """Addresses in the new image whose masked window equals sig (None: window has no anchor)."""
-        start = next((i for i in range(len(sig) - 1) if None not in sig[i:i + 2]), None)
-        if start is None:
+        """Addresses whose normalised window equals sig (None: window has no anchor)."""
+        an = self.anchors(sig)
+        if not an:
             return None
-        out = []
-        for b in self.index.get(tuple(sig[start:start + 2]), []):
-            a = b - start
-            if a < 0 or a + len(sig) > len(self.w):
-                continue
-            if all(v is None or self.w[a + i] == v for i, v in enumerate(sig)):
-                out.append(a)
-        return out
+        start = an[0]
+        need = sum(v is not None for v in sig)
+        return [b - start for b in self.index.get(sig[start:start + 2], []) if self.score(sig, b - start) == need]
+
+    def fuzzy(self, sig):
+        """Best approximate position: (address, fraction equal) when clearly better than the runner-up."""
+        votes = Counter()
+        for i in self.anchors(sig):
+            hits = self.index.get(sig[i:i + 2], [])
+            if len(hits) <= RARE:
+                votes.update(b - i for b in hits)
+        need = sum(v is not None for v in sig)
+        ranked = sorted(((self.score(sig, a), a) for a, _ in votes.most_common(20)), reverse=True)
+        if not ranked or not need:
+            return None, 0
+        best, a = ranked[0]
+        second = ranked[1][0] if len(ranked) > 1 else 0
+        if best >= FUZZY_MIN * need and best - second >= 0.15 * need:
+            return a, best / need
+        return None, best / need
 
 
 def match(old_w, finder, a):
-    """-> (new address or None, number of candidates, {old literal: new literal}).
+    """-> (new address or None, how: 'exact' / 'fuzzy 83%' / 'N candidates', {old literal: new literal}).
 
-    The window grows until it is unique (short functions and prologues repeat a lot)."""
+    The window grows until it is unique (short functions and prologues repeat a lot); when no window
+    matches exactly, the best approximate match over FUZZY_WINDOW words is taken if it is clear."""
+    hits = None
     for n in (WINDOW, 2 * WINDOW, 4 * WINDOW, 8 * WINDOW):
         sig, lits = signature(old_w, a, n)
         hits = finder.find(sig)
         if hits is not None and len(hits) <= 1:
             break
+    how = "exact"
     if not hits or len(hits) != 1:
-        return None, len(hits or []), {}
+        if hits:
+            return None, "%d candidates" % len(hits), {}
+        sig, lits = signature(old_w, a, FUZZY_WINDOW)
+        b, q = finder.fuzzy(sig)
+        if b is None:
+            return None, "no match (best %d%%)" % (100 * q), {}
+        hits, how = [b], "fuzzy %d%%" % (100 * q)
     b = hits[0]
-    return b, 1, {old_w[x]: finder.w[b + (x - a)] for x in lits}
+    return b, how, {old_w[x]: finder.w[b + (x - a)] for x in lits}
+
+
+def quality(how):
+    return 2.0 if how == "exact" else float(how.split()[1].rstrip("%")) / 100 if how.startswith("fuzzy") else 0
 
 
 def walk(old_w, new_w, a, b, limit=2000):
     """Follow identical code from a (old) and b (new): {old literal: Counter of new literals}."""
     out = defaultdict(Counter)
     for _ in range(limit):
-        if a + 1 >= len(old_w) or b + 1 >= len(new_w) or old_w[a] != new_w[b]:
+        if a + 1 >= len(old_w) or b + 1 >= len(new_w) or norm(old_w[a]) != norm(new_w[b]):
             break
         if isa.is_two_words(old_w[a]):
             out[old_w[a + 1]][new_w[b + 1]] += 1
@@ -90,15 +133,43 @@ def port(old_img, new_img, m, out_dir, new_id=None):
     old_w, new_w = container.words(old_img), container.words(new_img)
     finder = Finder(new_w)
     report, votes = [], defaultdict(Counter)
+    found = {e.name: match(old_w, finder, e.addr) for e in m.by_kind("func", "label")}
+    # two entries on one new address: keep the clearly better match, drop the others
+    by_new = defaultdict(list)
+    for name, (b, how, _) in found.items():
+        if b is not None:
+            by_new[b].append(name)
+    for b, names in by_new.items():
+        if len(names) > 1:
+            names.sort(key=lambda k: quality(found[k][1]), reverse=True)
+            keep = quality(found[names[0]][1]) > quality(found[names[1]][1])
+            for k in names[1:] if keep else names:
+                found[k] = (None, "same place as %s" % " / ".join(x for x in names if x != k), {})
     moved = {}
     for e in m.by_kind("func", "label"):
-        b, n, lits = match(old_w, finder, e.addr)
+        b, n, lits = found[e.name]
         moved[e.name] = b
         report.append("%-6s %-24s %#07x -> %s" % (e.kind, e.name, e.addr,
-                                                  "%#07x" % b if b is not None else "NOT FOUND (%d candidates)" % n))
+                                                  ("%#07x" % b) + ("" if n == "exact" else "  (%s)" % n) if b is not None
+                                                  else "NOT FOUND (%s)" % n))
         if b is not None:
             for o, c in walk(old_w, new_w, e.addr, b).items():
                 votes[o].update(c)
+    funcs = sorted((e.addr, moved[e.name]) for e in m.by_kind("func") if moved[e.name] is not None)
+
+    def locate(a):
+        """A hook site: at the same offset in its (ported) function if the code there still matches,
+        otherwise wherever its own signature leads."""
+        f = max((x for x in funcs if x[0] <= a), default=None)
+        if f and a - f[0] < 0x400:
+            c = f[1] + a - f[0]
+            for start in (a, max(f[0], a - 8)):  # the code at the hook, or the code leading to it
+                sig, _ = signature(old_w, start, 8)
+                need = sum(v is not None for v in sig)
+                if need and finder.score(sig, c - (a - start)) >= FUZZY_MIN * need:
+                    return c, "in %s" % next(e.name for e in m.by_kind("func") if e.addr == f[0])
+        b, how, _ = match(old_w, finder, a)
+        return b, how
     var_new = {}
     for e in m.by_kind("var"):
         c = Counter()  # literals pointing anywhere into the variable vote for its new base address
@@ -112,8 +183,8 @@ def port(old_img, new_img, m, out_dir, new_id=None):
     for s, e in m.pools:
         b, n, _ = match(old_w, finder, s)
         pools.append((s, e, b))
-        report.append("pool   %#07x..%#07x -> %s" % (s, e, "%#07x (verify it is unreferenced!)" % b
-                                                    if b is not None else "NOT FOUND"))
+        report.append("pool   %#07x..%#07x -> %s" % (s, e, "%#07x (%s; verify it is unreferenced!)" % (b, n)
+                                                    if b is not None else "NOT FOUND (%s)" % n))
 
     new_id = new_id or os.path.basename(os.path.abspath(out_dir))
     os.makedirs(os.path.join(out_dir, "patches"), exist_ok=True)
@@ -149,12 +220,20 @@ def port(old_img, new_img, m, out_dir, new_id=None):
         def fix(mo):
             a = int(mo.group(1), 0)
             k = len(mo.group(2).split())
-            b, n, _ = match(old_w, finder, a)
+            b, n = locate(a)
             if b is None:
-                report.append("hook   %-24s %#07x -> NOT FOUND (%d candidates)" % (name, a, n))
+                report.append("hook   %-24s %#07x -> NOT FOUND (%s)" % (name, a, n))
                 return "; TODO port: " + mo.group(0)
-            report.append("hook   %-24s %#07x -> %#07x" % (name, a, b))
-            return ".hook %#07x expect %s" % (b, " ".join("%#06x" % v for v in new_w[b:b + k]))
+            old, new = old_w[a:a + k], new_w[b:b + k]
+            sig, _ = signature(old_w, a, k)
+            same = all(v is None or norm(new[i]) == v for i, v in enumerate(sig[:k]))
+            report.append("hook   %-24s %#07x -> %#07x%s%s" % (name, a, b, "" if n == "exact" else "  (%s)" % n,
+                                                              "" if same else "  WORDS DIFFER"))
+            line = ".hook %#07x expect %s" % (b, " ".join("%#06x" % v for v in new))
+            if not same:
+                line = ("; PORT: the replaced words differ from %s (%s), check what they do here\n" %
+                        (m.id, " ".join("%#06x" % v for v in old))) + line
+            return line
         src = re.sub(r"^\.hook\s+(\S+)\s+expect\s+([0-9a-fA-Fx ]*[0-9a-fA-F])", fix, src, flags=re.M)
         with open(os.path.join(out_dir, "patches", name + ".patch"), "w", encoding="utf-8") as f:
             f.write(src)

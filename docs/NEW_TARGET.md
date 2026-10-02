@@ -29,9 +29,19 @@ python3 -m nuxdsp port NEK100_DSP_V1.0.7.bin NEK110_DSP_Vx.y.z.bin targets/nek11
 ```
 
 `port` looks for the code of every function, label, pool and hook of the NEK-100 target in the other
-file. It compares the instruction words and ignores the literal words (addresses, constants), which
-change between builds. A window grows from 12 instructions until it matches exactly one place.
-RAM variables follow from the literals of the matching code. The draft has:
+file. It compares the instruction words and ignores what changes between builds: the literal words
+(addresses, constants) and the offsets of short branches. A window grows from 12 instructions until it
+matches exactly one place. If no window matches exactly, it takes the best approximate match
+(`fuzzy 86%`), but only when that match is clearly better than the next one. Hooks are first looked
+for at the same offset inside their ported function. RAM variables follow from the literals of the
+matching code. The report also flags:
+
+- `same place as …`: two entries landed on one address (e.g. two near-identical functions, one of
+  which no longer exists). Both are dropped and need a look.
+- `WORDS DIFFER`: the hook site was found, but the words a patch replaces are different there. The
+  draft patch gets a `; PORT:` comment; read the code before trusting that hook.
+
+The draft has:
 
 - a `target.map` with the new SHA-256, every entry it could find marked `(ported)`, and `# ???????`
   for the ones it could not;
