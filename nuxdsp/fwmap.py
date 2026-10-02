@@ -7,6 +7,7 @@ Format, one entry per line, `;` starts a comment that is kept as the entry descr
     device   "Brand Model"        shown by the web patcher and `targets`
     input    FILE.bin             the official file name, as shipped by the vendor
     output   FILE.bin             suggested name of the patched file
+    download URL                  official page where users get the firmware file
     defaults NAME [NAME...]       patches applied when none are selected (also the pool layout order)
     optional NAME [NAME...]       further bundled patches, selected explicitly (laid out after defaults)
     code    START END            code range (word addresses, END exclusive)
@@ -44,6 +45,7 @@ class FwMap:
     device: str = ""
     input: str = ""
     output: str = ""
+    download: str = ""
     defaults: list = field(default_factory=list)
     optional: list = field(default_factory=list)
     code: list = field(default_factory=list)
@@ -98,7 +100,7 @@ def load(path=None):
         try:
             if k == "firmware":
                 m.firmware, m.sha256 = t[1], t[3].lower()
-            elif k in ("device", "input", "output"):
+            elif k in ("device", "input", "output", "download"):
                 setattr(m, k, " ".join(shlex.split(line)[1:]))
             elif k in ("defaults", "optional"):
                 setattr(m, k, t[1:])

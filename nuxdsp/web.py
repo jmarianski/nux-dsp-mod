@@ -25,7 +25,7 @@ def patch_words(image, fwmap, p, params=None):
 
 def export_data(image, fwmap, names=None):
     data = {"id": fwmap.id, "device": fwmap.device, "firmware": fwmap.firmware, "input": fwmap.input,
-            "output": fwmap.output, "sha256": fwmap.sha256, "words": len(container.words(image)),
+            "output": fwmap.output, "download": fwmap.download, "sha256": fwmap.sha256, "words": len(container.words(image)),
             "patches": []}
     for n in names or patcher.available(fwmap):
         p = patcher.load(n, fwmap)

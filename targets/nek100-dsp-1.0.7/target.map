@@ -6,6 +6,7 @@ firmware NEK100_DSP_V1.0.7 sha256 b072b6bda1971697ebb0624cd11a05dac0bb81ce9996ca
 device   "NUX NEK-100"
 input    NEK100_DSP_V1.0.7.bin
 output   NEK100_DSP_V1.0.7B_mod.bin
+download https://nuxaudio.com/product/nek100/
 defaults boot_preset touch_off sustain_in_preset version_tag
 optional polish_font lang_pl
 
