@@ -1,7 +1,7 @@
 .patch boot_preset
 .title "Load a user preset at power-on (factory firmware loads the factory default)"
 .param BOOT_PRESET 1 1 5 "User preset loaded at power-on"
-.param DEFAULT_LABEL 1 0 1 "1 = the preset screen calls that preset \"Default\" (1.Default instead of 1.User1)"
+.param DEFAULT_LABEL 1 0 1 "1 = the preset screen calls that preset \"Default\" and the others User1..User4"
 
 ; boot_presets ends with a call load_factory_preset(0) (0x025fe: push #0, 0x02600: ccall).
 ; Change its argument and target to load_user_preset(BOOT_PRESET-1), as the panel buttons do.
@@ -15,6 +15,8 @@
 ; preset_label(n) builds the preset screen label "N.UserN" one character at a time in a RAM buffer.
 ; Just before the terminating 0 it computes the buffer address: when n is the boot preset, write
 ; "Default" over "UserN" there and return the address after it, so the 0 lands right behind "Default".
+; Presets after the boot preset get one number less, so the others read User1..User4 (the "N." prefix
+; is the slot number and is not visible on the screen).
 .hook 0x0500b expect 0xd14a 0x6a2e      ; addi r1, #text_buf (r1 = index of the terminator)
     call  default_label
 .end
@@ -45,6 +47,18 @@ default_label:
     li    r1, #text_buf+9      ; terminator after "N.Default"
     ret
 .plain:
+    mov   r7, #DEFAULT_LABEL
+    cmp   r7, #0
+    beq   .orig
+    ld    r7, [fp+3]
+    cmp   r7, #BOOT_PRESET-1
+    blt   .orig               ; before the boot preset: numbers unchanged
+    addi  r1, #text_buf-1     ; the last digit, '1'+n
+    add   r7, #0x30           ; -> '0'+n
+    st    [r1+0], r7
+    addi  r1, #1              ; terminator position, as the firmware expects
+    ret
+.orig:
     addi  r1, #text_buf
     ret
 .end

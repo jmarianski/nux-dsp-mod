@@ -37,12 +37,13 @@ class TestDefaultLabel(unittest.TestCase):
         self.assertEqual(label(0), "1.Default")
         self.assertEqual(label(2, boot=3), "3.Default")
 
-    def test_other_presets_unchanged(self):
-        for n in range(1, 5):
-            self.assertEqual(label(n), "%d.User%d" % (n + 1, n + 1))
+    def test_others_numbered_user1_to_user4(self):
+        self.assertEqual([label(n) for n in range(1, 5)], ["2.User1", "3.User2", "4.User3", "5.User4"])
+        self.assertEqual([label(n, boot=3) for n in (0, 1, 3, 4)], ["1.User1", "2.User2", "4.User3", "5.User4"])
+        self.assertEqual([label(n, boot=5) for n in range(4)], ["1.User1", "2.User2", "3.User3", "4.User4"])
 
     def test_disabled(self):
-        self.assertEqual(label(0, enabled=0), "1.User1")
+        self.assertEqual([label(n, enabled=0) for n in range(5)], ["%d.User%d" % (n + 1, n + 1) for n in range(5)])
 
 
 if __name__ == "__main__":
