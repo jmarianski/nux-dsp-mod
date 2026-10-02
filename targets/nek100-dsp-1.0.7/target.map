@@ -82,7 +82,7 @@ func  0x04bce char_to_glyph           ; (H) alternative mapping for a compact fo
 func  0x04e14 lcd_command             ; (H) byte to the LCD controller (0xaf display on, 0x81 contrast)
 func  0x04f5e draw_text               ; (x, y, font, color, ..., string)
 func  0x04f81 draw_text_centered      ; (H) like draw_text, x = centre (measures the string first)
-func  0x04fc5 preset_label            ; (n) preset screen: builds "N.UserN" in text_buf, draws it centred
+func  0x04fc5 preset_label            ; (n) preset screen: builds "N.UserN" in text_buf, draws it centred (C: boot_preset label)
 var   0x03a2a glyph_table 1944        ; 243 x {u32 byte offset, u32 size, u32 width, u32 height}; file 0x12cf7
 var   0x041c2 glyph_bitmaps 8552      ; column-major, each column byte-aligned, MSB = top; file 0x1348f
 var   0x0662a framebuffer 1024        ; 128 x 64, 8 pages x 128 bytes
