@@ -89,17 +89,124 @@ const u16 = (d, o) => d[o] | d[o + 1] << 8, u32 = (d, o) => (u16(d, o) | u16(d, 
 const put16 = (d, o, v) => { d[o] = v & 0xff; d[o + 1] = v >> 8 & 0xff; };
 const put32 = (d, o, v) => { put16(d, o, v & 0xffff); put16(d, o + 2, v >>> 16); };
 const PL_LETTERS = "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ";
-// an instrument pack (.nxi): "NXI1", u32 header length, JSON header, s16le samples of each zone
-function parsePack(bytes) {
-  if (String.fromCharCode(...bytes.subarray(0, 4)) !== "NXI1") throw "not an instrument pack (.nxi)";
-  const n = u32(bytes, 4), header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + n)));
-  const pcm = [];
-  let o = 8 + n;
-  for (const z of header.zones) { pcm.push(bytes.subarray(o, o + 2 * z.samples)); o += 2 * z.samples; }
-  if (o !== bytes.length) throw "pack size does not match its zones";
-  const roots = header.zones.map(z => z.root);
-  if (!header.name || roots.some((r, i) => !(r >= 0 && r <= 127) || (i && r <= roots[i - 1]))) throw "invalid pack";
-  return {header, pcm, roots, name: header.name};
+// --- SoundFont 2 (port of nuxdsp/sf2.py): a preset -> {name, zones: [{lo, hi, root, cents, rate, pcm, loop, key}]}
+function sf2Chunks(d, o, end) {
+  const out = [];
+  while (o + 8 <= end) {
+    const id = String.fromCharCode(...d.subarray(o, o + 4)), n = u32(d, o + 4);
+    out.push([id, o + 8, n]); o += 8 + n + (n & 1);
+  }
+  return out;
+}
+const sf2Str = b => { let s = ""; for (const c of b) { if (!c) break; s += String.fromCharCode(c); } return s.trim(); };
+const s16 = v => v & 0x8000 ? v - 0x10000 : v;
+function parseSf2(d) {
+  if (String.fromCharCode(...d.subarray(0, 4)) !== "RIFF" || String.fromCharCode(...d.subarray(8, 12)) !== "sfbk")
+    throw "not a SoundFont 2 file (.sf2)";
+  const lists = {}, info = {};
+  for (const [id, o, n] of sf2Chunks(d, 12, d.length))
+    if (id === "LIST") lists[String.fromCharCode(...d.subarray(o, o + 4))] = [o + 4, o + n];
+  if (!lists.INFO || !lists.sdta || !lists.pdta) throw "incomplete SoundFont";
+  for (const [id, o, n] of sf2Chunks(d, ...lists.INFO)) if (id !== "ifil") info[id] = sf2Str(d.subarray(o, o + n));
+  let smpl = null;
+  for (const [id, o, n] of sf2Chunks(d, ...lists.sdta)) if (id === "smpl") smpl = [o, Math.floor(n / 2)];
+  if (!smpl) throw "no samples (sdta/smpl) in the SoundFont";
+  const p = {};
+  for (const [id, o, n] of sf2Chunks(d, ...lists.pdta)) p[id] = [o, n];
+  const recs = (name, size, f) => { const [o, n] = p[name], out = [];
+    for (let i = 0; i < Math.floor(n / size); i++) out.push(f(o + i * size)); return out; };
+  const bag = o => [u16(d, o), u16(d, o + 2)];
+  return {d, info, smpl,
+    phdr: recs("phdr", 38, o => [sf2Str(d.subarray(o, o + 20)), u16(d, o + 20), u16(d, o + 22), u16(d, o + 24)]),
+    pbag: recs("pbag", 4, bag), pgen: recs("pgen", 4, bag), ibag: recs("ibag", 4, bag), igen: recs("igen", 4, bag),
+    inst: recs("inst", 22, o => [sf2Str(d.subarray(o, o + 20)), u16(d, o + 20)]),
+    shdr: recs("shdr", 46, o => [sf2Str(d.subarray(o, o + 20)), u32(d, o + 20), u32(d, o + 24), u32(d, o + 28),
+      u32(d, o + 32), u32(d, o + 36), d[o + 40], (d[o + 41] << 24) >> 24, u16(d, o + 42), u16(d, o + 44)])};
+}
+// [{index, bank, program, name}] sorted like the CLI's @N
+function sf2Presets(sf) {
+  return sf.phdr.slice(0, -1).map(([name, program, bank], index) => ({index, bank, program, name}))
+    .sort((a, b) => a.bank - b.bank || a.program - b.program || a.index - b.index);
+}
+function sf2Zones(sf, bags, gens, first, last, term) {
+  const zs = [];
+  for (let b = first; b < last; b++) {
+    const g = {};
+    for (let k = bags[b][0]; k < bags[b + 1][0]; k++) g[gens[k][0]] = gens[k][1];
+    zs.push(g);
+  }
+  const glob = zs.length && !(term in zs[0]) ? zs.shift() : {};
+  return [glob, zs.filter(z => term in z)];
+}
+const sf2Range = (z, op) => z[op] === undefined ? [0, 127] : [z[op] & 0xff, z[op] >> 8];
+const sf2Isect = (a, b) => { const lo = Math.max(a[0], b[0]), hi = Math.min(a[1], b[1]); return lo <= hi ? [lo, hi] : null; };
+function sf2Sample(sf, iz) {
+  const sid = iz[53];
+  if (sid >= sf.shdr.length - 1) throw "bad sample index";
+  let [name, start, end, ls, le, rate, pitch, corr, link, typ] = sf.shdr[sid];
+  if (typ & 0x8000) throw "ROM samples are not supported";
+  const g = op => s16(iz[op] || 0);
+  start += g(0) + 32768 * g(4); end += g(1) + 32768 * g(12);
+  ls += g(2) + 32768 * g(45); le += g(3) + 32768 * g(50);
+  if (!(0 <= start && start < end && end <= sf.smpl[1])) throw `sample ${name} outside the sample data`;
+  const o = sf.smpl[0] + 2 * start;
+  return {pcm: sf.d.subarray(o, o + 2 * (end - start)), start, end, ls, le, rate, pitch, corr};
+}
+function sf2Zone(sf, key, iz, pz, iz2) {
+  let {pcm, start, end, ls, le, rate, pitch, corr} = sf2Sample(sf, iz);
+  let skey = `${iz[53]},${start},${end}`;
+  if (iz2) {
+    const pcm2 = sf2Sample(sf, iz2).pcm, n = Math.floor(Math.min(pcm.length, pcm2.length) / 2), m = new Uint8Array(2 * n);
+    const a = new DataView(pcm.buffer, pcm.byteOffset), b = new DataView(pcm2.buffer, pcm2.byteOffset), w = new DataView(m.buffer);
+    for (let i = 0; i < n; i++) w.setInt16(2 * i, (a.getInt16(2 * i, true) + b.getInt16(2 * i, true)) >> 1, true);
+    pcm = m; skey += `,${iz2[53]}`;
+  }
+  if (s16(iz[56] ?? 100) !== 100) throw "same pitch on every key (drum kits, effects): not supported, the sound follows the keyboard";
+  let root = s16(iz[58] ?? 0xffff);
+  if (root < 0) root = pitch;
+  const cents = 100 * (s16(iz[51] || 0) + s16(pz[51] || 0)) + s16(iz[52] || 0) + s16(pz[52] || 0) + corr;
+  let loop = null;
+  if ((iz[54] || 0) & 1 && start <= ls && ls < le && le <= end) {
+    loop = [ls - start, le - start]; pcm = pcm.subarray(0, 2 * (le - start + 1)); skey += `,loop,${ls},${le}`;
+  }
+  return {lo: key[0], hi: key[1], root, cents, rate, pcm, loop, key: skey};
+}
+function sf2Instrument(sf, preset, velocity = 100) {
+  const ph = sf.phdr, name = ph[preset][0];
+  const [pg, pz] = sf2Zones(sf, sf.pbag, sf.pgen, ph[preset][3], ph[preset + 1][3], 41);
+  const regions = [];
+  for (const z of pz) {
+    const pzone = {...pg, ...z}, i = pzone[41];
+    const [ig, iz] = sf2Zones(sf, sf.ibag, sf.igen, sf.inst[i][1], sf.inst[i + 1][1], 53);
+    for (const z2 of iz) {
+      const izone = {...ig, ...z2};
+      const key = sf2Isect(sf2Range(pzone, 43), sf2Range(izone, 43)), vel = sf2Isect(sf2Range(pzone, 44), sf2Range(izone, 44));
+      if (key && vel && vel[0] <= velocity && velocity <= vel[1]) regions.push([key, izone, pzone]);
+    }
+  }
+  if (!regions.length) throw `preset ${name} has no samples at velocity ${velocity}`;
+  const zones = [], done = new Set();
+  regions.forEach(([key, iz, pz], n) => {
+    if (done.has(n)) return;
+    done.add(n);
+    const sh = sf.shdr[iz[53]];
+    let pair = -1;
+    if (sh[9] & 6) {
+      pair = regions.findIndex(([k2, iz2], m) => !done.has(m) && k2[0] === key[0] && k2[1] === key[1] && iz2[53] === sh[8]);
+      if (pair >= 0) done.add(pair);
+    }
+    zones.push(sf2Zone(sf, key, iz, pz, pair >= 0 ? regions[pair][1] : null));
+  });
+  zones.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+  const out = [];
+  for (const z of zones) {
+    if (out.length && z.hi <= out[out.length - 1].hi) continue;
+    if (out.length && z.lo <= out[out.length - 1].hi) z.lo = out[out.length - 1].hi + 1;
+    out.push(z);
+  }
+  const seen = new Map();
+  const size = out.reduce((s, z) => seen.has(z.key) ? s : (seen.set(z.key, 1), s + z.pcm.length), 0);
+  return {name, zones: out, info: sf.info, size};
 }
 function dspWord(dsp, a) { return u16(dsp, 2 * a); }
 // voices: target.voices (addresses from the map); dsp: the user's official DSP file
@@ -167,9 +274,9 @@ function setAddrs(r, o, S, L, E) {
   r[o + 8] = S & 0xff; put16(r, o + 10, (S >>> 8) & 0xffff);
   r[o + 14] = E & 0xff; put16(r, o + 16, (E >>> 8) & 0xffff);
 }
-const tuneValue = (midi, cents) =>
-  Math.round(256 * (-83.996 - 12 * Math.log2(440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200) / 44100)));
-// items: [{pack, voice}] -> new soundbank bytes; bank: the user's official soundbank file
+const tuneValue = (midi, cents, rate) =>
+  Math.round(256 * (-83.996 - 12 * Math.log2(440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200) / rate)));
+// items: [{pack: sf2Instrument(...), voice}] -> new soundbank bytes; bank: the user's official soundbank file
 async function addInstruments(target, dsp, bank, items) {
   const v = target.voices, d = bank, FB = 0x80000;
   if (await sha256(bank) !== v.soundbank.sha256) throw `not the official ${v.soundbank.name} (SHA-256 mismatch)`;
@@ -184,8 +291,13 @@ async function addInstruments(target, dsp, bank, items) {
     if (mark.every((c, j) => d[i + j] === c)) tail = i;
   if (tail < 0) throw "soundbank trailer not found";
   const align = n => Math.ceil(n / 0x800) * 0x800;
+  const zoneBytes = z => 4 + z.pcm.length + (z.loop ? 0 : 128);
   let len = tail;
-  for (const {pack} of items) { len = align(len); for (const p of pack.pcm) len += 4 + p.length + 128; }
+  for (const {pack} of items) {
+    len = align(len);
+    const seen = new Set();
+    for (const z of pack.zones) if (!seen.has(z.key)) { seen.add(z.key); len += zoneBytes(z); }
+  }
   len = align(len);
   const out = new Uint8Array(len + d.length - tail);
   out.set(d.subarray(0, tail)); out.set(d.subarray(tail), len);
@@ -193,26 +305,32 @@ async function addInstruments(target, dsp, bank, items) {
   const pad = to => { for (; pos < to; pos += 2) { out[pos] = 0xef; out[pos + 1] = 0xad; } };
   const placed = items.map(({pack}) => {
     pad(align(pos));
-    return pack.pcm.map(p => {
-      const start = pos + 4;
-      out.set(p, start); pos = start + p.length + 128;           // zeros already: guard and silent loop
-      const S = FB + start / 2, E = FB + (pos - 2) / 2;
-      return [S, E - 43, E];
+    const seen = new Map();
+    return pack.zones.map(z => {
+      if (seen.has(z.key)) return seen.get(z.key);
+      const start = pos + 4, S = FB + start / 2;
+      out.set(z.pcm, start); pos = start + z.pcm.length;      // zeros already: guard and silent loop
+      let a;
+      if (z.loop) a = [S, S + z.loop[0], S + z.loop[1]];
+      else { pos += 128; const E = FB + (pos - 2) / 2; a = [S, E - 43, E]; }
+      seen.set(z.key, a);
+      return a;
     });
   });
   pad(len);
   put32(out, 8, FB + len / 2); put32(out, 0x9c, FB + len / 2);
   items.forEach(({pack, voice}, k) => {
-    const base = (u32(out, 0xa6) - FB) * 2 + 0x10, page = Math.floor(base / 0x20000), n = pack.pcm.length;
+    const base = (u32(out, 0xa6) - FB) * 2 + 0x10, page = Math.floor(base / 0x20000), n = pack.zones.length;
+    if (n < 1 || n > 127) throw `${pack.name}: ${n} zones (1..127)`;
     const zoneAt = base + 4 + 6 * n + 2, recLen = T.rec.length, size = 4 + 6 * n + 2 + n * recLen;
     if (base + size > (page + 1) * 0x20000 || out.subarray(base - 0x10, base + size).some(b => b !== 0x5e && b !== 0xd0))
       throw "no free room for the instrument in the parameter page";
     const inst = new Uint8Array(size);
     inst.set(d.subarray(tinst, tinst + 4)); inst[2] = 0x80 | n;
     let hi = 0;
-    pack.roots.forEach((r, i) => {
+    pack.zones.forEach((zn, i) => {
       const zstart = zoneAt + i * recLen, lo = hi, e = 4 + 6 * i;
-      hi = i === n - 1 ? 0xff : pack.roots[i + 1] - 1;
+      hi = i === n - 1 ? 0xff : zn.hi;
       inst.set([i ? 0 : 0x80, lo, 0x7f, hi], e); put16(inst, e + 4, ((zstart + 2) / 2) & 0xffff);
       const z = T.rec.slice();
       for (const o of T.offs) {
@@ -221,7 +339,7 @@ async function addInstruments(target, dsp, bank, items) {
         put16(z, o, (nw / 2) & 0xffff);
       }
       setAddrs(z, T.sbOff, ...placed[k][i]);
-      put16(z, T.sbOff - 2, tuneValue(r, pack.header.cents || 0) & 0xffff);
+      put16(z, T.sbOff - 2, tuneValue(zn.root, zn.cents, zn.rate) & 0xffff);
       inst.set(z, 4 + 6 * n + 2 + i * recLen);
     });
     out.set(inst, base);
@@ -248,10 +366,10 @@ function fillNames(target, out, entries) {
   });
   return fixChecksum(out);
 }
-// a bundled pack's bytes, once its web/instruments/<id>.js has run
+// a bundled SoundFont's bytes, once its web/instruments/<id>.js has run
 function packBytes(id) {
   const b64 = (globalThis.NUXDSP_PACK_DATA || {})[id];
-  if (!b64) throw `instrument pack ${id} not loaded`;
+  if (!b64) throw `instrument ${id} not loaded`;
   const s = atob(b64), out = new Uint8Array(s.length);
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
   return out;
