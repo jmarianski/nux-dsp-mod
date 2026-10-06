@@ -181,7 +181,10 @@ def port(old_img, new_img, m, out_dir, new_id=None):
                                                     "unknown (no matched code uses it)"))
     pools = []
     for s, e in m.pools:
-        b, n, _ = match(old_w, finder, s)
+        if all(x == 0xFFFF for x in old_w[s:e]):  # filler, not code: the same place in the nearest filler run
+            b, n = filler_match(old_w, new_w, s, e), "filler run"
+        else:
+            b, n, _ = match(old_w, finder, s)
         pools.append((s, e, b))
         report.append("pool   %#07x..%#07x -> %s" % (s, e, "%#07x (%s; verify it is unreferenced!)" % (b, n)
                                                     if b is not None else "NOT FOUND (%s)" % n))
@@ -239,3 +242,21 @@ def port(old_img, new_img, m, out_dir, new_id=None):
             f.write(src)
     return report
 
+
+def filler_match(old_w, new_w, s, e):
+    """A pool inside a run of 0xffff filler: same offset into the new filler run closest to the old one."""
+    rs = s
+    while rs > 0 and old_w[rs - 1] == 0xFFFF:
+        rs -= 1
+    best, a = None, 0
+    while a < len(new_w):
+        if new_w[a] != 0xFFFF:
+            a += 1
+            continue
+        b = a
+        while b < len(new_w) and new_w[b] == 0xFFFF:
+            b += 1
+        if b - a >= e - rs and (best is None or abs(a - rs) < abs(best - rs)):
+            best = a
+        a = b
+    return None if best is None else best + s - rs

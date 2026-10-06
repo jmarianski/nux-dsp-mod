@@ -7,7 +7,7 @@ device   "NUX NEK-100"
 input    NEK100_DSP_V1.0.7.bin
 output   NEK100_DSP_V1.0.7B_mod.bin
 download https://nuxaudio.com/product/nek100/
-defaults boot_preset touch_off sustain_in_preset version_tag
+defaults boot_preset touch_off sustain_in_preset version_tag octave_per_part
 optional polish_font lang_pl
 
 code    0x00400 0x0f0a3     ; code bank 0
@@ -15,10 +15,22 @@ code    0x10400 0x128ab     ; code bank 1 (reached how? unknown)
 ramdata 0x155f7 0x17f23     ; initialised data, copied to RAM address 0 at boot
 pool    0x09ad4 0x09bd4     ; unreferenced function (no calls, branches or pointers) — patch code goes here (C)
 pool    0x062f3 0x06558     ; unreferenced function, same checks (C: polish_font runs here)
+pool    0x0f0b0 0x0fff0     ; 0xffff filler after the code of bank 0, loaded into program memory (C: probe words at 0xf0b0 and 0xffe0 read back on the device)
 glyphs  0x12cf7 0x1348f 243 ; glyph/image table (8 words each: u32 byte offset, size, width, height) + bitmaps
 
 # --- startup / system ------------------------------------------------------------------------
 func  0x005f8 main                    ; init_all(), then forever main_loop_tick()
+func  0x007dd tick_10ms               ; (C: 10 ms, 6000 ticks of idle measured as ~60 s) periodic timer callback: idle counter, power key, USB, popups
+func  0x00948 power_off               ; drops the power/amp/LCD output pins and loops forever
+func  0x00958 power_key_poll          ; input 0x28e0 bit 0x400 held 50 ticks -> power_off; idle_ticks >= 180000 (30 min) -> power_off (C: auto off, on battery)
+func  0x0078a usb_poll                ; input 0x28e2 bit 1 (H: USB connected): after ~1 s sends the NUX identity SysEx
+func  0x00b01 battery_tick            ; per tick: input 0x28e0 bit 2 low -> power_src=2 (H: charger plugged; also zeroes idle_ticks, so no auto off on cable), else 1; low battery: blink icon ~14 s then power_off
+func  0x00a25 battery_adc_sample      ; one ADC reading (10 bit) into a 32-entry ring at 0x2a1a
+func  0x00aa4 battery_average         ; averages the ring sums into batt_adc; on battery counts readings below batt_levels[0]
+func  0x00a63 charge_full_poll        ; output 0xe0 bit 3 low, wait, input 0x28e0 bit 4 -> charge_full
+func  0x055b2 draw_battery            ; status bar battery at x=0x70 (glyph 0xbd), lightning 0xc4 at x=0x6b on cable, bars from batt_adc vs batt_levels
+func  0x02185 mcu_cc                  ; CC from the MCU on channel 16: tempo, style state, panel keys 0x50.., dial 0x70, version 0x7d/0x7e, ready 0x7f
+func  0x0385f key_event               ; (key, state) panel key -> per-screen handlers; resets idle_ticks
 func  0x00c88 init_all                ; calls ~25 init routines, boot_presets near the end
 func  0x07c90 main_loop_tick
 func  0x02774 tasks_create            ; creates the RTOS tasks below via task_create
@@ -58,18 +70,30 @@ func  0x03f6a touch_setting           ; parameter handler (op, delta): op 1 = ge
 func  0x0504b draw_touch_name         ; (v) draws touch_names[v]
 func  0x05028 draw_style_name
 label 0x03a7c menu_edit_sustain       ; sustain menu: sustain_cc64[ui_part] += delta, clamp 0..127
+func  0x01064 route_note_on           ; (note, vel, ...): for each part, note + offsets (transpose, octave) -> synth, remembered for note off
+func  0x05c3a draw_screen             ; (screen id) draws a whole screen; also used to redraw the current one
+func  0x05713 draw_softkey            ; (slot 0..2, 0, glyph) label of one of the three keys under the display
+func  0x051a2 draw_octave_value       ; (v) "-1" / "0" / "+1" for v = 0 / 1 / 2
 func  0x0c72f param_get               ; (H) generic "current value of parameter" helper, result in r0
 func  0x0c7b8 param_change            ; (H) generic "change parameter by r2" helper
 
 # --- RAM variables ---------------------------------------------------------------------------
+var   0x0000b idle_ticks 2            ; 32-bit, +1 per tick, zeroed by every key, button, dial and MIDI event
+var   0x00006 power_src               ; 0 = no battery seen at power-on (logic off), 1 = on battery, 2 = (H) charger plugged
+var   0x00007 charge_full             ; on cable: 1 = (H) charger reports full, 0 = charging
+var   0x00008 batt_adc                ; averaged battery ADC (10 bit); < 0x190 at power-on -> power_src = 0
+var   0x0001c batt_low                ; 1 after 15 readings below batt_levels[0] on battery: icon blinks, power_off after 1400 ticks
+var   0x02809 batt_levels 6           ; ADC thresholds of the battery bars (+0x12 while charging)
 var   0x0000f ui_part                 ; (H) index of the part being edited (0 = main voice)
 var   0x00069 factory_presets 155     ; 5 x 31 words, initialised data
+var   0x00158 octave                  ; Octave 0..2 = -1/0/+1 (C: menu), read through param_get, saved in presets
 var   0x00144 touch                   ; Touch 0..4 = LIGHT2 LIGHT1 NORMAL HARD1 HARD2 (C); sent to MCU as CC 0x32
 var   0x0015e sustain_cc64 4          ; CC64 value per part used by the pedal, defaults 90,64,64,64 (C)
 var   0x0233c sound_names 600         ; pointers to the 500 sound names, then the 100 demo song names
 var   0x025bc effect_names 5          ; pointers to the modulation effect names
 var   0x02617 section_names 9         ; pointers to style section names (PITCH:, CHANGE, ROLL, BRIDGE1..4, ENDING1..2)
 var   0x02745 style_names 20          ; pointers to the 20 style names
+var   0x03a0d screen                  ; current screen: 11 = Sustain (MAIN/DUAL/SPLIT keys), 12 = Octave
 var   0x0275c str_off                 ; "OFF"
 var   0x027c7 touch_names 5           ; pointers to "LIGHT2".."HARD2"
 var   0x027dc reverb_names 4          ; pointers to "OFF","ROOM","HALL","PLATE"

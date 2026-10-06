@@ -2,7 +2,7 @@
 
 It checks the *logic* of new code against a fake frame and RAM; it says nothing about whether the
 ISA model itself is right — that is what hardware tests are for. Assumptions: cmp compares signed
-16-bit values, imm8 is sign-extended, shr is logical, `call` returns to the next instruction.
+16-bit values, imm8 is zero-extended (C: octave -2 test showed garbage with sign extension), shr is logical, `call` returns to the next instruction.
 """
 from . import isa
 
@@ -53,7 +53,7 @@ class Sim:
                 continue
             if op in ("mov", "cmp", "add", "and", "or"):
                 dst, src = a
-                v = r[src[1]] if isinstance(src, tuple) else (s16(src | (0xFF00 if src & 0x80 else 0)))
+                v = r[src[1]] if isinstance(src, tuple) else (src & 0xFF)
                 if op == "mov":
                     r[dst] = v & 0xFFFF
                 elif op == "cmp":

@@ -140,7 +140,7 @@ def encode_op(op, rest, pc, symbols):
             return isa.encode(op, (reg(ops[0]), ("r", reg(ops[1]))))
         need(kinds[1:] == ("imm",) and op != "or", "%s needs rD, #imm8 or rD, rS" % op)
         v = ops[1][1]
-        need(-128 <= v <= 255, "imm8 out of range: %d" % v)
+        need(0 <= v <= 255, "imm8 out of range: %d (imm8 is zero-extended, C: no negative values; use li + a register)" % v)
         return isa.encode(op, (reg(ops[0]), v & 0xFF))
     if op in ("shl", "shr"):
         need(kinds == ("reg", "expr") and 1 <= ops[1][1] <= 15, "shl/shr rN, 1..15")

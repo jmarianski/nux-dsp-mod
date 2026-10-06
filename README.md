@@ -20,6 +20,7 @@ Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one 
 | `boot_preset` | loads a user preset (default 1) at power-on, where the stock firmware loads the factory default. On the preset screen it is called `Default` and the others `User1`..`User4`; `PRESET_LABELS` picks the style (with or without the slot number `1.`, or stock names) |
 | `touch_off` | new Touch setting **OFF**: every note at a fixed velocity (default 127), first in the menu |
 | `sustain_in_preset` | the **Sustain** value (pedal level) is saved in user presets |
+| `octave_per_part` | **Octave** for each part: MAIN, DUAL and SPLIT get their own octave, -3..+3, chosen with the keys under the display like on the Sustain screen. Lets the split's left hand reach the lowest bass while the right plays higher. Saved in user presets |
 | `version_tag` | version screen shows `DSP:1.0.7B`, so you can see the mod is installed |
 | `polish_font` *(optional)* | Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font, strings in Unicode. A base for translations |
 | `lang_pl` *(optional, needs `polish_font`)* | Polish UI: the 500 sound and 100 demo names, Touch and reverb values, style sections, buttons, screen headers and dialogs |
@@ -88,6 +89,7 @@ DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](d
 | `boot_preset` | ładuje user preset (domyślnie 1) przy włączeniu. Fabrycznie ładuje się ustawienie domyślne. Na ekranie presetów nazywa się `Default`, a pozostałe `User1`..`User4`; `PRESET_LABELS` wybiera styl (z numerem slotu `1.` lub bez, albo nazwy fabryczne) |
 | `touch_off` | nowe ustawienie Touch **OFF**: każda nuta ze stałą siłą (domyślnie 127), pierwsze w menu |
 | `sustain_in_preset` | wartość **Sustain** (poziom pedału) zapisuje się w user presetach |
+| `octave_per_part` | osobna **oktawa** dla MAIN, DUAL i SPLIT, zakres -3..+3, wybór partii przyciskami pod ekranem jak w menu Sustain. W splicie lewa ręka sięga najniższych basów, a prawa gra wyżej. Zapisuje się w user presetach |
 | `version_tag` | ekran wersji pokazuje `DSP:1.0.7B`, więc widać, że mod jest wgrany |
 | `polish_font` *(opcjonalny)* | polskie litery w głównym foncie UI, napisy w Unicode. Baza pod tłumaczenia |
 | `lang_pl` *(opcjonalny, wymaga `polish_font`)* | polski interfejs: 500 nazw brzmień i 100 dem, wartości Touch i pogłosu, sekcje stylów, przyciski, nagłówki ekranów i okna dialogowe |
