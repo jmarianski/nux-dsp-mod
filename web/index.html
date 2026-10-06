@@ -84,6 +84,21 @@ a { color: var(--accent); }
     <p class="desc" style="margin-top:0">Put new instruments (SoundFont .sf2 files) in place of chosen sounds. You also need the official
     soundbank file from the same update package; you then flash both results. / Nowe instrumenty (pliki SoundFont .sf2) w miejsce
     wybranych brzmień. Potrzebny jest też oryginalny plik soundbanku z tej samej paczki aktualizacji; potem wgrywasz oba wyniki.</p>
+    <details style="margin:0 0 10px"><summary class="desc">Where to get .sf2 files / Skąd wziąć pliki .sf2</summary>
+      <ul class="targets">
+        <li><a href="https://github.com/mrbumpy409/GeneralUser-GS" target="_blank" rel="noopener">GeneralUser GS</a>
+          — ~30 MB, 261 instruments, free to use; a good start / dobry początek</li>
+        <li>FluidR3_GM — ~140 MB, MIT license; Linux: package <code>fluid-soundfont-gm</code></li>
+        <li><a href="https://www.polyphone.io/en/soundfonts" target="_blank" rel="noopener">Polyphone soundfonts</a>
+          — single instruments by category, license filters / pojedyncze instrumenty, filtr licencji</li>
+        <li><a href="https://musical-artifacts.com" target="_blank" rel="noopener">Musical Artifacts</a>
+          — catalogue of free SoundFonts / katalog darmowych SoundFontów</li>
+      </ul>
+      <p class="desc">Only the chosen preset's samples are added (the size is shown below), so big banks are fine.
+      For organs, strings and pads choose a <i>looped</i> preset; drum kits are not supported. / Dodawane są tylko
+      sample wybranego presetu (rozmiar widać niżej), więc duże banki nie przeszkadzają. Do organów, smyczków i padów
+      wybierz preset <i>z pętlą</i>; perkusje nie są obsługiwane.</p>
+    </details>
     <div class="drop" id="sdrop">
       <input type="file" id="sfile" accept=".bin">
       <div class="desc" id="sname"></div>
