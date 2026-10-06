@@ -21,7 +21,7 @@ Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one 
 | `touch_off` | new Touch setting **OFF**: every note at a fixed velocity (default 127), first in the menu |
 | `sustain_in_preset` | the **Sustain** value (pedal level) is saved in user presets |
 | `octave_per_part` | **Octave** for each part: MAIN, DUAL and SPLIT get their own octave, -3..+3, chosen with the keys under the display like on the Sustain screen. Lets the split's left hand reach the lowest bass while the right plays higher. Saved in user presets |
-| `extra_menu` | **Extra** in place of Info in the function menu, with three items: **Auto Off** (separate times on battery and on cable: Off, 5, 10, 15, 30, 60, 90, 120 min; stock is 30 min on battery and never on cable, those stay the defaults), **Patches** (which of these patches are installed) and the stock **Info** |
+| `extra_menu` | **Extra** in place of Info in the function menu (in Polish with `lang_pl`), with three items: **Auto Off** (separate times on battery and on cable: Off, 5, 10, 15, 30, 60, 90, 120 min; stock is 30 min on battery and never on cable, those stay the defaults), **Patches** (which of these patches are installed) and the stock **Info** |
 | `version_tag` | version screen shows `DSP:1.0.7B`, so you can see the mod is installed |
 | `polish_font` *(optional)* | Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font, strings in Unicode. A base for translations |
 | `lang_pl` *(optional, needs `polish_font`)* | Polish UI: the 500 sound and 100 demo names, Touch and reverb values, style sections, buttons, screen headers and dialogs |
@@ -91,7 +91,7 @@ DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](d
 | `touch_off` | nowe ustawienie Touch **OFF**: każda nuta ze stałą siłą (domyślnie 127), pierwsze w menu |
 | `sustain_in_preset` | wartość **Sustain** (poziom pedału) zapisuje się w user presetach |
 | `octave_per_part` | osobna **oktawa** dla MAIN, DUAL i SPLIT, zakres -3..+3, wybór partii przyciskami pod ekranem jak w menu Sustain. W splicie lewa ręka sięga najniższych basów, a prawa gra wyżej. Zapisuje się w user presetach |
-| `extra_menu` | **Extra** w miejscu Info w menu funkcji, z trzema pozycjami: **Auto Off** (osobny czas wyłączenia na baterii i na kablu: Off, 5, 10, 15, 30, 60, 90, 120 min; fabrycznie 30 min na baterii, a na kablu nigdy, i to są ustawienia domyślne), **Patche** (które z tych patchy są wgrane) i fabryczne **Info** |
+| `extra_menu` | **Extra** (po polsku „Dodatki” z `lang_pl`) w miejscu Info w menu funkcji, z trzema pozycjami: **Auto Off** (osobny czas wyłączenia na baterii i na kablu: Off, 5, 10, 15, 30, 60, 90, 120 min; fabrycznie 30 min na baterii, a na kablu nigdy, i to są ustawienia domyślne), **Patche** (które z tych patchy są wgrane) i fabryczne **Info** |
 | `version_tag` | ekran wersji pokazuje `DSP:1.0.7B`, więc widać, że mod jest wgrany |
 | `polish_font` *(opcjonalny)* | polskie litery w głównym foncie UI, napisy w Unicode. Baza pod tłumaczenia |
 | `lang_pl` *(opcjonalny, wymaga `polish_font`)* | polski interfejs: 500 nazw brzmień i 100 dem, wartości Touch i pogłosu, sekcje stylów, przyciski, nagłówki ekranów i okna dialogowe |

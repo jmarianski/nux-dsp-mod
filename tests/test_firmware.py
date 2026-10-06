@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus boot_preset's preset labels (confirmed on hardware too), polish_font's small font
 # mapping and the full lang_pl translation (all confirmed on hardware).
-ALL_SHA = "f639d69be1bf761a42708d91cc53bdbdf72668cbad2ab2a74295e283471b0246"
+ALL_SHA = "b72a3f6a0d0252bc31e8746d586081b4a117b1c6d86dd05c0ff35ee615209027"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -53,7 +53,7 @@ class TestFirmware(unittest.TestCase):
         import re
         path = os.path.join(self.map.patch_dir, "extra_menu.patch")
         with open(path) as f:
-            rows = re.findall(r"\.dw\s+(\d), (0x[0-9a-f]+), (0x[0-9a-f]+), pp_n\d+\s+; (\w+)", f.read())
+            rows = re.findall(r"\.dw\s+(\d), (0x[0-9a-f]+), (0x[0-9a-f]+), pp_n\d+, pp_p\d+\s+; (\w+)", f.read())
         self.assertEqual(sorted(r[3] for r in rows), sorted(patcher.available(self.map)))
         r0 = self.map.ramdata[0]
         for kind, addr, stock, name in rows:
