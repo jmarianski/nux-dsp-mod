@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus boot_preset's preset labels (confirmed on hardware too), polish_font's small font
 # mapping and the full lang_pl translation (all confirmed on hardware).
-ALL_SHA = "b72a3f6a0d0252bc31e8746d586081b4a117b1c6d86dd05c0ff35ee615209027"
+ALL_SHA = "632e7918366d6893b954f45b46ea0cb98d8ee505bf269088db9822f7f2f29f8d"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
