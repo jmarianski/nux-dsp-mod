@@ -22,7 +22,7 @@ variable `X` lives at file word `ramdata_start + X`.
 |---|---|---|---|
 | `mov rD, #imm8` | `0Dii` | | C |
 | `cmp rD, #imm8` | `0(D+8)ii` | sets flags for `beq/bne/blt` | C |
-| `add rD, #imm8` | `1Dii` | sign extension of imm8 not settled: for −1 on a byte use `add r, #0xff` + `and r, #0xff` | C |
+| `add rD, #imm8` | `1Dii` | imm8 is **zero-extended** (C: `add r, #-5` adds 251); to subtract, `li` the 16-bit value into a register and `add rD, rS` | C |
 | `and rD, #imm8` | `1(D+8)ii` | | C |
 | `mov rD, rS` | `8D0S` | | C |
 | `cmp rD, rS` | `8(D+8)0S` | | C |

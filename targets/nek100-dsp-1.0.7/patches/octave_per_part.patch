@@ -1,0 +1,290 @@
+.patch octave_per_part
+
+.title "Octave per part: MAIN, DUAL and SPLIT each get their own Octave (-3..+3), chosen with the keys under the display like on the Sustain screen"
+; Stock: route_note_on adds octave (0..2 = -12/0/+12) to the note of every part. In split mode the
+; firmware also moves the left part one octave up and the right one down; -3..+3 can undo that and go further.
+; Here the same variable holds three values v = -3..+3, so presets save them with no extra field:
+;   bits 0-2  MAIN   (v + 1) % 7: 0..2 mean -1/0/+1 as before (stock presets keep their octave)
+;   bits 3-5  DUAL   v % 7, so 0 = no shift
+;   bits 6-8  SPLIT  same
+; Part 3 (not on the screen) follows MAIN, as before. Beyond -1/+1 the router moves the note by 12s itself
+; and gives route_note_on -1/+1; the firmware's own 0..127 fold-back still follows. Note off uses the
+; note remembered at note on, so changing the octave while keys are held never leaves a note hanging.
+; The code works on t = v + 3 (0..6): imm8 operands are zero-extended, so nothing here is negative.
+;
+; The Octave screen (12) becomes like the Sustain screen (11): the three keys under the display
+; choose MAIN / DUAL / SPLIT (shared with Sustain through ui_part), the dial changes the value.
+; Screen key handlers are cases of the firmware's per-screen jump tables; ours are reached the same
+; way (a jump, not a call) and leave through the same exits. `.dw 0xd0ce, A` is the firmware's
+; absolute jump.
+
+.hook 0x010d8 expect 0xfbd0 0xe152 0xd6c8 0xc72f   ; route_note_on: r0 = param_get(octave)
+    call  oct_router
+    .dw   0x7800, 0x7800      ; jmp to the next word (twice): fill the rest of the replaced words
+.end
+
+.hook 0x05f8a expect 0x0700 0xc14c 0x0006          ; draw_screen, Octave: key labels, then the value
+    .dw   0xd0ce, oct_screen
+    .dw   0x7800
+.end
+
+.hook 0x0e05d expect 0x30be     ; left key on screen 12 (was: back)
+    .dw   oct_key_main
+.end
+.hook 0x0e070 expect 0x3276     ; middle key (was: -1)
+    .dw   oct_key_dual
+.end
+.hook 0x0e081 expect 0x3346     ; middle key, second table (was: -1); Sustain does nothing here
+    .dw   0x3374
+.end
+.hook 0x0e090 expect 0x3527     ; right key (was: +1)
+    .dw   oct_key_split
+.end
+.hook 0x0e0a3 expect 0x3669     ; right key, second table (was: +1); Sustain does nothing here
+    .dw   0x36a5
+.end
+.hook 0x0e0b2 expect 0x3ad5     ; dial on screen 12
+    .dw   oct_dial
+.end
+
+.code
+; called from route_note_on (frame: [fp+11] = part index, [fp+12] -> the note being built).
+; Returns 0..2 in r0 like param_get(octave); beyond -1/+1 it also moves the note here. Leaf: no calls.
+oct_router:
+    ld    r6, [fp+11]
+    ld    r7, [octave]
+    cmp   r6, #1
+    bne   .r_split
+    shr   r7, 3
+    jmp   .r_side
+.r_split:
+    cmp   r6, #2
+    bne   .r_main
+    shr   r7, 6
+.r_side:
+    and   r7, #7
+    add   r7, #3              ; t = s + 3
+    jmp   .r_mod
+.r_main:
+    and   r7, #7
+    add   r7, #2              ; t = s + 2
+.r_mod:
+    cmp   r7, #7
+    blt   .r_have
+    li    r4, #0xfff9         ; -7
+    add   r7, r4
+.r_have:                      ; r7 = t, 0..6
+    ld    r1, [fp+12]
+    ld    r6, [r1+0]
+    cmp   r7, #5
+    blt   .r_low
+    add   r6, #12             ; t = 5: +2, t = 6: +3
+    cmp   r7, #6
+    bne   .r_up
+    add   r6, #12
+.r_up:
+    st    [r1+0], r6
+    mov   r0, #2
+    ret
+.r_low:
+    cmp   r7, #2
+    blt   .r_down
+    li    r4, #0xfffe         ; t 2..4 -> 0..2
+    add   r7, r4
+    mov   r0, r7
+    ret
+.r_down:
+    li    r4, #0xfff4         ; t = 1: -2, t = 0: -3
+    add   r6, r4
+    cmp   r7, #0
+    bne   .r_dn
+    add   r6, r4
+.r_dn:
+    st    [r1+0], r6
+    mov   r0, #0
+    ret
+
+; r6 = part 0..2 -> r7 = its t (0..6, v + 3). Called only from screen code (not nested).
+oct_get:
+    ld    r7, [octave]
+    cmp   r6, #1
+    bne   .g_split
+    shr   r7, 3
+    jmp   .g_side
+.g_split:
+    cmp   r6, #2
+    bne   .g_main
+    shr   r7, 6
+.g_side:
+    and   r7, #7
+    add   r7, #3
+    jmp   .g_mod
+.g_main:
+    and   r7, #7
+    add   r7, #2
+.g_mod:
+    cmp   r7, #7
+    blt   .g_out
+    li    r4, #0xfff9
+    add   r7, r4
+.g_out:
+    ret
+
+; screen 12 body, jumped to from draw_screen; continues at its common exit
+oct_screen:
+    li    r6, #0xef           ; MAIN
+    ld    r7, [ui_part]
+    cmp   r7, #0
+    bne   .k0
+    li    r6, #0xf0           ; MAIN, highlighted
+.k0:
+    push  r6
+    push  #0
+    push  #0
+    ccall draw_softkey
+    li    r6, #0xed           ; DUAL
+    ld    r7, [ui_part]
+    cmp   r7, #1
+    bne   .k1
+    li    r6, #0xee
+.k1:
+    push  r6
+    push  #0
+    push  #1
+    ccall draw_softkey
+    li    r6, #0x2a           ; SPLIT
+    ld    r7, [ui_part]
+    cmp   r7, #2
+    bne   .k2
+    li    r6, #0x2b
+.k2:
+    push  r6
+    push  #0
+    push  #2
+    ccall draw_softkey
+    ld    r6, [ui_part]
+    call  oct_get
+    li    r1, #text_buf       ; "-3" .. "0" .. "+3" (as draw_octave_value)
+    cmp   r7, #3
+    bne   .t_sign
+    mov   r6, #0x30
+    st    [r1+0], r6
+    mov   r6, #0
+    st    [r1+1], r6
+    jmp   .t_draw
+.t_sign:
+    blt   .t_neg
+    mov   r6, #0x2b           ; '+', digit = t - 3
+    add   r7, #0x2d
+    jmp   .t_put
+.t_neg:
+    mov   r6, #0x2d           ; '-', digit = 3 - t
+    mov   r5, r7
+    mov   r7, #0x33
+    cmp   r5, #0
+    beq   .t_put
+    mov   r7, #0x32
+    cmp   r5, #1
+    beq   .t_put
+    mov   r7, #0x31
+.t_put:
+    st    [r1+0], r6
+    st    [r1+1], r7
+    mov   r6, #0
+    st    [r1+2], r6
+.t_draw:
+    mov   r7, #0
+    push  r7
+    push  #0x10
+    push  #0x39
+    push  #0x19
+    push  #0x3b
+    ccall 0x04a69             ; clear the value area
+    mov   r7, #0
+    push  #text_buf
+    push  r7
+    push  #1
+    push  r7
+    push  #0x1b
+    push  #0x57
+    ccall draw_text_centered
+    .dw   0xd0ce, 0x061f5
+
+; keys under the display on screen 12: select the part, redraw
+oct_key_main:
+    mov   r7, #0
+    st    [ui_part], r7
+    ld    r7, [screen]
+    push  r7
+    ccall draw_screen
+    .dw   0xd0ce, 0x0314c
+oct_key_dual:
+    mov   r7, #1
+    st    [ui_part], r7
+    ld    r7, [screen]
+    push  r7
+    ccall draw_screen
+    .dw   0xd0ce, 0x03374
+oct_key_split:
+    mov   r7, #2
+    st    [ui_part], r7
+    ld    r7, [screen]
+    push  r7
+    ccall draw_screen
+    .dw   0xd0ce, 0x036a5
+
+; dial on screen 12: t of ui_part -1 / +1, clamp 0..6
+oct_dial:
+    .dw   0xd2cd, 0x0002      ; r5 = dial delta, signed (as menu_edit_sustain)
+    cmp   r5, #0
+    beq   .d_out
+    ld    r6, [ui_part]
+    call  oct_get             ; r7 = t
+    shr   r5, 15              ; 1 = turned down
+    cmp   r5, #0
+    bne   .d_down
+    cmp   r7, #6
+    beq   .d_out
+    add   r7, #1
+    jmp   .d_set
+.d_down:
+    cmp   r7, #0
+    beq   .d_out
+    li    r4, #0xffff
+    add   r7, r4
+.d_set:
+    ld    r6, [ui_part]
+    add   r7, #4              ; s = (t + 4) % 7 for DUAL/SPLIT, (t + 5) % 7 for MAIN
+    cmp   r6, #0
+    bne   .e_mod
+    add   r7, #1
+.e_mod:
+    cmp   r7, #7
+    blt   .e_part
+    li    r4, #0xfff9
+    add   r7, r4
+.e_part:
+    ld    r5, [octave]
+    cmp   r6, #1
+    bne   .e_split
+    shl   r7, 3
+    li    r4, #0x01c7
+    jmp   .e_store
+.e_split:
+    cmp   r6, #2
+    bne   .e_main
+    shl   r7, 6
+    li    r4, #0x003f
+    jmp   .e_store
+.e_main:
+    li    r4, #0x01f8
+.e_store:
+    and   r5, r4
+    or    r5, r7
+    st    [octave], r5
+    ld    r7, [screen]
+    push  r7
+    ccall draw_screen
+.d_out:
+    .dw   0xd0ce, 0x03b5f
+.end
