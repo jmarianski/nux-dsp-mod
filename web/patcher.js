@@ -73,11 +73,186 @@ function applyPatches(target, bytes, selection) {
     }
   }
   if (!Object.keys(owner).length) throw "select at least one patch";
+  return fixChecksum(out);
+}
+function fixChecksum(out) {
+  const dv = new DataView(out.buffer, out.byteOffset, out.length), n = out.length / 2;
   let s = 0;
   for (let i = 0; i < n - 1; i++) s += dv.getUint16(2 * i, true);
   dv.setUint16(2 * (n - 1), (-s) & 0xffff, true);
-  let check = 0;
-  for (let i = 0; i < n; i++) check += dv.getUint16(2 * i, true);
-  if ((check & 0xffff) || dv.getUint16(0, true) !== 0x6472) throw "internal error: output container invalid";
+  if (!containerOk(out)) throw "internal error: output container invalid";
+  return out;
+}
+
+// --- added instruments (port of nuxdsp/soundbank.py and instrument.py; same bytes, tested in tests/) ---
+const u16 = (d, o) => d[o] | d[o + 1] << 8, u32 = (d, o) => (u16(d, o) | u16(d, o + 2) << 16) >>> 0;
+const put16 = (d, o, v) => { d[o] = v & 0xff; d[o + 1] = v >> 8 & 0xff; };
+const put32 = (d, o, v) => { put16(d, o, v & 0xffff); put16(d, o + 2, v >>> 16); };
+const PL_LETTERS = "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ";
+// an instrument pack (.nxi): "NXI1", u32 header length, JSON header, s16le samples of each zone
+function parsePack(bytes) {
+  if (String.fromCharCode(...bytes.subarray(0, 4)) !== "NXI1") throw "not an instrument pack (.nxi)";
+  const n = u32(bytes, 4), header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + n)));
+  const pcm = [];
+  let o = 8 + n;
+  for (const z of header.zones) { pcm.push(bytes.subarray(o, o + 2 * z.samples)); o += 2 * z.samples; }
+  if (o !== bytes.length) throw "pack size does not match its zones";
+  const roots = header.zones.map(z => z.root);
+  if (!header.name || roots.some((r, i) => !(r >= 0 && r <= 127) || (i && r <= roots[i - 1]))) throw "invalid pack";
+  return {header, pcm, roots, name: header.name};
+}
+function dspWord(dsp, a) { return u16(dsp, 2 * a); }
+// voices: target.voices (addresses from the map); dsp: the user's official DSP file
+function voiceBanks(v, dsp) {
+  const out = [];
+  for (let i = 0; i < 64; i += 2) {
+    const b = dspWord(dsp, v.ramdata + v.voiceBanks + i), n = dspWord(dsp, v.ramdata + v.voiceBanks + i + 1);
+    if (!n) break;
+    out.push([b, n]);
+  }
+  return out;
+}
+function soundNames(v, dsp) {
+  const names = [];
+  for (let i = 0; i < 500; i++) {
+    let a = dspWord(dsp, v.ramdata + v.soundNames + i), s = "";
+    while (dspWord(dsp, v.ramdata + a)) s += String.fromCharCode(dspWord(dsp, v.ramdata + a++));
+    names.push(s);
+  }
+  return names;
+}
+function voiceToBankProg(banks, voice) {
+  let x = voice - 1;
+  for (const [b, n] of banks) { if (x >= 0 && x < n) return [b, x]; x -= n; }
+  throw `sound ${voice} does not exist`;
+}
+function dirEntry(d, bank, prog) {
+  let a = u16(d, 0x252 + 2 * prog) * 2;
+  while (u32(d, a) !== 0xffffffff) { if (d[a] === bank) return a; a += 4; }
+  throw `no instrument for bank ${bank} program ${prog}`;
+}
+const instrumentAddr = (d, a) => (d[a + 1] * 0x10000 + u16(d, a + 2)) * 2;
+function zoneAddrs(d, inst) {
+  const page = Math.floor(inst / 2 / 0x10000) * 0x10000, out = [];
+  for (let o = inst + 4; ; o += 6) {
+    out.push((page + u16(d, o + 4)) * 2);
+    if (d[o + 3] === 0xff) return out;
+  }
+}
+function findSampleBlock(d, z) {
+  for (let o = z; o < z + 0x60; o++)
+    if (d[o + 1] <= 1 && d[o + 4] === 1 && !d[o + 6] && !d[o + 7] && !d[o + 9] && !d[o + 15] && d[o + 18] === 0x0e && d[o + 19] === 0x7f)
+      return o;
+  throw "no sample block in the template zone";
+}
+function zoneRecord(d, z) {
+  const pageB = Math.floor(z / 2 / 0x10000) * 0x20000, sb = findSampleBlock(d, z);
+  let marker = z;
+  while (!(d[marker] === 0xf0 && d[marker + 1] === 0xb5)) marker++;
+  const offs = [0];
+  for (let o = 4; o < marker - z + 2; o += 2) offs.push(o);
+  const ptrs = offs.map(o => u16(d, z - 2 + o) * 2 + pageB), top = Math.max(...ptrs);
+  if (d[top + 2] !== 3 || d[top + 3] !== 4) throw "unexpected template zone layout";
+  const end = top + 26;
+  if (ptrs.some(p => p < z - 2 || p >= end)) throw "template zone points outside itself";
+  const rec = d.slice(z - 2, end);
+  if (rec[sb - z + 2 - 4] & 0x40) throw "template zone does not follow the keyboard";
+  return {rec, offs, pageB, sbOff: sb - (z - 2)};
+}
+function setAddrs(r, o, S, L, E) {
+  const hi = Math.floor(S / 0x1000000);
+  if (Math.floor(L / 0x1000000) !== hi || Math.floor(E / 0x1000000) !== hi) throw "sample crosses a 16M-word boundary";
+  r[o] = (r[o] & 0x3f) | ((hi & 3) << 6); r[o + 1] = hi >> 2;
+  put16(r, o + 2, (L >>> 8) & 0xffff); r[o + 5] = L & 0xff;
+  r[o + 8] = S & 0xff; put16(r, o + 10, (S >>> 8) & 0xffff);
+  r[o + 14] = E & 0xff; put16(r, o + 16, (E >>> 8) & 0xffff);
+}
+const tuneValue = (midi, cents) =>
+  Math.round(256 * (-83.996 - 12 * Math.log2(440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200) / 44100)));
+// items: [{pack, voice}] -> new soundbank bytes; bank: the user's official soundbank file
+async function addInstruments(target, dsp, bank, items) {
+  const v = target.voices, d = bank, FB = 0x80000;
+  if (await sha256(bank) !== v.soundbank.sha256) throw `not the official ${v.soundbank.name} (SHA-256 mismatch)`;
+  if (new Set(items.map(i => i.voice)).size !== items.length) throw "two instruments for the same sound";
+  const banks = voiceBanks(v, dsp);
+  const [tv, tzone] = v.soundbank.template;
+  const tinst = instrumentAddr(d, dirEntry(d, ...voiceToBankProg(banks, tv)));
+  const tz = zoneAddrs(d, tinst)[tzone], T = zoneRecord(d, tz);
+  let tail = -1;
+  const mark = new TextEncoder().encode("PackNameDate:");
+  for (let i = d.length - mark.length; i >= 0 && tail < 0; i--)
+    if (mark.every((c, j) => d[i + j] === c)) tail = i;
+  if (tail < 0) throw "soundbank trailer not found";
+  const align = n => Math.ceil(n / 0x800) * 0x800;
+  let len = tail;
+  for (const {pack} of items) { len = align(len); for (const p of pack.pcm) len += 4 + p.length + 128; }
+  len = align(len);
+  const out = new Uint8Array(len + d.length - tail);
+  out.set(d.subarray(0, tail)); out.set(d.subarray(tail), len);
+  let pos = tail;
+  const pad = to => { for (; pos < to; pos += 2) { out[pos] = 0xef; out[pos + 1] = 0xad; } };
+  const placed = items.map(({pack}) => {
+    pad(align(pos));
+    return pack.pcm.map(p => {
+      const start = pos + 4;
+      out.set(p, start); pos = start + p.length + 128;           // zeros already: guard and silent loop
+      const S = FB + start / 2, E = FB + (pos - 2) / 2;
+      return [S, E - 43, E];
+    });
+  });
+  pad(len);
+  put32(out, 8, FB + len / 2); put32(out, 0x9c, FB + len / 2);
+  items.forEach(({pack, voice}, k) => {
+    const base = (u32(out, 0xa6) - FB) * 2 + 0x10, page = Math.floor(base / 0x20000), n = pack.pcm.length;
+    const zoneAt = base + 4 + 6 * n + 2, recLen = T.rec.length, size = 4 + 6 * n + 2 + n * recLen;
+    if (base + size > (page + 1) * 0x20000 || out.subarray(base - 0x10, base + size).some(b => b !== 0x5e && b !== 0xd0))
+      throw "no free room for the instrument in the parameter page";
+    const inst = new Uint8Array(size);
+    inst.set(d.subarray(tinst, tinst + 4)); inst[2] = 0x80 | n;
+    let hi = 0;
+    pack.roots.forEach((r, i) => {
+      const zstart = zoneAt + i * recLen, lo = hi, e = 4 + 6 * i;
+      hi = i === n - 1 ? 0xff : pack.roots[i + 1] - 1;
+      inst.set([i ? 0 : 0x80, lo, 0x7f, hi], e); put16(inst, e + 4, ((zstart + 2) / 2) & 0xffff);
+      const z = T.rec.slice();
+      for (const o of T.offs) {
+        const nw = u16(T.rec, o) * 2 + T.pageB - (tz - 2) + zstart;
+        if (Math.floor(nw / 0x20000) !== page) throw "instrument crosses a page";
+        put16(z, o, (nw / 2) & 0xffff);
+      }
+      setAddrs(z, T.sbOff, ...placed[k][i]);
+      put16(z, T.sbOff - 2, tuneValue(r, pack.header.cents || 0) & 0xffff);
+      inst.set(z, 4 + 6 * n + 2 + i * recLen);
+    });
+    out.set(inst, base);
+    put32(out, 0xa6, FB + Math.floor((base + size + 1) / 2));
+    const a = dirEntry(out, ...voiceToBankProg(banks, voice));
+    out[a + 1] = page; put16(out, a + 2, (base / 2) & 0xffff);
+  });
+  return out;
+}
+function nameWords(voice, name, polish) {
+  const s = name ? `${voice}.${name}` : "", cs = [...s];
+  const bad = cs.filter(c => !(c >= " " && c <= "~" || polish && PL_LETTERS.includes(c)));
+  if (bad.length) throw `name "${name}": the display has no ${bad.join("")}`;
+  if (cs.length > 15) throw `name "${s}" too long (${cs.length} characters with the number, at most 15)`;
+  return cs.map(c => c.codePointAt(0)).concat(Array(16 - cs.length).fill(0));
+}
+// entries: [{voice, name, name_pl}] into custom_voices' table of a patched DSP image (in place, fixes the checksum)
+function fillNames(target, out, entries) {
+  const v = target.voices;
+  if (entries.length > v.max) throw `at most ${v.max} added instruments`;
+  entries.forEach((e, i) => {
+    const ws = [e.voice - 1].concat(nameWords(e.voice, e.name, false), nameWords(e.voice, e.name_pl || "", true));
+    ws.forEach((w, j) => put16(out, 2 * (v.cvTab + i * 33 + j), w));
+  });
+  return fixChecksum(out);
+}
+// a bundled pack's bytes, once its web/instruments/<id>.js has run
+function packBytes(id) {
+  const b64 = (globalThis.NUXDSP_PACK_DATA || {})[id];
+  if (!b64) throw `instrument pack ${id} not loaded`;
+  const s = atob(b64), out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
   return out;
 }

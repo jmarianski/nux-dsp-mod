@@ -11,9 +11,9 @@ from nuxdsp import asm, container, disasm, extract, fwmap, patcher, web
 FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
-# relocated, plus boot_preset's preset labels (confirmed on hardware too), polish_font's small font
+# relocated, plus custom_voices (empty name table), boot_preset's preset labels (confirmed on hardware too), polish_font's small font
 # mapping and the full lang_pl translation (all confirmed on hardware).
-ALL_SHA = "632e7918366d6893b954f45b46ea0cb98d8ee505bf269088db9822f7f2f29f8d"
+ALL_SHA = "7f659b105b690c137d22910b0c016e236754eff716744a81a7d89284e74917db"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -105,6 +105,7 @@ class TestFirmware(unittest.TestCase):
             shutil.copy(os.path.join(web.WEB_DIR, "patcher.js"), d)
             os.mkdir(os.path.join(d, "targets"))
             web.write_target(self.img, self.map, d)
+            web.write_packs(d)
             cases = [({}, {}), ({"BOOT_PRESET": 4, "PRESET_LABELS": 2, "OFF_VELOCITY": 90},
                                 {"boot_preset": {"BOOT_PRESET": 4, "PRESET_LABELS": 2},
                                  "touch_off": {"OFF_VELOCITY": 90}}),

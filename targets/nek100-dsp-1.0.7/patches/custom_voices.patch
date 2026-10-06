@@ -1,0 +1,67 @@
+.patch custom_voices
+.title "Names of the instruments added to the soundbank (filled in by the patcher together with the soundbank)"
+; The sound names live in initialised RAM (sound_names), packed with no room for longer ones, and are read in
+; one place: draw_sound_name(n) at 0x04fa4. There we look n up in cv_tab first; a hit gets its name copied
+; from program memory to text_buf (16 words: at most 15 characters, "500.Cat Piano") and drawn from there.
+; With lang_pl (RAM 0x168 'G' -> 'F') the Polish name is used when the entry has one.
+;
+; cv_tab: CV_N entries of 1 + 16 + 16 words: sound index 0..499 (0xffff = free), English name, Polish name,
+; each name 0-terminated. The patch itself leaves the table empty; `nuxdsp build --voice` and the web patcher
+; fill it when they add instruments (nuxdsp/soundbank.py), at the address the canonical layout gives it.
+
+.hook 0x04fb6 expect 0xd14a 0x233c 0xc790   ; addi r1, #sound_names; ld r7, [r1+0]
+    call  cv_name
+    .dw   0x7800
+.end
+
+.code
+; r1 = sound index -> r7 = pointer to its name (RAM). Leaf, uses r1, r4..r6 (the caller sets them after).
+cv_name:
+    mov   r5, r1
+    li    r1, #cv_tab
+    mov   r6, #4              ; CV_N
+.loop:
+    ldc   r7, [r1+0]
+    cmp   r7, r5
+    beq   .found
+    addi  r1, #33
+    li    r4, #0xffff
+    add   r6, r4
+    cmp   r6, #0
+    bne   .loop
+    mov   r1, r5              ; not ours: as the firmware
+    addi  r1, #sound_names
+    ld    r7, [r1+0]
+    ret
+.found:
+    add   r1, #1              ; English name
+    ld    r6, [0x0168]
+    cmp   r6, #0x47
+    beq   .copy
+    mov   r5, r1              ; lang_pl: the Polish one, when there is one
+    add   r1, #16
+    ldc   r7, [r1+0]
+    cmp   r7, #0
+    bne   .copy
+    mov   r1, r5
+.copy:
+    mov   r5, r1
+    li    r4, #text_buf
+.c_loop:
+    mov   r1, r5
+    ldc   r7, [r1+0]
+    mov   r1, r4
+    st    [r1+0], r7
+    add   r5, #1
+    add   r4, #1
+    cmp   r7, #0
+    bne   .c_loop
+    li    r7, #text_buf
+    ret
+
+cv_tab:
+    .dw   0xffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .dw   0xffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .dw   0xffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .dw   0xffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+.end
