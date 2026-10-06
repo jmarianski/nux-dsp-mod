@@ -38,22 +38,28 @@ For that you also give them the official soundbank file from the same update pac
 and the soundbank. The new sound shows its own name (`500.Cat Piano`). Flashing the official soundbank brings
 the original sound back.
 
-An instrument comes as a pack (`.nxi`): its samples, one per root key, plus name, tuning, author, source and
-license. The playing settings (envelope, filter, …) are taken from your own soundbank, so packs contain no NUX
-data. Bundled packs, in [`instruments/`](instruments):
+Instruments are **SoundFont 2** files (`.sf2`), the common format of free sample libraries; choose one of
+the file's presets (`nuxdsp instruments FILE.sf2` lists them, the web page shows a list). Taken over: key ranges,
+root keys, tuning, sample rate and loops (sounds that sustain while the key is held). Of several velocity layers
+the one at velocity 100 is used, stereo is mixed to mono. Envelope and filter come from a template sound of
+your own soundbank, so the instruments contain no NUX data. Drum kits and effects that play the same pitch on
+every key are not supported. Bundled, in [`instruments/`](instruments):
 
-| Pack | Instrument | Samples |
+| Instrument | What | Samples |
 |---|---|---|
 | `cat_piano` | **Cat Piano** (*Kocie piano*): a toy cat piano meowing, 29 zones over the whole keyboard | "Cat Piano Note C" by Meku A, [Freesound.org](https://freesound.org) via creazilla.com, **CC0 1.0** (public domain); pitched to each key and the attack trimmed |
 
 ```sh
+python3 -m nuxdsp instruments GeneralUser.sf2               # its presets: @N, zones, size, looped or not
 python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin NEK100_DSP_V1.0.7B_mod.bin \
     --sbank NEK100_SBANK_V1.0.4.bin --sbank-out NEK100_SBANK_V1.0.4_mod.bin \
-    --voice 500=cat_piano --voice 2=my.nxi,"My Sound","Mój dźwięk"
-python3 -m nuxdsp pack samples/ my.nxi --name "My Sound" --cents 0 --author ... --source ... --license ...
+    --voice 500=cat_piano --voice 2=GeneralUser.sf2@19,"Organ","Organy"
+python3 -m nuxdsp pack samples/ my.sf2 --name "My Sound" --author ... --license ... --comment "source..."
 ```
 
-`pack` takes `r<midi>.wav` files (mono, 16-bit, 44.1 kHz), each sample at its root key, e.g. `r60.wav`.
+`pack` makes a SoundFont from `r<midi>.wav` files (mono, 16-bit, 44.1 kHz), each sample at its root key, e.g.
+`r60.wav`. The soundbank grows by the size of the samples (the cat: 2 MB); how much room the instrument's flash
+has is not known yet, so start small.
 Names: at most 11 characters, and with the sound number at most 15.
 
 > **Use at your own risk.** Unofficial, not affiliated with NUX or Dream. Modified firmware may void your
@@ -132,11 +138,15 @@ firmware dalej działają.
 **Własne instrumenty:** strona i linia poleceń potrafią wstawić nowe instrumenty w miejsce dowolnego z 500 brzmień
 (do 4). Trzeba im dać też oryginalny plik soundbanku z tej samej paczki aktualizacji (`NEK100_SBANK_V1.0.4.bin`)
 i wgrać dwa pliki wynikowe: firmware DSP i soundbank. Nowe brzmienie ma własną nazwę (`500.Kocie piano`), a
-wgranie oryginalnego soundbanku przywraca dawne brzmienie. Instrument to paczka `.nxi` z samplami, nazwą i
-informacją o autorze i licencji. Ustawienia brzmienia (obwiednia, filtr) są brane z Twojego soundbanku, więc paczki
-nie zawierają danych NUX. W repozytorium jest **Kocie piano** (`cat_piano`): miauczące zabawkowe pianino, nagranie
-„Cat Piano Note C” autorstwa Meku A z Freesound.org (przez creazilla.com), licencja **CC0** (domena publiczna),
-przestrojone na każdy klawisz, z przyciętym atakiem. Własną paczkę robi `python3 -m nuxdsp pack` (opis wyżej).
+wgranie oryginalnego soundbanku przywraca dawne brzmienie. Instrumenty to pliki **SoundFont 2** (`.sf2`), popularny format darmowych bibliotek
+sampli. Z pliku wybierasz jeden preset; przenoszone są zakresy klawiszy, strojenie, częstotliwość próbkowania i pętle
+(dźwięk trwa, dopóki trzymasz klawisz). Z warstw dynamiki brana jest ta dla siły 100, stereo jest miksowane do mono.
+Obwiednia i filtr pochodzą z brzmienia-szablonu Twojego soundbanku, więc instrumenty nie zawierają danych NUX.
+Perkusje i efekty grające tę samą wysokość na każdym klawiszu nie są obsługiwane. W repozytorium jest **Kocie piano**
+(`cat_piano`): miauczące zabawkowe pianino, nagranie „Cat Piano Note C” autorstwa Meku A z Freesound.org (przez
+creazilla.com), licencja **CC0** (domena publiczna), przestrojone na każdy klawisz, z przyciętym atakiem. SoundFont z
+własnych sampli robi `python3 -m nuxdsp pack` (opis wyżej). Soundbank rośnie o rozmiar sampli, a ile miejsca ma
+flash, jeszcze nie wiadomo, więc lepiej zaczynać od małych instrumentów.
 
 > **Na własne ryzyko.** To nieoficjalny projekt, niezwiązany z NUX ani Dream. Zmodyfikowany firmware może
 > naruszać warunki gwarancji. Zachowaj oryginalny plik: wgranie go z powrotem przywraca fabryczny stan.

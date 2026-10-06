@@ -81,16 +81,16 @@ a { color: var(--accent); }
   </div>
   <div class="card" id="vcard" hidden>
     <h2>3. Instruments (optional) / Instrumenty (opcjonalnie)</h2>
-    <p class="desc" style="margin-top:0">Put new instruments in place of chosen sounds. You also need the official
-    soundbank file from the same update package; you then flash both results. / Nowe instrumenty w miejsce wybranych
-    brzmień. Potrzebny jest też oryginalny plik soundbanku z tej samej paczki aktualizacji; potem wgrywasz oba wyniki.</p>
+    <p class="desc" style="margin-top:0">Put new instruments (SoundFont .sf2 files) in place of chosen sounds. You also need the official
+    soundbank file from the same update package; you then flash both results. / Nowe instrumenty (pliki SoundFont .sf2) w miejsce
+    wybranych brzmień. Potrzebny jest też oryginalny plik soundbanku z tej samej paczki aktualizacji; potem wgrywasz oba wyniki.</p>
     <div class="drop" id="sdrop">
       <input type="file" id="sfile" accept=".bin">
       <div class="desc" id="sname"></div>
     </div>
     <div class="status" id="sstatus"></div>
     <div id="voices"></div>
-    <input type="file" id="nxi" accept=".nxi" hidden>
+    <input type="file" id="sf2file" accept=".sf2" hidden>
     <button class="small" id="addv" style="margin-top:8px">+ Add instrument / Dodaj instrument</button>
   </div>
   <div class="card" id="bcard" hidden>
@@ -162,9 +162,10 @@ function status(el, ok, text, sha) {
   el.firstChild.textContent = (ok ? "✓ " : "✗ ") + text;
   if (sha) el.querySelector(".mono").textContent = sha;
 }
-// --- instruments ---
+// --- instruments: SoundFonts (.sf2), bundled (web/instruments/) or the user's own ---
 const PACKS = globalThis.NUXDSP_PACKS || [];
-let sbank = null, own = {};  // own: .nxi files loaded by the user, by key
+let sbank = null;
+const fonts = {};  // key -> {sf, label, meta}; bundled: their id, own files: "file:" + name
 function loadScript(src) {
   return new Promise((ok, fail) => {
     const e = document.createElement("script");
@@ -172,74 +173,98 @@ function loadScript(src) {
     document.head.appendChild(e);
   });
 }
-async function getPack(key) {
-  if (own[key]) return own[key];
-  if (!(globalThis.NUXDSP_PACK_DATA || {})[key]) await loadScript(`instruments/${key}.js`);
-  return parsePack(packBytes(key));
+async function getFont(key) {
+  if (!fonts[key]) {
+    const meta = PACKS.find(p => p.id === key);
+    if (!meta) throw `no instrument ${key}`;
+    if (!(globalThis.NUXDSP_PACK_DATA || {})[key]) await loadScript(`instruments/${key}.js`);
+    fonts[key] = {sf: parseSf2(packBytes(key)), label: meta.INAM || key, meta};
+  }
+  return fonts[key];
 }
-function packInfo(key) {
-  const h = own[key] ? own[key].header : PACKS.find(p => p.id === key);
-  return h || {};
-}
-function packLabel(h) { return [h.author, h.source, h.license].filter(Boolean).join(" · "); }
+const kB = n => n > 2 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${Math.round(n / 1024)} kB`;
 function freeSlot() {
   const used = [...document.querySelectorAll(".voice [data-k=slot]")].map(e => Number(e.value));
   let v = 500;
   while (used.includes(v)) v--;
   return v;
 }
-function addVoice(key) {
-  const box = $("voices"), names = soundNames(target.voices, input);
+function addVoice() {
+  const names = soundNames(target.voices, input);
   const d = document.createElement("div");
   d.className = "voice";
-  d.innerHTML = `<div class="row"><select data-k="pack"></select>
+  d.innerHTML = `<div class="row"><select data-k="src"></select><select data-k="preset" hidden></select>
       <button class="small" data-k="del">✕</button></div>
     <div class="row desc" data-k="info"></div>
     <div class="row">sound / brzmienie <input type="number" min="1" max="500" data-k="slot">
       <span class="desc" data-k="was"></span></div>
-    <div class="row">name <input type="text" data-k="name" maxlength="11"> nazwa PL
-      <input type="text" data-k="name_pl" maxlength="11"></div>`;
-  const q = k => d.querySelector(`[data-k=${k}]`), sel = q("pack");
+    <div class="row">name <input type="text" data-k="name" maxlength="13"> nazwa PL
+      <input type="text" data-k="name_pl" maxlength="13"></div>`;
+  const q = k => d.querySelector(`[data-k=${k}]`), src = q("src"), pre = q("preset");
   const fill = () => {
-    sel.textContent = "";
-    for (const p of PACKS) sel.add(new Option(`${p.name} (${p.zones} zones)`, p.id));
-    for (const [k, p] of Object.entries(own)) sel.add(new Option(`${p.name} (${p.pcm.length} zones, ${k})`, k));
-    sel.add(new Option("Own .nxi file… / Własny plik .nxi…", ""));
+    const k = src.value;
+    src.textContent = "";
+    for (const p of PACKS) src.add(new Option(p.INAM || p.id, p.id));
+    for (const [key, f] of Object.entries(fonts)) if (key.startsWith("file:")) src.add(new Option(f.label, key));
+    src.add(new Option("Own SoundFont (.sf2)… / Własny SoundFont (.sf2)…", ""));
+    if (k) src.value = k;
   };
-  const pick = k => {
-    sel.value = k;
-    const h = packInfo(k);
-    q("info").textContent = packLabel(h);
-    q("name").value = h.name || ""; q("name_pl").value = h.name_pl || "";
+  const pickPreset = () => {
+    const f = fonts[src.value], idx = Number(pre.value);
+    d.inst = null;
+    try {
+      d.inst = sf2Instrument(f.sf, idx);
+      const loops = d.inst.zones.filter(z => z.loop).length, n = d.inst.zones.length;
+      const info = f.sf.info, who = [info.IENG, info.ICOP].filter(Boolean).join(" · ");
+      q("info").textContent = `${n} zones, ${kB(d.inst.size)}, ${loops === n ? "looped / z pętlą" : loops ? `${loops} looped` :
+        "one-shot / bez pętli"}${who ? " · " + who : ""}`;
+      q("info").title = info.ICMT || "";
+      const first = pre.options.length <= 1 || pre.selectedIndex === 0;
+      q("name").value = d.inst.name.slice(0, 11).trim();
+      q("name_pl").value = f.meta && first ? f.meta.name_pl || "" : "";
+    } catch (e) {
+      q("info").textContent = `✗ ${e}`;
+    }
   };
+  const pickFont = async key => {
+    q("info").textContent = "…";
+    try {
+      const f = await getFont(key);
+      src.value = key; d.dataset.src = key;
+      pre.textContent = "";
+      for (const p of sf2Presets(f.sf))
+        pre.add(new Option(`${p.bank}:${p.program} ${p.name}`, p.index));
+      pre.hidden = pre.options.length <= 1;
+      pickPreset();
+    } catch (e) { q("info").textContent = `✗ ${e}`; }
+  };
+  src.addEventListener("change", () => {
+    if (src.value) return pickFont(src.value);
+    src.value = d.dataset.src || "";
+    $("sf2file").onchange = async ev => {
+      const file = ev.target.files[0]; ev.target.value = "";
+      if (!file) return;
+      try {
+        const key = "file:" + file.name;
+        fonts[key] = {sf: parseSf2(new Uint8Array(await file.arrayBuffer())), label: file.name};
+        for (const v of document.querySelectorAll(".voice")) v.refill();
+        pickFont(key);
+      } catch (e) { q("info").textContent = `✗ ${file.name}: ${e}`; }
+    };
+    $("sf2file").click();
+  });
+  pre.addEventListener("change", pickPreset);
+  d.refill = fill;
   const showWas = () => {
     const v = Number(q("slot").value);
     q("was").textContent = v >= 1 && v <= 500 ? `replaces / zastępuje ${names[v - 1]}` : "1..500";
   };
-  fill();
-  sel.addEventListener("change", () => {
-    if (sel.value) return pick(sel.value);
-    pick(d.dataset.pack || (PACKS[0] || {}).id || "");
-    $("nxi").onchange = async ev => {
-      const f = ev.target.files[0]; ev.target.value = "";
-      if (!f) return;
-      try {
-        const p = parsePack(new Uint8Array(await f.arrayBuffer())), k = f.name;
-        own[k] = p;
-        for (const v of document.querySelectorAll(".voice")) v.refill();
-        pick(k); d.dataset.pack = k;
-      } catch (e) { status($("sstatus"), false, `${f.name}: ${e}`); }
-    };
-    $("nxi").click();
-  });
-  sel.addEventListener("change", () => { if (sel.value) d.dataset.pack = sel.value; });
-  d.refill = () => { const k = sel.value; fill(); sel.value = k; };
   q("del").addEventListener("click", () => { d.remove(); voicesChanged(); });
   q("slot").value = freeSlot();
   q("slot").addEventListener("input", showWas);
-  box.appendChild(d);
-  pick(key || (PACKS[0] || {}).id || ""); d.dataset.pack = sel.value;
-  showWas(); voicesChanged();
+  $("voices").appendChild(d);
+  fill(); showWas(); voicesChanged();
+  if (PACKS.length) pickFont(PACKS[0].id); else src.dispatchEvent(new Event("change"));
 }
 function voicesChanged() {
   const n = document.querySelectorAll(".voice").length;
@@ -248,8 +273,7 @@ function voicesChanged() {
 function selectedVoices() {
   return [...document.querySelectorAll(".voice")].map(d => {
     const q = k => d.querySelector(`[data-k=${k}]`);
-    return {key: q("pack").value, voice: Number(q("slot").value), name: q("name").value.trim(),
-            name_pl: q("name_pl").value.trim()};
+    return {pack: d.inst, voice: Number(q("slot").value), name: q("name").value.trim(), name_pl: q("name_pl").value.trim()};
   });
 }
 async function loadSbank(f) {
@@ -315,7 +339,7 @@ $("build").addEventListener("click", async () => {
       for (const v of voices) {
         if (!Number.isInteger(v.voice) || v.voice < 1 || v.voice > 500) throw "sound number: 1..500";
         if (!v.name) throw "each instrument needs a name / każdy instrument musi mieć nazwę";
-        v.pack = await getPack(v.key);
+        if (!v.pack) throw `sound ${v.voice}: choose a usable instrument / wybierz instrument, który da się użyć`;
       }
     }
     const out = applyPatches(target, input, sel);

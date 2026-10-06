@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import asm, container, disasm, extract, fwmap, instrument, patcher, soundbank
+from . import asm, container, disasm, extract, fwmap, instrument, patcher, sf2, soundbank
 
 
 def read(path):
@@ -65,12 +65,28 @@ def cmd_list(a):
                 print("%24s%s=%d (%d..%d) %s" % ("", prm.name, prm.default, prm.lo, prm.hi, prm.desc))
     packs = instrument.bundled_names()
     if packs:
-        print("instrument packs (--voice SLOT=NAME):")
+        print("bundled instruments (--voice SLOT=NAME):")
         for n in packs:
-            p = instrument.load(instrument.bundled(n))
-            h = p.header
-            print("  %-20s %s / %s, %d zones; %s, %s, %s" % (n, p.name, h.get("name_pl", ""), len(p.pcm),
-                                                             h.get("author", "?"), h.get("source", "?"), h.get("license", "?")))
+            sf = sf2.load(instrument.bundled(n))
+            print("  %-20s %s / %s; %s, %s" % (n, sf.info.get("INAM", n), instrument.bundled_meta(n).get("name_pl", ""),
+                                             sf.info.get("IENG", "?"), sf.info.get("ICOP", "?")))
+
+
+def cmd_instruments(a):
+    sf = sf2.load(a.sf2)
+    for k in ("INAM", "IENG", "ICOP", "ICMT"):
+        if sf.info.get(k):
+            print("%s  %s" % (k, sf.info[k]))
+    for n, (i, b, p, name) in enumerate(sf.presets):
+        try:
+            ins = sf.instrument(i, a.velocity)
+            loops = sum(1 for z in ins.zones if z.loop)
+            desc = "%2d zones, %6.0f kB, %s" % (len(ins.zones), ins.size / 1024,
+                                              "looped" if loops == len(ins.zones) else "one-shot" if not loops else
+                                              "%d looped" % loops)
+        except sf2.SF2Error as e:
+            desc = "-- %s" % e
+        print("@%-3d bank %3d prog %3d  %-20s %s" % (n, b, p, name, desc))
 
 
 def cmd_disasm(a):
@@ -97,17 +113,18 @@ def cmd_asm(a):
 
 
 def parse_voices(items):
-    """SLOT=PACK[,name[,Polish name]] -> [(slot, pack, name, name_pl)]; PACK: a .nxi file or a bundled pack's name."""
+    """SLOT=INSTRUMENT[,name[,Polish name]] -> [(slot, Instrument, name, name_pl)];
+    INSTRUMENT: FILE.sf2[@PRESET] or a bundled instrument's name."""
     out = []
     for it in items or []:
         slot, _, rest = it.partition("=")
-        path, *names = rest.split(",")
-        if not slot.isdigit() or not 1 <= int(slot) <= 500 or not path:
-            raise ValueError("--voice wants SLOT=PACK[,name[,Polish name]] with SLOT 1..500, got %r" % it)
-        p = instrument.load(path if path.endswith(".nxi") else instrument.bundled(path))
-        name = names[0] if names and names[0] else p.name
-        name_pl = names[1] if len(names) > 1 else (p.header.get("name_pl", "") if not names else "")
-        out.append((int(slot), p, name, name_pl))
+        spec, *names = rest.split(",")
+        if not slot.isdigit() or not 1 <= int(slot) <= 500 or not spec:
+            raise ValueError("--voice wants SLOT=INSTRUMENT[,name[,Polish name]] with SLOT 1..500, got %r" % it)
+        ins, name_pl = instrument.parse_spec(spec)
+        name = names[0] if names and names[0] else ins.name[:15 - len(slot) - 1].strip()
+        name_pl = names[1] if len(names) > 1 else (name_pl if not names else "")
+        out.append((int(slot), ins, name, name_pl))
     return out
 
 
@@ -129,7 +146,7 @@ def cmd_build(a):
         print(line)
     if voices:
         for s, p, n, npl in voices:
-            print("sound %3d  %s%s (%d zones)" % (s, n, " / " + npl if npl else "", len(p.pcm)))
+            print("sound %3d  %s%s (%d zones, %.0f kB)" % (s, n, " / " + npl if npl else "", len(p.zones), p.size / 1024))
         write(a.sbank_out, bank)
         print("wrote %s, sha256 %s" % (a.sbank_out, container.sha256(bank)))
     write(a.out, out)
@@ -137,9 +154,11 @@ def cmd_build(a):
 
 
 def cmd_pack(a):
-    p = instrument.make(a.samples, a.name, a.name_pl, a.cents, author=a.author, source=a.source, license=a.license)
-    write(a.out, p.to_bytes())
-    print("wrote %s: %s, %d zones (keys %d..%d)" % (a.out, p.name, len(p.pcm), p.roots[0], p.roots[-1]))
+    info = {"IENG": a.author, "ICOP": a.license, "ICMT": a.comment, "ISFT": "nuxdsp"}
+    ins = instrument.make(a.samples, a.name, a.cents, info)
+    write(a.out, sf2.write(ins))
+    print("wrote %s: %s, %d zones (root keys %s)" % (a.out, ins.name, len(ins.zones),
+                                                   " ".join(str(z.root) for z in ins.zones)))
 
 
 def cmd_extract(a):
@@ -179,20 +198,22 @@ def main(argv=None):
     s.add_argument("out")
     s.add_argument("-p", "--patch", action="append", help="patch name or file (repeatable; default: the target's defaults)")
     s.add_argument("--param", action="append", help="NAME=VALUE")
-    s.add_argument("--voice", action="append", metavar="SLOT=PACK[,NAME[,NAME_PL]]",
-                   help="put an instrument pack (.nxi file or bundled pack name, see `list`) on sound SLOT (1..500); "
-                        "repeatable, at most 4; needs --sbank and --sbank-out")
+    s.add_argument("--voice", action="append", metavar="SLOT=INSTRUMENT[,NAME[,NAME_PL]]",
+                   help="put an instrument (FILE.sf2[@PRESET], see `instruments`, or a bundled one, see `list`) on "
+                        "sound SLOT (1..500); repeatable, at most 4; needs --sbank and --sbank-out")
     s.add_argument("--sbank", help="the official soundbank file (e.g. NEK100_SBANK_V1.0.4.bin)")
     s.add_argument("--sbank-out", help="where to write the soundbank with the instruments")
-    s = sub.add_parser("pack", help="make an instrument pack (.nxi) from samples")
+    s = sub.add_parser("instruments", help="list the presets of a SoundFont (.sf2) and what of them can be used")
+    s.add_argument("sf2")
+    s.add_argument("--velocity", type=int, default=sf2.VELOCITY, help="which velocity layer (default %(default)s)")
+    s = sub.add_parser("pack", help="make a SoundFont (.sf2) from samples, one per root key")
     s.add_argument("samples", help="directory of r<midi>.wav (mono 16-bit 44.1 kHz) or r<midi>.raw, each at its root key")
-    s.add_argument("out")
-    s.add_argument("--name", required=True, help="at most %d characters" % instrument.MAX_NAME)
-    s.add_argument("--name-pl", default="", help="Polish name (optional)")
-    s.add_argument("--cents", type=float, default=0, help="tuning of the whole instrument")
+    s.add_argument("out", help="the .sf2 file")
+    s.add_argument("--name", required=True)
+    s.add_argument("--cents", type=int, default=0, help="tuning of the whole instrument")
     s.add_argument("--author", default="")
-    s.add_argument("--source", default="")
     s.add_argument("--license", default="")
+    s.add_argument("--comment", default="", help="where the samples come from, ...")
     s = sub.add_parser("disasm", help="annotated listing of your firmware (for local use)")
     s.add_argument("firmware")
     s.add_argument("out")
@@ -222,6 +243,6 @@ def main(argv=None):
         a.web_dir = web.WEB_DIR
     try:
         return globals()["cmd_" + a.cmd](a) or 0
-    except (patcher.PatchError, asm.AsmError, soundbank.BankError, instrument.PackError, ValueError, OSError) as e:
+    except (patcher.PatchError, asm.AsmError, soundbank.BankError, instrument.PackError, sf2.SF2Error, ValueError, OSError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 1

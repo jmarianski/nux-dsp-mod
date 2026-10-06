@@ -1,4 +1,4 @@
-"""Add instruments (instrument.py packs) to the official soundbank, in place of chosen sounds.
+"""Add instruments (sf2.Instrument) to the official soundbank, in place of chosen sounds.
 
 The soundbank (NEK100_SBANK_*.bin) is flashed from word 0x80000 on, so its pointers are flash word addresses
 (byte offset / 2 + 0x80000). What we use of it (C: an instrument built this way plays on the NEK-100):
@@ -7,11 +7,12 @@ The soundbank (NEK100_SBANK_*.bin) is flashed from word 0x80000 on, so its point
   - an instrument: 4 header bytes (byte 2 = 0x80 | number of zones), then per zone 6 bytes
     (first-zone flag, low key, 0x7f, high key, zone address in the page), 0 0, then the zone records;
   - a zone record holds in-page pointers to its parts and a sample block with the sample's start, loop and
-    end addresses; the word before it is the tuning (V, 1/256 semitone).
+    end addresses (the loop runs L..E, sample E = sample L; one-shots loop over silence at the end); the word
+    before it is the tuning (V, 1/256 semitone). A zone plays the keys above the previous zone's high key.
   - header fields: u32 at 8 and 0x9c = end of the data, at 0xa6 = end of the parameter data. New samples go at
     the end (before the "PackNameDate:" trailer), new instruments into the free rest of the parameter page.
 A sound number maps to (bank, program) through the DSP's voice_banks table. The zone settings come from the
-target's template zone (soundbank line of target.map): nothing of the vendor's is in a pack.
+target's template zone (soundbank line of target.map): nothing of the vendor's is in an instrument file.
 
 custom_voices (a DSP patch) shows the new names: fill_names() writes them into its table.
 """
@@ -113,9 +114,9 @@ def set_addrs(rec, S, L, E):
     struct.pack_into("<H", rec, 16, (E >> 8) & 0xFFFF)
 
 
-def tune_value(midi, cents):
+def tune_value(midi, cents, rate=SR):
     f = 440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200)
-    return round(256 * (K - 12 * math.log2(f / SR)))
+    return round(256 * (K - 12 * math.log2(f / rate)))
 
 
 def zone_record(d, z):
@@ -137,7 +138,7 @@ def zone_record(d, z):
 
 
 def add(bank, dsp_image, fwmap, items, check_sha=True):
-    """items: [(pack, sound number 1..500)] -> new soundbank bytes."""
+    """items: [(sf2.Instrument, sound number 1..500)] -> new soundbank bytes."""
     sb = fwmap.soundbank
     if not sb:
         raise BankError("this target has no soundbank description")
@@ -157,16 +158,26 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
     tail = d.index(b"PackNameDate:")
     body, trailer = bytearray(d[:tail]), d[tail:]
     placed = []
-    for pack, voice in items:                                 # samples: appended at the end of the data
+    for inst, voice in items:                                 # samples: appended at the end of the data
         while len(body) % 0x800:
             body += PAD
-        addrs = []
-        for pcm in pack.pcm:
+        addrs, seen = [], {}
+        for z in inst.zones:
+            if z.key is not None and z.key in seen:          # the same sample in several zones: stored once
+                addrs.append(seen[z.key])
+                continue
             start = len(body) + 4                             # two zero guard words, then the audio
-            body += b"\0\0\0\0" + pcm + b"\0" * 128           # 64 zero words: the silent loop of a one-shot
-            end = len(body) - 2
-            S, E = FLASH_BASE_W + start // 2, FLASH_BASE_W + end // 2
-            addrs.append((S, E - 43, E))
+            S = FLASH_BASE_W + start // 2
+            if z.loop:
+                body += b"\0\0\0\0" + z.pcm
+                a = (S, S + z.loop[0], S + z.loop[1])
+            else:
+                body += b"\0\0\0\0" + z.pcm + b"\0" * 128   # 64 zero words: the silent loop of a one-shot
+                E = FLASH_BASE_W + (len(body) - 2) // 2
+                a = (S, E - 43, E)
+            addrs.append(a)
+            if z.key is not None:
+                seen[z.key] = a
         placed.append(addrs)
     while len(body) % 0x800:
         body += PAD
@@ -174,36 +185,38 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
     struct.pack_into("<I", body, 8, end_w)
     struct.pack_into("<I", body, 0x9C, end_w)
 
-    for (pack, voice), addrs in zip(items, placed):           # instruments: in the free rest of the parameter page
+    for (inst, voice), addrs in zip(items, placed):           # instruments: in the free rest of the parameter page
         base = (struct.unpack_from("<I", body, 0xA6)[0] - FLASH_BASE_W) * 2 + 0x10
         page = base // 2 >> 16
-        n = len(pack.pcm)
-        inst = bytearray(hdr)
-        inst[2] = 0x80 | n
+        n = len(inst.zones)
+        if not 1 <= n <= 127:
+            raise BankError("%s: %d zones (1..127)" % (inst.name, n))
+        head = bytearray(hdr)
+        head[2] = 0x80 | n
         zone_at = base + 4 + 6 * n + 2
-        roots, blob, hi = pack.roots, bytearray(), 0
-        for i, r in enumerate(roots):
+        blob, hi = bytearray(), 0
+        for i, z in enumerate(inst.zones):
             zstart = zone_at + len(blob)
-            lo = hi                                           # a zone reaches up to the key below the next root
-            hi = 0xFF if i == n - 1 else roots[i + 1] - 1
-            inst += bytes([0x80 if i == 0 else 0x00, lo, 0x7F, hi]) + struct.pack("<H", (zstart + 2) // 2 & 0xFFFF)
-            z = bytearray(rec)
+            lo = hi                                           # a zone plays the keys above the previous one's
+            hi = 0xFF if i == n - 1 else z.hi
+            head += bytes([0x80 if i == 0 else 0x00, lo, 0x7F, hi]) + struct.pack("<H", (zstart + 2) // 2 & 0xFFFF)
+            r = bytearray(rec)
             for o in ptr_offs:                                # rebase the in-page pointers
                 new = struct.unpack_from("<H", rec, o)[0] * 2 + page_b - (tz - 2) + zstart
                 if new // 2 >> 16 != page:
                     raise BankError("instrument crosses a page")
-                struct.pack_into("<H", z, o, new // 2 & 0xFFFF)
-            blk = bytearray(z[sb_off:sb_off + 18])
+                struct.pack_into("<H", r, o, new // 2 & 0xFFFF)
+            blk = bytearray(r[sb_off:sb_off + 18])
             set_addrs(blk, *addrs[i])
-            z[sb_off:sb_off + 18] = blk
-            struct.pack_into("<h", z, sb_off - 2, tune_value(r, pack.header.get("cents", 0)))
-            blob += z
-        inst += b"\0\0" + blob
-        free = body[base - 0x10:base + len(inst)]
-        if base + len(inst) > (page + 1) << 17 or any(b not in (0x5E, 0xD0) for b in free):
+            r[sb_off:sb_off + 18] = blk
+            struct.pack_into("<h", r, sb_off - 2, tune_value(z.root, z.cents, z.rate))
+            blob += r
+        inst_b = head + b"\0\0" + blob
+        free = body[base - 0x10:base + len(inst_b)]
+        if base + len(inst_b) > (page + 1) << 17 or any(b not in (0x5E, 0xD0) for b in free):
             raise BankError("no free room for the instrument in the parameter page")
-        body[base:base + len(inst)] = inst
-        struct.pack_into("<I", body, 0xA6, FLASH_BASE_W + (base + len(inst) + 1) // 2)
+        body[base:base + len(inst_b)] = inst_b
+        struct.pack_into("<I", body, 0xA6, FLASH_BASE_W + (base + len(inst_b) + 1) // 2)
         a = _dir_entry(body, *voice_to_bank_prog(banks, voice))  # the sound now plays this instrument
         body[a + 1] = page
         struct.pack_into("<H", body, a + 2, base // 2 & 0xFFFF)
