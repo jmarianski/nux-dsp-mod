@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import asm, container, disasm, extract, fwmap, patcher
+from . import asm, container, disasm, extract, fwmap, instrument, patcher, soundbank
 
 
 def read(path):
@@ -63,6 +63,14 @@ def cmd_list(a):
             print("  %-20s %s%s" % (n, p.title, "" if n in m.defaults else "  [optional]"))
             for prm in p.params:
                 print("%24s%s=%d (%d..%d) %s" % ("", prm.name, prm.default, prm.lo, prm.hi, prm.desc))
+    packs = instrument.bundled_names()
+    if packs:
+        print("instrument packs (--voice SLOT=NAME):")
+        for n in packs:
+            p = instrument.load(instrument.bundled(n))
+            h = p.header
+            print("  %-20s %s / %s, %d zones; %s, %s, %s" % (n, p.name, h.get("name_pl", ""), len(p.pcm),
+                                                             h.get("author", "?"), h.get("source", "?"), h.get("license", "?")))
 
 
 def cmd_disasm(a):
@@ -88,15 +96,50 @@ def cmd_asm(a):
           % (a.out, len(words), changed, container.sha256(out)))
 
 
+def parse_voices(items):
+    """SLOT=PACK[,name[,Polish name]] -> [(slot, pack, name, name_pl)]; PACK: a .nxi file or a bundled pack's name."""
+    out = []
+    for it in items or []:
+        slot, _, rest = it.partition("=")
+        path, *names = rest.split(",")
+        if not slot.isdigit() or not 1 <= int(slot) <= 500 or not path:
+            raise ValueError("--voice wants SLOT=PACK[,name[,Polish name]] with SLOT 1..500, got %r" % it)
+        p = instrument.load(path if path.endswith(".nxi") else instrument.bundled(path))
+        name = names[0] if names and names[0] else p.name
+        name_pl = names[1] if len(names) > 1 else (p.header.get("name_pl", "") if not names else "")
+        out.append((int(slot), p, name, name_pl))
+    return out
+
+
 def cmd_build(a):
     img, m = load_checked(a.firmware, a.target)
-    pats = patcher.resolve_patches(a.patch or patcher.defaults(m), m)
+    voices = parse_voices(a.voice)
+    if voices and not (a.sbank and a.sbank_out):
+        raise SystemExit("error: --voice needs --sbank (the official soundbank file) and --sbank-out")
+    names = list(a.patch or patcher.defaults(m))
+    if voices and "custom_voices" not in names:
+        names.append("custom_voices")
+    pats = patcher.resolve_patches(names, m)
     out, report = patcher.build(img, m, pats, patcher.parse_params(a.param))
+    if voices:
+        out = soundbank.fill_names(out, m, [(s, n, npl) for s, _, n, npl in voices])
+        bank = soundbank.add(read(a.sbank), img, m, [(p, s) for s, p, _, _ in voices])
     print("target    %s (%s)" % (m.id, describe(m)))
     for line in report:
         print(line)
+    if voices:
+        for s, p, n, npl in voices:
+            print("sound %3d  %s%s (%d zones)" % (s, n, " / " + npl if npl else "", len(p.pcm)))
+        write(a.sbank_out, bank)
+        print("wrote %s, sha256 %s" % (a.sbank_out, container.sha256(bank)))
     write(a.out, out)
     print("wrote %s, sha256 %s" % (a.out, container.sha256(out)))
+
+
+def cmd_pack(a):
+    p = instrument.make(a.samples, a.name, a.name_pl, a.cents, author=a.author, source=a.source, license=a.license)
+    write(a.out, p.to_bytes())
+    print("wrote %s: %s, %d zones (keys %d..%d)" % (a.out, p.name, len(p.pcm), p.roots[0], p.roots[-1]))
 
 
 def cmd_extract(a):
@@ -111,6 +154,7 @@ def cmd_web(a):
         img, m = load_checked(path, a.target)
         print("wrote %s" % web.write_target(img, m, a.web_dir))
     print("index lists: %s" % ", ".join(web.update_index(a.web_dir)))
+    print("instruments: %s" % ", ".join(web.write_packs(a.web_dir)))
 
 
 def cmd_port(a):
@@ -135,6 +179,20 @@ def main(argv=None):
     s.add_argument("out")
     s.add_argument("-p", "--patch", action="append", help="patch name or file (repeatable; default: the target's defaults)")
     s.add_argument("--param", action="append", help="NAME=VALUE")
+    s.add_argument("--voice", action="append", metavar="SLOT=PACK[,NAME[,NAME_PL]]",
+                   help="put an instrument pack (.nxi file or bundled pack name, see `list`) on sound SLOT (1..500); "
+                        "repeatable, at most 4; needs --sbank and --sbank-out")
+    s.add_argument("--sbank", help="the official soundbank file (e.g. NEK100_SBANK_V1.0.4.bin)")
+    s.add_argument("--sbank-out", help="where to write the soundbank with the instruments")
+    s = sub.add_parser("pack", help="make an instrument pack (.nxi) from samples")
+    s.add_argument("samples", help="directory of r<midi>.wav (mono 16-bit 44.1 kHz) or r<midi>.raw, each at its root key")
+    s.add_argument("out")
+    s.add_argument("--name", required=True, help="at most %d characters" % instrument.MAX_NAME)
+    s.add_argument("--name-pl", default="", help="Polish name (optional)")
+    s.add_argument("--cents", type=float, default=0, help="tuning of the whole instrument")
+    s.add_argument("--author", default="")
+    s.add_argument("--source", default="")
+    s.add_argument("--license", default="")
     s = sub.add_parser("disasm", help="annotated listing of your firmware (for local use)")
     s.add_argument("firmware")
     s.add_argument("out")
@@ -164,6 +222,6 @@ def main(argv=None):
         a.web_dir = web.WEB_DIR
     try:
         return globals()["cmd_" + a.cmd](a) or 0
-    except (patcher.PatchError, asm.AsmError, ValueError, OSError) as e:
+    except (patcher.PatchError, asm.AsmError, soundbank.BankError, instrument.PackError, ValueError, OSError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 1

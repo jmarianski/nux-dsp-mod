@@ -936,7 +936,7 @@ pp_screen:
     st    [text_buf+15], r7
 .p_count:
     ld    r7, [text_buf+14]
-    cmp   r7, #8
+    cmp   r7, #9
     blt   .p_count_go
     jmp   .p_counted
 .p_count_go:
@@ -964,7 +964,7 @@ pp_screen:
     st    [text_buf+15], r7   ; installed ones before it
 .p_loop:
     ld    r7, [text_buf+14]
-    cmp   r7, #8
+    cmp   r7, #9
     blt   .p_go
     .dw   0xd0ce, 0x061f5
 .p_go:
@@ -1085,6 +1085,7 @@ pp_tab:                       ; kind (0 code word, 1 RAM word, 2 always), addres
     .dw   1, 0x02822, 0x0056, pp_n5, pp_p5      ; version_tag
     .dw   0, 0x04b0d, 0xd14a, pp_n6, pp_p6      ; polish_font
     .dw   1, 0x00168, 0x0047, pp_n7, pp_p7      ; lang_pl
+    .dw   0, 0x04fb6, 0xd14a, pp_n8, pp_p8      ; custom_voices
 pp_n0:
     .dw   0x54, 0x4f, 0x55, 0x43, 0x48, 0x20, 0x4f, 0x46, 0x46, 0
 pp_p0:
@@ -1117,6 +1118,10 @@ pp_n7:
     .dw   0x50, 0x4f, 0x4c, 0x49, 0x53, 0x48, 0x20, 0x55, 0x49, 0
 pp_p7:
     .dw   0x4a, 0x118, 0x5a, 0x59, 0x4b, 0x20, 0x50, 0x4f, 0x4c, 0x53, 0x4b, 0x49, 0
+pp_n8:
+    .dw   0x43, 0x55, 0x53, 0x54, 0x4f, 0x4d, 0x20, 0x53, 0x4f, 0x55, 0x4e, 0x44, 0x53, 0
+pp_p8:
+    .dw   0x57, 0x141, 0x41, 0x53, 0x4e, 0x45, 0x20, 0x42, 0x52, 0x5a, 0x4d, 0x2e, 0
 
 ; ---- images 0x100.. : draw_glyph(x, y, id, inverse) for our ids, from program memory.
 ; Format: W, H, then per column ceil(H / 16) words, MSB = top row. Frame locals of draw_glyph:

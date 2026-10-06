@@ -8,7 +8,7 @@ input    NEK100_DSP_V1.0.7.bin
 output   NEK100_DSP_V1.0.7B_mod.bin
 download https://nuxaudio.com/product/nek100/
 defaults boot_preset touch_off sustain_in_preset version_tag octave_per_part extra_menu
-optional polish_font lang_pl
+optional polish_font lang_pl custom_voices
 
 code    0x00400 0x0f0a3     ; code bank 0
 code    0x10400 0x128ab     ; code bank 1 (reached how? unknown)
@@ -17,6 +17,7 @@ pool    0x09ad4 0x09bd4     ; unreferenced function (no calls, branches or point
 pool    0x062f3 0x06558     ; unreferenced function, same checks (C: polish_font runs here)
 pool    0x0f0b0 0x0fff0     ; 0xffff filler after the code of bank 0, loaded into program memory (C: probe words at 0xf0b0 and 0xffe0 read back on the device)
 glyphs  0x12cf7 0x1348f 243 ; glyph/image table (8 words each: u32 byte offset, size, width, height) + bitmaps
+soundbank NEK100_SBANK_V1.0.4 sha256 59d5c23ba8269e21c231195280ef8c6255ced890a5c8977868c9aba83313b646 template 479 1 ; added instruments copy the settings of 479.Shamisen's zone 1 (C: quick attack, follows the keyboard)
 
 # --- startup / system ------------------------------------------------------------------------
 func  0x005f8 main                    ; init_all(), then forever main_loop_tick()
@@ -89,6 +90,7 @@ var   0x00069 factory_presets 155     ; 5 x 31 words, initialised data
 var   0x00158 octave                  ; Octave 0..2 = -1/0/+1 (C: menu), read through param_get, saved in presets
 var   0x00144 touch                   ; Touch 0..4 = LIGHT2 LIGHT1 NORMAL HARD1 HARD2 (C); sent to MCU as CC 0x32
 var   0x0015e sustain_cc64 4          ; CC64 value per part used by the pedal, defaults 90,64,64,64 (C)
+var   0x0011c voice_banks 38        ; (soundbank bank, number of sounds) pairs in sound number order, ends with 0, 0 (C: added instruments go where this says)
 var   0x0233c sound_names 600         ; pointers to the 500 sound names, then the 100 demo song names
 var   0x025bc effect_names 5          ; pointers to the modulation effect names
 var   0x02617 section_names 9         ; pointers to style section names (PITCH:, CHANGE, ROLL, BRIDGE1..4, ENDING1..2)
