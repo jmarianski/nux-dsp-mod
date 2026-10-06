@@ -57,6 +57,22 @@ python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin NEK100_DSP_V1.0.7B_mod.bin \
 python3 -m nuxdsp pack samples/ my.sf2 --name "My Sound" --author ... --license ... --comment "source..."
 ```
 
+### Where to get SoundFonts
+
+- **[GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS)** (`GeneralUser-GS.sf2`, ~30 MB, 261
+  instruments): a good all-round General MIDI bank, free to use. A good first choice.
+- **FluidR3_GM** (~140 MB, MIT license): the Linux package `fluid-soundfont-gm` (file
+  `/usr/share/sounds/sf2/FluidR3_GM.sf2`), also bundled with many players.
+- **[Polyphone's soundfont library](https://www.polyphone.io/en/soundfonts)**: single instruments by category
+  (pianos, organs, strings, …), with license filters.
+- **[Musical Artifacts](https://musical-artifacts.com)**: a catalogue of free SoundFonts and other instruments.
+- Single samples (e.g. [Freesound](https://freesound.org), filter by license): make a SoundFont with `pack` below.
+
+A big General MIDI bank is fine: only the chosen preset's samples go into the soundbank, and the page (or
+`nuxdsp instruments`) shows their size before you build. For organs, strings, pads and other sounds that should
+last while the key is held, choose presets marked *looped*. For your own instrument any SoundFont will do; to
+share the result, check its license.
+
 `pack` makes a SoundFont from `r<midi>.wav` files (mono, 16-bit, 44.1 kHz), each sample at its root key, e.g.
 `r60.wav`. The soundbank grows by the size of the samples (the cat: 2 MB); how much room the instrument's flash
 has is not known yet, so start small.
@@ -144,8 +160,13 @@ sampli. Z pliku wybierasz jeden preset; przenoszone są zakresy klawiszy, stroje
 Obwiednia i filtr pochodzą z brzmienia-szablonu Twojego soundbanku, więc instrumenty nie zawierają danych NUX.
 Perkusje i efekty grające tę samą wysokość na każdym klawiszu nie są obsługiwane. W repozytorium jest **Kocie piano**
 (`cat_piano`): miauczące zabawkowe pianino, nagranie „Cat Piano Note C” autorstwa Meku A z Freesound.org (przez
-creazilla.com), licencja **CC0** (domena publiczna), przestrojone na każdy klawisz, z przyciętym atakiem. SoundFont z
-własnych sampli robi `python3 -m nuxdsp pack` (opis wyżej). Soundbank rośnie o rozmiar sampli, a ile miejsca ma
+creazilla.com), licencja **CC0** (domena publiczna), przestrojone na każdy klawisz, z przyciętym atakiem. **Skąd brać pliki
+.sf2:** na początek [GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) (ok. 30 MB, 261 instrumentów, darmowy),
+dalej FluidR3_GM (licencja MIT, w Linuksie pakiet `fluid-soundfont-gm`), pojedyncze instrumenty w
+[bibliotece Polyphone](https://www.polyphone.io/en/soundfonts) (kategorie i filtr licencji) albo katalog
+[Musical Artifacts](https://musical-artifacts.com). Duży bank GM nie przeszkadza, bo do soundbanku trafiają tylko sample
+wybranego presetu, a strona pokazuje ich rozmiar. Do organów, smyczków i padów wybieraj presety oznaczone jako „z pętlą”.
+SoundFont z własnych sampli (np. z [Freesound](https://freesound.org)) robi `python3 -m nuxdsp pack` (opis wyżej). Soundbank rośnie o rozmiar sampli, a ile miejsca ma
 flash, jeszcze nie wiadomo, więc lepiej zaczynać od małych instrumentów.
 
 > **Na własne ryzyko.** To nieoficjalny projekt, niezwiązany z NUX ani Dream. Zmodyfikowany firmware może
