@@ -53,7 +53,7 @@ label 0x033c4 pedal_send_cc64         ; sustain pedal: for k in 0..3: synth_send
 func  0x02290 collect_preset          ; (ptr) current settings -> 31-word preset
 func  0x02370 apply_preset            ; (ptr) 31-word preset -> settings, applies them (field 12 = touch)
 func  0x02492 flash_write_words
-func  0x024c4 preset_write_flash      ; (ptr, n)
+func  0x024c4 preset_write_flash      ; (ptr, n): 31 words to flash page 0x701+n (header: page 0x700). Pages are erased one by one (DataFlash commands 0x81/0x50/0x84/0x88/0xe8); nothing else in the firmware uses this flash. extra_menu: n = 5 (page 0x706) holds the Autosave settings (C)
 func  0x024f9 presets_read_flash      ; reads the 3-word preset header from flash
 func  0x02523 presets_load_all        ; reads the 5 user presets from flash into user_presets
 func  0x02565 save_user_preset        ; (n): collect_preset + write to flash

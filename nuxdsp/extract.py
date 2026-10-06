@@ -80,6 +80,10 @@ def extract(orig_img, mod_img, fwmap, name="my_patch"):
     code_r = align(code_r, starts)
     in_pool = [r for r in code_r if any(ps <= r[0] < pe for ps, pe in fwmap.pools)]
     hooks = [r for r in code_r if r not in in_pool]
+    # the patcher packs code into a pool without gaps: a new word that happens to equal the old one there
+    # must not split the block, so each pool's changes become one range
+    in_pool = [(min(s for s, _ in rs), max(e for _, e in rs))
+               for rs in ([r for r in in_pool if ps <= r[0] < pe] for ps, pe in fwmap.pools) if rs]
     labels = {e.addr: e.name for e in fwmap.by_kind("func", "label")}
     labels.update({s: "blk_%05x" % s for s, _ in in_pool})
     # every target inside a moved block gets a label, so the extracted patch is relocatable

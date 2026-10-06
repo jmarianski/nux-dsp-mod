@@ -1,11 +1,12 @@
 .patch extra_menu
 
-.title "Extra menu in place of Info: Auto Off (separate battery and cable times), the list of installed patches, Info"
-; The function menu keeps its 12 items; the last one (Info) becomes Extra, a page of three:
+.title "Extra menu in place of Info: Auto Off (separate battery and cable times), Startup (Default preset, autosave or factory settings), the list of installed patches, Info"
+; The function menu keeps its 12 items; the last one (Info) becomes Extra, a page of four:
 ;   Auto Off  screen 21: power-off time on battery and on cable (Off, 5..120 min)
+;   Startup   screen 23: what is loaded at power-on (see below)
 ;   Patches   screen 22: which patches of this project are in the firmware (found by looking at their words)
 ;   Info      the stock screen 19; its Back key now returns to Extra
-; Extra itself is screen 20. Screens 20..22 are reached through hooks in front of the range checks of
+; Extra itself is screen 20. Screens 20..23 are reached through hooks in front of the range checks of
 ; draw_screen and the key dispatchers (A, B, D, dial); their images (ids 0x100 and up) are drawn by our
 ; own blitter from program memory, hooked into draw_glyph.
 ;
@@ -14,9 +15,19 @@
 ; Here the zeroing is gone and the limit comes from the settings word:
 ;   presets_header[0]  0xB in the top 4 bits when set by us (stock flash holds 1 -> defaults)
 ;                      bits 0-2 battery time, bits 3-5 cable time (0 = Off, 5, 10, 15, 30, 60, 90, 120 min),
-;                      bit 6 which one the Auto Off screen edits, bits 7-8 Extra cursor, bit 9 Patches page
+;                      bit 6 which one the Auto Off screen edits, bits 7-8 Extra cursor, bit 9 Patches page,
+;                      bits 10-11 Startup mode
 ; The firmware reads that word from flash at power-on and writes it back with every preset load, but
 ; never uses it. Defaults: battery 30 min (as stock), cable Off (as stock). power_src 0 counts as cable.
+;
+; Startup. 0 Default: as without this setting (the preset boot_preset loads, or the factory default).
+; 1 Autosave: switching off with the power key or by Auto Off first saves the current settings to a hidden
+; seventh flash page (0x706, next to the header 0x700 and the presets 0x701..0x705, in the same erase block;
+; nothing else in the firmware touches that flash), and power-on loads them from there (when the page holds a
+; preset). Not on low battery: the instrument may die while the page is being written. 2 Factory: power-on
+; loads the factory default, as the stock firmware. With Autosave boot_preset names the presets User1..User5
+; again, as none of them is the start preset. The settings travel through User5's RAM copy (user_presets + 124):
+; at power-off it is not needed any more, at power-on it is read back from flash right after.
 ;
 ; With lang_pl (found by its first changed word, RAM 0x168 'G' -> 'F') headers, keys and texts are Polish.
 ;
@@ -32,6 +43,8 @@
 ; 0x108 ao_g_batt_hi
 ; 0x109 ao_g_cable
 ; 0x10a ao_g_cable_hi
+; 0x10b st_g_icon
+; 0x10c st_g_head
 
 .param BATT_DEFAULT 4 0 7 "Battery time when not set yet: 0 Off, 1 5 min, 2 10, 3 15, 4 30, 5 60, 6 90, 7 120 min"
 .param CABLE_DEFAULT 0 0 7 "Cable time when not set yet (same values)"
@@ -39,6 +52,14 @@
 .hook 0x009a4 expect 0xfbf1 0xbf20 0x0002 0xd148 0x000b 0xfa81 0xfaf7 0xfa13 0xe102 0xd7c8 0x0948  ; idle_ticks >= 180000 -> power_off
     .dw   0xd0ce, ao_due
     .dw   0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800
+.end
+
+.hook 0x009a2 expect 0xd7c8 0x0948     ; power key held 50 ticks -> power_off
+    .dw   0xd0ce, st_off_key
+.end
+
+.hook 0x02602 expect 0xd5c8 0xffff     ; end of boot_presets (presets read, start preset loaded)
+    .dw   0xd0ce, st_boot
 .end
 
 .hook 0x00b15 expect 0xfb63 0xd148 0x000b 0xce91 0xcf90   ; battery_tick on cable: idle_ticks = 0
@@ -137,7 +158,8 @@ ao_due:
     cmp   r6, r7
     blt   .d_no
 .d_off:
-    ccall power_off
+    mov   r7, #1
+    .dw   0xd0ce, st_off
 .d_no:
     .dw   0xd0ce, 0x009af
 
@@ -177,8 +199,11 @@ ex_head:
     li    r1, #0x102
     cmp   r7, #0
     beq   .h_ours
-    li    r1, #0x103
+    li    r1, #0x10c
     cmp   r7, #1
+    beq   .h_ours
+    li    r1, #0x103
+    cmp   r7, #2
     beq   .h_ours
     jmp   .h_stock            ; Info
 .h_21:
@@ -187,6 +212,9 @@ ex_head:
     beq   .h_ours
     li    r1, #0x103
     cmp   r7, #22
+    beq   .h_ours
+    li    r1, #0x10c
+    cmp   r7, #23
     beq   .h_ours
     cmp   r7, #19
     beq   .h_stock            ; Info keeps its own (item 11)
@@ -245,8 +273,13 @@ ex_draw:
 .s_22:
     mov   r4, #22
     cmp   r1, r4
-    bne   .s_stock
+    bne   .s_23
     .dw   0xd0ce, pp_screen
+.s_23:
+    mov   r4, #23
+    cmp   r1, r4
+    bne   .s_stock
+    .dw   0xd0ce, st_screen
 .s_stock:
     mov   r4, #0x13
     cmp   r4, r1
@@ -268,6 +301,11 @@ ex_key_a:
     .dw   0xd0ce, ao_batt
 .a_22:
     mov   r4, #22
+    cmp   r1, r4
+    bne   .a_23
+    .dw   0xd0ce, ex_back_a
+.a_23:
+    mov   r4, #23
     cmp   r1, r4
     bne   .a_stock
     .dw   0xd0ce, ex_back_a
@@ -336,8 +374,13 @@ ex_key_f:
 .f_22:
     mov   r4, #22
     cmp   r1, r4
-    bne   .f_stock
+    bne   .f_23
     .dw   0xd0ce, pp_page_f
+.f_23:
+    mov   r4, #23
+    cmp   r1, r4
+    bne   .f_stock
+    .dw   0xd0ce, st_dial
 .f_stock:
     mov   r4, #0x12
     cmp   r4, r1
@@ -346,7 +389,7 @@ ex_key_f:
 .f_out:
     .dw   0xd0ce, 0x03b5f
 
-; ---- Extra (screen 20): Auto Off, Patches, Info; cursor in bits 7-8
+; ---- Extra (screen 20): Auto Off, Startup, Patches, Info; cursor in bits 7-8. Icons where the menu has them.
 ex_scr_extra:
     .dw   0x830d, 0x2b01
     ld    r7, [fp+0]
@@ -370,28 +413,36 @@ ex_scr_extra:
     push  #0
     push  #0x104              ; clock
     push  #0x10
-    push  #22
+    push  #7
+    ccall draw_glyph
+    push  #0
+    push  #0x10b              ; power
+    push  #0x10
+    push  #37
     ccall draw_glyph
     push  #0
     push  #0x105              ; puzzle piece
     push  #0x10
-    push  #52
+    push  #67
     ccall draw_glyph
     push  #0
     push  #0xcf               ; the stock Info icon
     push  #0x10
-    push  #82
+    push  #97
     ccall draw_glyph
     call  ex_norm
     shr   r7, 7
     and   r7, #3
-    mov   r6, #31             ; cursor under the icon: 31 + 30 * item
+    mov   r6, #16             ; cursor under the icon: 16 + 30 * item
     cmp   r7, #0
     beq   .x_cur
-    mov   r6, #61
+    mov   r6, #46
     cmp   r7, #1
     beq   .x_cur
-    mov   r6, #91
+    mov   r6, #76
+    cmp   r7, #2
+    beq   .x_cur
+    mov   r6, #106
 .x_cur:
     push  #0
     push  #0xcd
@@ -406,7 +457,7 @@ ex_next:                      ; middle key: next item, round
     shr   r6, 7
     and   r6, #3
     add   r6, #1
-    cmp   r6, #3
+    cmp   r6, #4
     blt   .x_set
     mov   r6, #0
 .x_set:
@@ -431,7 +482,7 @@ ex_dial:
     and   r6, #3
     cmp   r5, #0
     bne   .xd_down
-    cmp   r6, #2
+    cmp   r6, #3
     beq   .xd_out
     add   r6, #1
     jmp   .xd_set
@@ -462,8 +513,11 @@ ex_enter:                     ; right key: open the item
     mov   r6, #21
     cmp   r7, #0
     beq   .xe_go
-    mov   r6, #22
+    mov   r6, #23
     cmp   r7, #1
+    beq   .xe_go
+    mov   r6, #22
+    cmp   r7, #2
     beq   .xe_go
     mov   r7, #0
     st    [0x6a4d], r7        ; Info: first page, as the stock Enter
@@ -486,7 +540,7 @@ ex_back_menu:                 ; left key on Extra: back to the menu (as the stoc
     ccall draw_screen
     .dw   0xd0ce, 0x0314c
 
-ex_back_a:                    ; left key on Patches: back to Extra
+ex_back_a:                    ; left key on Patches and Startup: back to Extra
     mov   r7, #20
     st    [screen], r7
     push  r7
@@ -679,6 +733,193 @@ ao_dial:                      ; dial: edited time -1 / +1, clamp 0..7, save to f
     ccall draw_screen
 .t_out:
     .dw   0xd0ce, 0x03b5f
+
+; ---- Startup (screen 23): mode in bits 10-11, the dial changes it, the left key goes back
+st_screen:
+    .dw   0x830d, 0x2b01
+    ld    r7, [fp+0]
+    push  r7
+    ld    r7, [fp+3]
+    .dw   0x2f07
+    push  r7
+    ccall 0x0584f             ; header (ex_head) and battery
+    push  #0x6                ; BACK
+    push  #0
+    push  #0
+    ccall draw_softkey
+    push  #0
+    push  #0xb7
+    push  #0x1e
+    push  #6
+    ccall draw_glyph
+    push  #0
+    push  #0xba
+    push  #0x1e
+    push  #118
+    ccall draw_glyph
+    call  ex_norm
+    shr   r7, 10
+    and   r7, #3
+    mov   r5, r7              ; 10 words a name
+    shl   r5, 3
+    add   r5, r7
+    add   r5, r7
+    addi  r5, #st_names
+    ld    r6, [0x0168]        ; lang_pl: Polish names, 30 words further
+    cmp   r6, #0x47
+    beq   .st_en
+    add   r5, #30
+.st_en:
+    call  ex_copy
+    mov   r7, #0
+    push  r7
+    push  #0x10
+    push  #106
+    push  #0x19
+    push  #11
+    ccall 0x04a69             ; clear the value area
+    mov   r7, #0
+    push  #text_buf
+    push  r7
+    push  #1
+    push  r7
+    push  #0x1b
+    push  #64
+    ccall draw_text_centered
+    .dw   0xd0ce, 0x061f5
+
+st_names:                     ; 10 words each, English then Polish
+    .dw   0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0, 0, 0   ; DEFAULT
+    .dw   0x41, 0x55, 0x54, 0x4f, 0x53, 0x41, 0x56, 0x45, 0, 0   ; AUTOSAVE
+    .dw   0x46, 0x41, 0x43, 0x54, 0x4f, 0x52, 0x59, 0, 0, 0   ; FACTORY
+    .dw   0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0, 0, 0   ; DEFAULT
+    .dw   0x41, 0x55, 0x54, 0x4f, 0x5a, 0x41, 0x50, 0x49, 0x53, 0   ; AUTOZAPIS
+    .dw   0x46, 0x41, 0x42, 0x52, 0x59, 0x43, 0x5a, 0x4e, 0x45, 0   ; FABRYCZNE
+
+st_dial:                      ; dial: mode -1 / +1, clamp 0..2, save to flash
+    .dw   0xd2cd, 0x0002      ; r5 = dial delta, signed
+    cmp   r5, #0
+    beq   .sd_out
+    shr   r5, 15              ; 1 = turned down
+    call  ex_norm
+    mov   r6, r7
+    shr   r6, 10
+    and   r6, #3
+    cmp   r5, #0
+    bne   .sd_down
+    cmp   r6, #2
+    beq   .sd_out
+    add   r6, #1
+    jmp   .sd_set
+.sd_down:
+    cmp   r6, #0
+    beq   .sd_out
+    li    r5, #0xffff
+    add   r6, r5
+.sd_set:
+    li    r5, #0xf3ff
+    and   r7, r5
+    shl   r6, 10
+    or    r7, r6
+    st    [presets_header], r7
+    push  #presets_header
+    ccall flash_write_words
+    ld    r7, [screen]
+    push  r7
+    ccall draw_screen
+.sd_out:
+    .dw   0xd0ce, 0x03b5f
+
+; power_off from power_key_poll: r7 = 0 from the power key, 1 from Auto Off. With Autosave the current
+; settings go to the hidden page first.
+st_off_key:
+    mov   r7, #0
+st_off:
+    st    [text_buf+13], r7
+    call  ex_norm
+    shr   r7, 10
+    and   r7, #3
+    cmp   r7, #1
+    bne   .o_off
+    push  #user_presets+124
+    ccall collect_preset
+    push  #5                  ; page 0x701 + 5
+    push  #user_presets+124
+    ccall preset_write_flash
+.o_off:
+    ccall power_off
+    ld    r7, [text_buf+13]
+    cmp   r7, #0
+    bne   .o_due
+    .dw   0xd0ce, 0x009a4
+.o_due:
+    .dw   0xd0ce, 0x009af
+
+; end of boot_presets: Factory loads the factory default, Autosave the hidden page (when it holds a preset;
+; otherwise what boot_preset loaded stays). User5's RAM copy is the buffer and is read back after.
+st_boot:
+    call  ex_norm
+    shr   r7, 10
+    and   r7, #3
+    cmp   r7, #2
+    bne   .sb_auto
+    push  #0
+    ccall load_factory_preset
+    .dw   0xd0ce, 0x02564     ; boot_presets' epilogue (the same word at the end of presets_load_all)
+.sb_auto:
+    cmp   r7, #1
+    beq   .sb_read
+    .dw   0xd0ce, 0x02564
+.sb_read:
+    li    r6, #0x0706
+    .dw   0xd0ce, st_read
+st_apply:                     ; the hidden page is in the buffer: erased flash reads 0xffff
+    ld    r7, [user_presets+124]
+    li    r6, #0xffff
+    cmp   r7, r6
+    beq   .sb_restore
+    ld    r7, [user_presets+125]
+    cmp   r7, r6
+    beq   .sb_restore
+    push  #user_presets+124
+    ccall apply_preset
+.sb_restore:
+    li    r6, #0x0705
+    .dw   0xd0ce, st_read
+st_done:
+    .dw   0xd0ce, 0x02564
+
+; read flash page r6 (31 words) into User5's RAM copy, as presets_load_all does; then on to st_apply
+; (page 0x706) or st_done (0x705). Counters in text_buf: the flash routines keep no registers.
+st_read:
+    st    [text_buf+12], r6
+    li    r7, #user_presets+124
+    st    [text_buf+14], r7
+    mov   r7, #0
+    st    [text_buf+15], r7
+    call  0x07b2d
+    mov   r7, #0
+    ld    r6, [text_buf+12]
+    call  0x07bf1             ; start reading page r6 at word r7
+.rd_loop:
+    call  flash_get_word      ; r0 = next word
+    ld    r1, [text_buf+14]
+    st    [r1+0], r0
+    add   r1, #1
+    st    [text_buf+14], r1
+    ld    r7, [text_buf+15]
+    add   r7, #1
+    st    [text_buf+15], r7
+    cmp   r7, #31
+    blt   .rd_loop
+    call  0x07b2d
+    ld    r7, [text_buf+12]
+    li    r6, #0x0706
+    cmp   r7, r6
+    beq   .rd_hidden
+    .dw   0xd0ce, st_done
+.rd_hidden:
+    .dw   0xd0ce, st_apply
 
 ; ---- Patches (screen 22): names of the installed patches, 5 lines a page (like Info), page in bit 9.
 ; Counters across calls live at the end of text_buf (names use at most 13 words of it).
@@ -891,7 +1132,7 @@ ao_glyph:
     ld    r6, [0x0168]        ; lang_pl: the Polish table
     cmp   r6, #0x47
     beq   .q_en
-    add   r7, #11
+    add   r7, #13
 .q_en:
     mov   r1, r7
     addi  r1, #ao_images
@@ -967,8 +1208,8 @@ ao_glyph:
     .dw   0xd0ce, 0x04971
 
 ao_images:
-    .dw   ex_g_extra, ex_g_head_extra, ex_g_head_auto, ex_g_head_patch, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt, ao_g_batt_hi, ao_g_cable, ao_g_cable_hi
-    .dw   ex_g_extra, ex_g_head_extra_pl, ex_g_head_auto_pl, ex_g_head_patch_pl, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt_pl, ao_g_batt_hi_pl, ao_g_cable_pl, ao_g_cable_hi_pl
+    .dw   ex_g_extra, ex_g_head_extra, ex_g_head_auto, ex_g_head_patch, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt, ao_g_batt_hi, ao_g_cable, ao_g_cable_hi, st_g_icon, st_g_head
+    .dw   ex_g_extra, ex_g_head_extra_pl, ex_g_head_auto_pl, ex_g_head_patch_pl, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt_pl, ao_g_batt_hi_pl, ao_g_cable_pl, ao_g_cable_hi_pl, st_g_icon, st_g_head_pl
 ex_g_extra:
     .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0fff, 0xf000, 0x1fff, 0xf800
     .dw   0x1800, 0x1800, 0x1800, 0x1800, 0x1818, 0x1800, 0x1818, 0x1800, 0x1818, 0x1800, 0x1818, 0x1800
@@ -1039,6 +1280,19 @@ ao_g_cable_hi:
     .dw   0x0022, 0x0009, 0x7f80, 0xff80, 0xff80, 0xff80, 0xff80, 0xe380, 0xdd80, 0xdd80, 0xdd80, 0xff80
     .dw   0xe180, 0xdb80, 0xdb80, 0xe180, 0xff80, 0xc180, 0xd580, 0xd580, 0xeb80, 0xff80, 0xc180, 0xfd80
     .dw   0xfd80, 0xfd80, 0xff80, 0xc180, 0xd580, 0xd580, 0xdd80, 0xff80, 0xff80, 0xff80, 0xff80, 0x7f80
+st_g_icon:
+    .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x003e, 0x0000, 0x01ff, 0xc000, 0x03e3, 0xe000
+    .dw   0x0700, 0x7000, 0x0600, 0x3800, 0x0000, 0x1800, 0x0000, 0x1c00, 0x0000, 0x0c00, 0x0000, 0x0c00
+    .dw   0x3ff8, 0x0c00, 0x3ff8, 0x0c00, 0x0000, 0x0c00, 0x0000, 0x0c00, 0x0000, 0x1c00, 0x0000, 0x1800
+    .dw   0x0600, 0x3800, 0x0700, 0x7000, 0x03e3, 0xe000, 0x01ff, 0xc000, 0x003e, 0x0000, 0x0000, 0x0000
+    .dw   0x0000, 0x0000
+st_g_head:
+    .dw   0x0040, 0x0008, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00
+    .dw   0xff00, 0xff00, 0xff00, 0xed00, 0xd500, 0xd500, 0xdb00, 0xff00, 0xdf00, 0xc100, 0xdf00, 0xff00
+    .dw   0xe100, 0xdb00, 0xdb00, 0xe100, 0xff00, 0xc100, 0xd700, 0xd300, 0xed00, 0xff00, 0xdf00, 0xc100
+    .dw   0xdf00, 0xff00, 0xc300, 0xfd00, 0xfd00, 0xc300, 0xff00, 0xc100, 0xd700, 0xd700, 0xef00, 0xff00
+    .dw   0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0x7f00
+    .dw   0x3f00, 0x1f00, 0x0f00, 0x0700, 0x0300, 0x0100
 ex_g_head_extra_pl:
     .dw   0x0040, 0x0008, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00
     .dw   0xff00, 0xff00, 0xc100, 0xdd00, 0xdd00, 0xe300, 0xff00, 0xe300, 0xdd00, 0xdd00, 0xe300, 0xff00
@@ -1076,4 +1330,11 @@ ao_g_cable_hi_pl:
     .dw   0x0022, 0x0009, 0x7f80, 0xff80, 0xff80, 0xff80, 0xff80, 0xc180, 0xf780, 0xeb80, 0xdd80, 0xff80
     .dw   0xe180, 0xd780, 0xd780, 0xe180, 0xff80, 0xc180, 0xd580, 0xd580, 0xeb80, 0xff80, 0xc180, 0xd580
     .dw   0xd580, 0xdd80, 0xff80, 0xc180, 0xfd80, 0xfd80, 0xfd80, 0xff80, 0xff80, 0xff80, 0xff80, 0x7f80
+st_g_head_pl:
+    .dw   0x0040, 0x0008, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00
+    .dw   0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xed00, 0xd500, 0xd500, 0xdb00, 0xff00
+    .dw   0xdf00, 0xc100, 0xdf00, 0xff00, 0xe100, 0xd700, 0xd700, 0xe100, 0xff00, 0xc100, 0xd700, 0xd300
+    .dw   0xed00, 0xff00, 0xdf00, 0xc100, 0xdf00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00
+    .dw   0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0xff00, 0x7f00
+    .dw   0x3f00, 0x1f00, 0x0f00, 0x0700, 0x0300, 0x0100
 .end

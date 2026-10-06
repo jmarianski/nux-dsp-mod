@@ -16,6 +16,8 @@
 ; Just before the terminating 0 it computes the buffer address. There we rewrite the label (the boot
 ; preset becomes "Default", the others are renumbered User1..User4 and/or lose the "N." slot number,
 ; as PRESET_LABELS says) and return the address of the terminator, so the 0 lands right behind it.
+; When extra_menu's Startup is set to Autosave (0xB in the top bits of presets_header[0], bits 10-11 = 1),
+; no slot is the start preset: all five are UserN, numbered by slot.
 .hook 0x0500b expect 0xd14a 0x6a2e      ; addi r1, #text_buf (r1 = index of the terminator)
     call  default_label
 .end
@@ -31,6 +33,19 @@ default_label:                ; may use r5..r7: the firmware sets them right aft
     beq   .start              ; 1: no "N." prefix
     add   r1, #2              ; keep "N."
 .start:
+    ld    r7, [presets_header]
+    mov   r5, r7
+    shr   r5, 12
+    cmp   r5, #0xb
+    bne   .boot
+    shr   r7, 10
+    and   r7, #3
+    cmp   r7, #1
+    bne   .boot
+    mov   r5, r6              ; Autosave: "UserN", N = slot
+    add   r5, #0x31
+    jmp   .digit
+.boot:
     cmp   r6, #BOOT_PRESET-1
     bne   .user
     mov   r7, #0x44           ; D
