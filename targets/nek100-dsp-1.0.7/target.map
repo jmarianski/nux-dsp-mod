@@ -7,7 +7,7 @@ device   "NUX NEK-100"
 input    NEK100_DSP_V1.0.7.bin
 output   NEK100_DSP_V1.0.7B_mod.bin
 download https://nuxaudio.com/product/nek100/
-defaults boot_preset touch_off sustain_in_preset version_tag octave_per_part
+defaults boot_preset touch_off sustain_in_preset version_tag octave_per_part auto_off
 optional polish_font lang_pl
 
 code    0x00400 0x0f0a3     ; code bank 0
@@ -22,7 +22,7 @@ glyphs  0x12cf7 0x1348f 243 ; glyph/image table (8 words each: u32 byte offset, 
 func  0x005f8 main                    ; init_all(), then forever main_loop_tick()
 func  0x007dd tick_10ms               ; (C: 10 ms, 6000 ticks of idle measured as ~60 s) periodic timer callback: idle counter, power key, USB, popups
 func  0x00948 power_off               ; drops the power/amp/LCD output pins and loops forever
-func  0x00958 power_key_poll          ; input 0x28e0 bit 0x400 held 50 ticks -> power_off; idle_ticks >= 180000 (30 min) -> power_off (C: auto off, on battery)
+func  0x00958 power_key_poll          ; input 0x28e0 bit 0x400 held 50 ticks -> power_off; idle_ticks >= 180000 (30 min) -> power_off (C: auto off, on battery); auto_off: limit per power source, also on cable (C)
 func  0x0078a usb_poll                ; input 0x28e2 bit 1 (H: USB connected): after ~1 s sends the NUX identity SysEx
 func  0x00b01 battery_tick            ; per tick: input 0x28e0 bit 2 low -> power_src=2 (H: charger plugged; also zeroes idle_ticks, so no auto off on cable), else 1; low battery: blink icon ~14 s then power_off
 func  0x00a25 battery_adc_sample      ; one ADC reading (10 bit) into a 32-entry ring at 0x2a1a
@@ -98,7 +98,7 @@ var   0x0275c str_off                 ; "OFF"
 var   0x027c7 touch_names 5           ; pointers to "LIGHT2".."HARD2"
 var   0x027dc reverb_names 4          ; pointers to "OFF","ROOM","HALL","PLATE"
 var   0x03026 user_presets 155        ; 5 x 31 words, loaded from flash
-var   0x030c1 presets_header 2        ; read from flash with current_preset; +1 = 0x4e5b when valid
+var   0x030c1 presets_header 2        ; read from flash with current_preset; +1 = 0x4e5b when valid; [0] unused by the firmware (stock 1): auto_off keeps its settings there (C)
 var   0x030c3 current_preset          ; last loaded preset number (also written to flash)
 var   0x07276 port1_q_head
 var   0x07277 port1_q_tail
