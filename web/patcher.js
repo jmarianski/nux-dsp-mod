@@ -161,7 +161,6 @@ function sf2Zone(sf, key, iz, pz, iz2) {
     for (let i = 0; i < n; i++) w.setInt16(2 * i, (a.getInt16(2 * i, true) + b.getInt16(2 * i, true)) >> 1, true);
     pcm = m; skey += `,${iz2[53]}`;
   }
-  if (s16(iz[56] ?? 100) !== 100) throw "same pitch on every key (drum kits, effects): not supported, the sound follows the keyboard";
   let root = s16(iz[58] ?? 0xffff);
   if (root < 0) root = pitch;
   const cents = 100 * (s16(iz[51] || 0) + s16(pz[51] || 0)) + s16(iz[52] || 0) + s16(pz[52] || 0) + corr;
@@ -174,7 +173,7 @@ function sf2Zone(sf, key, iz, pz, iz2) {
 function sf2Instrument(sf, preset, velocity = 100) {
   const ph = sf.phdr, name = ph[preset][0];
   const [pg, pz] = sf2Zones(sf, sf.pbag, sf.pgen, ph[preset][3], ph[preset + 1][3], 41);
-  const regions = [];
+  let regions = [];
   for (const z of pz) {
     const pzone = {...pg, ...z}, i = pzone[41];
     const [ig, iz] = sf2Zones(sf, sf.ibag, sf.igen, sf.inst[i][1], sf.inst[i + 1][1], 53);
@@ -185,6 +184,8 @@ function sf2Instrument(sf, preset, velocity = 100) {
     }
   }
   if (!regions.length) throw `preset ${name} has no samples at velocity ${velocity}`;
+  regions = regions.filter(r => s16(r[1][56] ?? 100) === 100);  // noise layers, drum kits: same pitch on every key
+  if (!regions.length) throw "same pitch on every key (drum kits, effects): not supported, the sound follows the keyboard";
   const zones = [], done = new Set();
   regions.forEach(([key, iz, pz], n) => {
     if (done.has(n)) return;

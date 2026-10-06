@@ -3,7 +3,8 @@
 What carries over to the instrument (one sample per key range, played by the template zone of the target):
 key ranges, root keys, tuning (coarse, fine, the sample's pitch correction), sample rate, loops (sampleModes
 1/3: the loop plays while the key is held; otherwise one-shot). Of several velocity layers the one sounding at
-VELOCITY is taken; linked stereo samples are mixed to mono. Envelopes, filters, modulators, effects: not
+VELOCITY is taken; linked stereo samples are mixed to mono; zones at the same pitch on every key (noise layers)
+are left out, presets made only of such (drum kits, effects) refused. Envelopes, filters, modulators, effects: not
 (the template zone's settings apply). The JavaScript in web/patcher.js mirrors this file.
 """
 import struct
@@ -115,6 +116,10 @@ class SoundFont:
                     regions.append((key, izone, pzone))
         if not regions:
             raise SF2Error("preset %r has no samples at velocity %d" % (name, velocity))
+        # zones at the same pitch on every key (breath or key noise layers, drum kits): left out
+        regions = [r for r in regions if _s16(r[1].get(GEN_SCALE, 100)) == 100]
+        if not regions:
+            raise SF2Error("same pitch on every key (drum kits, effects): not supported, the sound follows the keyboard")
         zones, done = [], set()
         for n, (key, iz, pz) in enumerate(regions):  # one sample per key range: stereo pairs mixed
             if n in done:
@@ -164,8 +169,6 @@ class SoundFont:
             a, b = struct.unpack("<%dh" % n, pcm[:2 * n]), struct.unpack("<%dh" % n, pcm2[:2 * n])
             pcm = struct.pack("<%dh" % n, *((x + y) >> 1 for x, y in zip(a, b)))
             skey += (iz2[GEN_SAMPLE],)
-        if _s16(iz.get(GEN_SCALE, 100)) != 100:
-            raise SF2Error("same pitch on every key (drum kits, effects): not supported, the sound follows the keyboard")
         root = _s16(iz.get(GEN_ROOT, -1))
         root = pitch if root < 0 else root
         cents = 100 * (_s16(iz.get(GEN_COARSE, 0)) + _s16(pz.get(GEN_COARSE, 0))) + \
