@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus boot_preset's preset labels (confirmed on hardware too), polish_font's small font
 # mapping and the full lang_pl translation (all confirmed on hardware).
-ALL_SHA = "56d11b4d37fb04b8f0fc4bc6d42a385b5ad0e8d35e58249b442c28c13ed25231"
+ALL_SHA = "f639d69be1bf761a42708d91cc53bdbdf72668cbad2ab2a74295e283471b0246"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -47,6 +47,25 @@ class TestFirmware(unittest.TestCase):
             ow = container.words(one)
             for a in range(len(ow) - 1):
                 self.assertIn(ow[a], (orig[a], fw[a]), "%s @%#x" % (n, a))
+
+    def test_extra_menu_detects_patches(self):
+        # the Patches screen of extra_menu finds each patch by one word; check that word against the patch
+        import re
+        path = os.path.join(self.map.patch_dir, "extra_menu.patch")
+        with open(path) as f:
+            rows = re.findall(r"\.dw\s+(\d), (0x[0-9a-f]+), (0x[0-9a-f]+), pp_n\d+\s+; (\w+)", f.read())
+        self.assertEqual(sorted(r[3] for r in rows), sorted(patcher.available(self.map)))
+        r0 = self.map.ramdata[0]
+        for kind, addr, stock, name in rows:
+            if kind == "2":
+                continue
+            a = int(addr, 16) + (r0 if kind == "1" else 0)
+            for names in ([name] + patcher.load(name, self.map).requires, patcher.available(self.map)):
+                out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
+                self.assertNotEqual(container.words(out)[a], int(stock, 16), name)
+            others = [n for n in patcher.available(self.map) if n != name and name not in patcher.load(n, self.map).requires]
+            out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(others))
+            self.assertEqual(container.words(out)[a], int(stock, 16), name)
 
     def test_version_tag_uses_small_font_glyphs(self):
         # the info screen draws with the small font; lowercase there maps to big-font glyphs
