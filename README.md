@@ -42,10 +42,13 @@ Instruments are **SoundFont 2** files (`.sf2`), the common format of free sample
 the file's presets (`nuxdsp instruments FILE.sf2` lists them, the web page shows a list). Taken over: key ranges,
 root keys, tuning, sample rate and loops (sounds that sustain while the key is held). Of several velocity layers
 the one at velocity 100 is used; of layers sounding together (e.g. a second one an octave up) each key takes the
-first; stereo is mixed to mono. Envelope and filter come from a template sound of
-your own soundbank (a plucked one for one-shots, an organ for looped instruments, which then hold while the key is
-held), so the instruments contain no NUX data; the SoundFont's own envelope is not used. Drum kits and effects that play the same pitch on
-every key are not supported. Bundled, in [`instruments/`](instruments):
+first; stereo is mixed to mono. The volume envelope (attack, decay, sustain, release) is the SoundFont's,
+converted to the device's own (its rates measured on the NEK-100). The rest of the zone settings come from a
+template sound of your own soundbank (a plucked one for one-shots, an organ for looped instruments), so the
+instruments contain no NUX data; the SoundFont's filters, LFOs and chorus are not taken over (a pad that is a
+filtered string sample sounds like the strings). Drum kits and effects that play the same pitch on every key are
+not supported. A loop that clicks on the device but not in the page's preview is in the SoundFont itself (e.g.
+loops whose end is louder than their start); the sample layout follows the vendor's rules that keep loops clean. Bundled, in [`instruments/`](instruments):
 
 | Instrument | What | Samples |
 |---|---|---|
@@ -57,7 +60,11 @@ python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin NEK100_DSP_V1.0.7B_mod.bin \
     --sbank NEK100_SBANK_V1.0.4.bin --sbank-out NEK100_SBANK_V1.0.4_mod.bin \
     --voice 500=cat_piano --voice 2=GeneralUser.sf2@19,"Organ","Organy"
 python3 -m nuxdsp pack samples/ my.sf2 --name "My Sound" --author ... --license ... --comment "source..."
+python3 -m nuxdsp export-sound NEK100_DSP_V1.0.7.bin NEK100_SBANK_V1.0.4.bin 462 pad.sf2   # local tests only
 ```
+
+`export-sound` turns an official sound into a SoundFont, to compare a conversion with the original. Its samples
+are NUX's: keep the file to yourself, do not share or publish it.
 
 ### Where to get SoundFonts
 
@@ -160,7 +167,12 @@ wgranie oryginalnego soundbanku przywraca dawne brzmienie. Instrumenty to pliki 
 sampli. Z pliku wybierasz jeden preset; przenoszone są zakresy klawiszy, strojenie, częstotliwość próbkowania i pętle
 (dźwięk trwa, dopóki trzymasz klawisz). Z warstw dynamiki brana jest ta dla siły 100, z warstw grających razem (np. druga o oktawę wyżej) każdy klawisz
 bierze pierwszą, a stereo jest miksowane do mono.
-Obwiednia i filtr pochodzą z brzmienia-szablonu Twojego soundbanku (szarpanego dla dźwięków bez pętli, organów dla tych z pętlą, które wtedy brzmią, dopóki trzymasz klawisz), więc instrumenty nie zawierają danych NUX; obwiednia z pliku SF2 nie jest używana.
+Obwiednia głośności (atak, opadanie, podtrzymanie, wybrzmienie) pochodzi z pliku SF2, przeliczona na obwiednię
+urządzenia (jej tempa zmierzone na NEK-100). Pozostałe ustawienia strefy pochodzą z brzmienia-szablonu Twojego soundbanku
+(szarpanego dla dźwięków bez pętli, organów dla tych z pętlą), więc instrumenty nie zawierają danych NUX. Filtry, LFO i
+chorus z SF2 nie są przenoszone (pad zrobiony z przefiltrowanych smyczków zabrzmi jak smyczki). Jeśli pętla stuka na
+urządzeniu tak samo jak w podglądzie na stronie, to cecha samego pliku SF2 (np. koniec pętli głośniejszy niż początek);
+ułożenie sampli trzyma się reguł producenta, przy których pętle grają czysto.
 Perkusje i efekty grające tę samą wysokość na każdym klawiszu nie są obsługiwane. W repozytorium jest **Kocie piano**
 (`cat_piano`): miauczące zabawkowe pianino, nagranie „Cat Piano Note C” autorstwa Meku A z Freesound.org (przez
 creazilla.com), licencja **CC0** (domena publiczna), przestrojone na każdy klawisz, z przyciętym atakiem. **Skąd brać pliki
@@ -169,7 +181,7 @@ dalej FluidR3_GM (licencja MIT, w Linuksie pakiet `fluid-soundfont-gm`), pojedyn
 [bibliotece Polyphone](https://www.polyphone.io/en/soundfonts) (kategorie i filtr licencji) albo katalog
 [Musical Artifacts](https://musical-artifacts.com). Duży bank GM nie przeszkadza, bo do soundbanku trafiają tylko sample
 wybranego presetu, a strona pokazuje ich rozmiar. Do organów, smyczków i padów wybieraj presety oznaczone jako „z pętlą”.
-SoundFont z własnych sampli (np. z [Freesound](https://freesound.org)) robi `python3 -m nuxdsp pack` (opis wyżej). Soundbank rośnie o rozmiar sampli, a ile miejsca ma
+SoundFont z własnych sampli (np. z [Freesound](https://freesound.org)) robi `python3 -m nuxdsp pack` (opis wyżej). `nuxdsp export-sound` zapisuje fabryczne brzmienie jako SF2 do porównań; to sample NUX, więc taki plik zostaje u Ciebie, nie udostępniaj go. Soundbank rośnie o rozmiar sampli, a ile miejsca ma
 flash, jeszcze nie wiadomo, więc lepiej zaczynać od małych instrumentów.
 
 > **Na własne ryzyko.** To nieoficjalny projekt, niezwiązany z NUX ani Dream. Zmodyfikowany firmware może

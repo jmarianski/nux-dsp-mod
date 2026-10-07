@@ -89,6 +89,18 @@ def cmd_instruments(a):
         print("@%-3d bank %3d prog %3d  %-20s %s" % (n, b, p, name, desc))
 
 
+def cmd_export_sound(a):
+    img, m = load_checked(a.firmware)
+    ins = soundbank.export(read(a.sbank), img, m, a.sound)
+    write(a.out, sf2.write(ins))
+    for z in ins.zones:
+        print("  keys %3d-%3d  root %3d%+4d  %s  %s" % (z.lo, z.hi, z.root, z.cents,
+                                                     "loop %d" % (z.loop[1] - z.loop[0]) if z.loop else "one-shot",
+                                                     z.env if z.env else "envelope not read"))
+    print("wrote %s: %s, %d zones — the vendor's samples: for your own tests, do not share" % (a.out, ins.name,
+                                                                                           len(ins.zones)))
+
+
 def cmd_disasm(a):
     img, m = load_checked(a.firmware, a.target, a.force)
     write(a.out, disasm.Listing(img, m).render())
@@ -214,6 +226,11 @@ def main(argv=None):
     s.add_argument("--author", default="")
     s.add_argument("--license", default="")
     s.add_argument("--comment", default="", help="where the samples come from, ...")
+    s = sub.add_parser("export-sound", help="an official sound as a SoundFont (.sf2), for your own tests (local use)")
+    s.add_argument("firmware", help="the official DSP file (sound numbers)")
+    s.add_argument("sbank", help="the official soundbank file")
+    s.add_argument("sound", type=int, help="sound number 1..500")
+    s.add_argument("out", help="the .sf2 file")
     s = sub.add_parser("disasm", help="annotated listing of your firmware (for local use)")
     s.add_argument("firmware")
     s.add_argument("out")
@@ -242,7 +259,7 @@ def main(argv=None):
         from . import web
         a.web_dir = web.WEB_DIR
     try:
-        return globals()["cmd_" + a.cmd](a) or 0
+        return globals()["cmd_" + a.cmd.replace("-", "_")](a) or 0
     except (patcher.PatchError, asm.AsmError, soundbank.BankError, instrument.PackError, sf2.SF2Error, ValueError, OSError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 1

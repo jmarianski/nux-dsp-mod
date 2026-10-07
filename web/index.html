@@ -290,7 +290,8 @@ function addVoice() {
   if (PACKS.length) pickFont(PACKS[0].id); else src.dispatchEvent(new Event("change"));
 }
 // --- preview: the chosen preset's samples with the zones, tuning and loops that go into the soundbank.
-// The envelope and filter on the instrument come from its template sound, so this is an approximation.
+// The volume envelope is the one written to the device (envEncode), with its times as nuxdsp/envelope.py models
+// them (not measured yet); the filter comes from the template sound: an approximation.
 const SEQS = [  // [label, [[midi notes, start s, length s], ...]]
   ["C4 · C5 · C6", [[[60], 0, .6], [[72], .7, .6], [[84], 1.4, .6]]],
   ["C4 D4 E4 F4 G4 A4 B4 C5", [60, 62, 64, 65, 67, 69, 71, 72].map((n, i) => [[n], i * .3, .28])],
@@ -323,16 +324,29 @@ const preview = {
       src.buffer = this.buffer(ctx, z);
       src.playbackRate.value = 2 ** ((key - z.root) / 12 + z.cents / 1200);
       if (z.loop) { src.loop = true; src.loopStart = z.loop[0] / z.rate; src.loopEnd = z.loop[1] / z.rate; }
-      const on = t0 + at, off = on + len;
-      g.gain.setValueAtTime(.5, on);
-      g.gain.setValueAtTime(.5, off);
-      g.gain.linearRampToValueAtTime(0, off + .15);  // release
+      const on = t0 + at, off = on + len, rel = this.envelope(g.gain, z.env, on, off);
       src.connect(g).connect(ctx.destination);
-      src.start(on); src.stop(off + .2);
+      src.start(on); src.stop(off + rel + .05);
       this.nodes.push(src);
-      end = Math.max(end, off + .2);
+      end = Math.max(end, off + rel + .05);
     }
     return end;
+  },
+  // the device's volume envelope (bytes from envEncode) on gain from on to off (key up); returns the release time
+  envelope(gain, env, on, off) {
+    const full = .5, e = envEncode(env || {attack: 0, decay: 0, sustain: 0, release: .15});
+    const ta = envSeconds(e[1]), tm = envSeconds(e[3]), tr = envSeconds(e[5]), lv = e[4] & 0x1f;
+    const target = e[4] & 0x80 ? 0 : full * 10 ** ((lv - 31) * ENV_DB_STEP / 20);  // falls to silence / holds
+    const k = T => T / 6.9;                                                        // 60 dB over T
+    gain.setValueAtTime(0, on);
+    gain.linearRampToValueAtTime(full, on + ta);
+    if (target < full) gain.setTargetAtTime(target, on + ta, k(tm));
+    const dt = off - on - ta;                                                      // the level at key up
+    const atOff = dt < 0 ? full * (off - on) / ta : target + (full - target) * Math.exp(-dt / k(tm));
+    gain.cancelScheduledValues(off);
+    gain.setValueAtTime(atOff, off);
+    gain.setTargetAtTime(0, off, k(tr));
+    return tr;
   },
   play(inst, seq, btn) {
     this.ctx = this.ctx || new (globalThis.AudioContext || globalThis.webkitAudioContext)();
