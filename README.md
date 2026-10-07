@@ -43,7 +43,8 @@ the file's presets (`nuxdsp instruments FILE.sf2` lists them, the web page shows
 root keys, tuning, sample rate and loops (sounds that sustain while the key is held). Of several velocity layers
 the one at velocity 100 is used; of layers sounding together (e.g. a second one an octave up) each key takes the
 first; stereo is mixed to mono. Envelope and filter come from a template sound of
-your own soundbank, so the instruments contain no NUX data. Drum kits and effects that play the same pitch on
+your own soundbank (a plucked one for one-shots, an organ for looped instruments, which then hold while the key is
+held), so the instruments contain no NUX data; the SoundFont's own envelope is not used. Drum kits and effects that play the same pitch on
 every key are not supported. Bundled, in [`instruments/`](instruments):
 
 | Instrument | What | Samples |
@@ -159,7 +160,7 @@ wgranie oryginalnego soundbanku przywraca dawne brzmienie. Instrumenty to pliki 
 sampli. Z pliku wybierasz jeden preset; przenoszone są zakresy klawiszy, strojenie, częstotliwość próbkowania i pętle
 (dźwięk trwa, dopóki trzymasz klawisz). Z warstw dynamiki brana jest ta dla siły 100, z warstw grających razem (np. druga o oktawę wyżej) każdy klawisz
 bierze pierwszą, a stereo jest miksowane do mono.
-Obwiednia i filtr pochodzą z brzmienia-szablonu Twojego soundbanku, więc instrumenty nie zawierają danych NUX.
+Obwiednia i filtr pochodzą z brzmienia-szablonu Twojego soundbanku (szarpanego dla dźwięków bez pętli, organów dla tych z pętlą, które wtedy brzmią, dopóki trzymasz klawisz), więc instrumenty nie zawierają danych NUX; obwiednia z pliku SF2 nie jest używana.
 Perkusje i efekty grające tę samą wysokość na każdym klawiszu nie są obsługiwane. W repozytorium jest **Kocie piano**
 (`cat_piano`): miauczące zabawkowe pianino, nagranie „Cat Piano Note C” autorstwa Meku A z Freesound.org (przez
 creazilla.com), licencja **CC0** (domena publiczna), przestrojone na każdy klawisz, z przyciętym atakiem. **Skąd brać pliki

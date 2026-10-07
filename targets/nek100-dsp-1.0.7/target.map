@@ -17,7 +17,7 @@ pool    0x09ad4 0x09bd4     ; unreferenced function (no calls, branches or point
 pool    0x062f3 0x06558     ; unreferenced function, same checks (C: polish_font runs here)
 pool    0x0f0b0 0x0fff0     ; 0xffff filler after the code of bank 0, loaded into program memory (C: probe words at 0xf0b0 and 0xffe0 read back on the device)
 glyphs  0x12cf7 0x1348f 243 ; glyph/image table (8 words each: u32 byte offset, size, width, height) + bitmaps
-soundbank NEK100_SBANK_V1.0.4 sha256 59d5c23ba8269e21c231195280ef8c6255ced890a5c8977868c9aba83313b646 template 479 1 ; added instruments copy the settings of 479.Shamisen's zone 1 (C: quick attack, follows the keyboard)
+soundbank NEK100_SBANK_V1.0.4 sha256 59d5c23ba8269e21c231195280ef8c6255ced890a5c8977868c9aba83313b646 template 479 1 loop 48 0 ; added instruments copy the settings of 479.Shamisen's zone 1 (C: quick attack, follows the keyboard, decays), those with loops 48.Organ 10's zone 0 (C: holds while the key is held)
 
 # --- startup / system ------------------------------------------------------------------------
 func  0x005f8 main                    ; init_all(), then forever main_loop_tick()

@@ -277,59 +277,65 @@ function setAddrs(r, o, S, L, E) {
   r[o + 8] = S & 0xff; put16(r, o + 10, (S >>> 8) & 0xffff);
   r[o + 14] = E & 0xff; put16(r, o + 16, (E >>> 8) & 0xffff);
 }
+// even: the vendor's tunings all are, and an odd one breaks the synth until power-off (bit 0 is no tuning bit)
 const tuneValue = (midi, cents, rate) =>
-  Math.round(256 * (-83.996 - 12 * Math.log2(440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200) / rate)));
+  2 * Math.round(128 * (-83.996 - 12 * Math.log2(440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200) / rate)));
 // items: [{pack: sf2Instrument(...), voice}] -> new soundbank bytes; bank: the user's official soundbank file
 async function addInstruments(target, dsp, bank, items) {
   const v = target.voices, d = bank, FB = 0x80000;
   if (await sha256(bank) !== v.soundbank.sha256) throw `not the official ${v.soundbank.name} (SHA-256 mismatch)`;
   if (new Set(items.map(i => i.voice)).size !== items.length) throw "two instruments for the same sound";
   const banks = voiceBanks(v, dsp);
-  const [tv, tzone] = v.soundbank.template;
-  const tinst = instrumentAddr(d, dirEntry(d, ...voiceToBankProg(banks, tv)));
-  const tz = zoneAddrs(d, tinst)[tzone], T = zoneRecord(d, tz);
+  const templates = {};
+  for (const kind of ["template", "template_loop"]) {      // one-shots, and instruments with loops
+    const [tv, tzone] = v.soundbank[kind] || v.soundbank.template;
+    const tinst = instrumentAddr(d, dirEntry(d, ...voiceToBankProg(banks, tv)));
+    const tz = zoneAddrs(d, tinst)[tzone];
+    templates[kind] = {tz, hdr: d.slice(tinst, tinst + 4), ...zoneRecord(d, tz)};
+  }
   let tail = -1;
   const mark = new TextEncoder().encode("PackNameDate:");
   for (let i = d.length - mark.length; i >= 0 && tail < 0; i--)
     if (mark.every((c, j) => d[i + j] === c)) tail = i;
   if (tail < 0) throw "soundbank trailer not found";
   const align = n => Math.ceil(n / 0x800) * 0x800;
-  const zoneBytes = z => 4 + z.pcm.length + (z.loop ? 0 : 128);
-  let len = tail;
-  for (const {pack} of items) {
-    len = align(len);
-    const seen = new Set();
-    for (const z of pack.zones) if (!seen.has(z.key)) { seen.add(z.key); len += zoneBytes(z); }
-  }
-  len = align(len);
-  const out = new Uint8Array(len + d.length - tail);
-  out.set(d.subarray(0, tail)); out.set(d.subarray(tail), len);
+  // samples: appended at the end, each with E on the last word of a 256-word block (as the vendor's)
   let pos = tail;
-  const pad = to => { for (; pos < to; pos += 2) { out[pos] = 0xef; out[pos + 1] = 0xad; } };
-  const placed = items.map(({pack}) => {
-    pad(align(pos));
+  const layout = items.map(({pack}) => {
+    pos = align(pos);
     const seen = new Map();
     return pack.zones.map(z => {
       if (seen.has(z.key)) return seen.get(z.key);
-      const start = pos + 4, S = FB + start / 2;
-      out.set(z.pcm, start); pos = start + z.pcm.length;      // zeros already: guard and silent loop
-      let a;
-      if (z.loop) a = [S, S + z.loop[0], S + z.loop[1]];
-      else { pos += 128; const E = FB + (pos - 2) / 2; a = [S, E - 43, E]; }
+      const end = z.loop ? z.loop[1] : z.pcm.length / 2 + 63;  // E - S
+      let S = FB + (pos + 4) / 2;
+      pos += 2 * (((255 - (S + end)) % 256 + 256) % 256);
+      const start = pos + 4; S = FB + start / 2;
+      pos = start + z.pcm.length + (z.loop ? 0 : 128);       // two zero guard words; one-shots: 64 silent ones
+      const a = {start, pcm: z.pcm, silence: z.loop ? 0 : 128,
+                 addr: z.loop ? [S, S + z.loop[0], S + z.loop[1]] : [S, S + end - 43, S + end]};
       seen.set(z.key, a);
       return a;
     });
   });
-  pad(len);
+  const len = align(pos);
+  const out = new Uint8Array(len + d.length - tail);
+  out.set(d.subarray(0, tail)); out.set(d.subarray(tail), len);
+  for (let i = tail; i < len; i += 2) { out[i] = 0xef; out[i + 1] = 0xad; }
+  const placed = layout.map(zs => zs.map(a => {
+    out.fill(0, a.start - 4, a.start + a.pcm.length + a.silence);
+    out.set(a.pcm, a.start);
+    return a.addr;
+  }));
   put32(out, 8, FB + len / 2); put32(out, 0x9c, FB + len / 2);
   items.forEach(({pack, voice}, k) => {
     const base = (u32(out, 0xa6) - FB) * 2 + 0x10, page = Math.floor(base / 0x20000), n = pack.zones.length;
     if (n < 1 || n > 127) throw `${pack.name}: ${n} zones (1..127)`;
+    const T = templates[pack.zones.some(z => z.loop) ? "template_loop" : "template"], tz = T.tz;
     const zoneAt = base + 4 + 6 * n + 2, recLen = T.rec.length, size = 4 + 6 * n + 2 + n * recLen;
     if (base + size > (page + 1) * 0x20000 || out.subarray(base - 0x10, base + size).some(b => b !== 0x5e && b !== 0xd0))
       throw "no free room for the instrument in the parameter page";
     const inst = new Uint8Array(size);
-    inst.set(d.subarray(tinst, tinst + 4)); inst[2] = 0x80 | n;
+    inst.set(T.hdr); inst[2] = 0x80 | n;
     let hi = 0;
     pack.zones.forEach((zn, i) => {
       const zstart = zoneAt + i * recLen, lo = hi, e = 4 + 6 * i;

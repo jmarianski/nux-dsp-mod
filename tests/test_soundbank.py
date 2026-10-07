@@ -3,6 +3,7 @@ the soundbank tests; NUX_TEST_SF2=/path/to/any.sf2 (e.g. a General MIDI SoundFon
 import json
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -11,12 +12,34 @@ from nuxdsp import container, fwmap, instrument, patcher, sf2, soundbank, web
 
 FW, SBANK, SF2 = os.environ.get("NEK100_FW"), os.environ.get("NEK100_SBANK"), os.environ.get("NUX_TEST_SF2")
 HERE = os.path.dirname(os.path.abspath(__file__))
-# cat_piano on sound 500: the bank played on hardware (attack-trimmed Cat Piano, "cat3")
-CAT_SHA = "c5d6fcad7bba3c3dad8f801367188e367d226bd56176cd9e7b5f62e6de658b72"
+# cat_piano on sound 500: the bank played on hardware (attack-trimmed Cat Piano, samples ending on 256-word blocks)
+CAT_SHA = "6dfc7711d0753ed8a6b2c1dddee5c61965d5e2deed5a6fcd6b187b2c2c53cbcc"
 
 
 def cat():
     return sf2.load(instrument.bundled("cat_piano")).instrument(0)
+
+
+def saw(period=200):
+    """a looped instrument: one cycle of a saw (period 200 gave an odd tuning before tunings were made even)"""
+    s = [int(20000 * (i / period * 2 - 1)) for i in range(period)] * 3
+    return sf2.Instrument("Saw", [sf2.Zone(0, 59, 57, 4, 44100, struct.pack("<%dh" % (len(s) + 1), *s, s[0]),
+                                           (2 * period, 3 * period)),
+                                  sf2.Zone(60, 127, 64, -7, 22050, struct.pack("<%dh" % (len(s) + 1), *s, s[0]),
+                                           (period, 3 * period))])
+
+
+def sample_blocks(bank, img, fwmap_, voice):
+    """(flag, V, S, L, E) of each zone of the instrument now playing VOICE"""
+    banks = soundbank.voice_banks(container.words(img), fwmap_)
+    out = []
+    for z in soundbank.zones(bank, soundbank.instrument_addr(bank, *soundbank.voice_to_bank_prog(banks, voice))):
+        o = soundbank.find_sample_block(bank, z)
+        b = bank[o:o + 18]
+        hi = ((b[0] >> 6) & 3) | (b[1] << 2)
+        a = [(hi << 24) | (struct.unpack_from("<H", b, w)[0] << 8) | b[lo] for w, lo in ((10, 8), (2, 5), (16, 14))]
+        out.append((bank[o - 4], struct.unpack_from("<h", bank, o - 2)[0], *a))
+    return out
 
 
 class TestSf2(unittest.TestCase):
@@ -58,6 +81,23 @@ class TestSoundbank(unittest.TestCase):
         out = soundbank.add(self.bank, self.img, self.map, [(cat(), 500)])
         self.assertEqual(container.sha256(out), CAT_SHA)
 
+    def test_vendor_conventions(self):
+        out = soundbank.add(self.bank, self.img, self.map, [(cat(), 500), (saw(), 499)])
+        for v in (500, 499):
+            for flag, V, S, L, E in sample_blocks(out, self.img, self.map, v):
+                self.assertEqual(V % 2, 0, "odd tuning on sound %d" % v)     # breaks the synth (C)
+                self.assertEqual(E % soundbank.BLOCK, soundbank.BLOCK - 1)
+                self.assertTrue(S < L < E)
+        tz = {k: soundbank.zones(self.bank, soundbank.instrument_addr(self.bank, *soundbank.voice_to_bank_prog(
+            soundbank.voice_banks(container.words(self.img), self.map), self.map.soundbank[k][0])))[
+            self.map.soundbank[k][1]] for k in ("template", "template_loop")}
+        banks = soundbank.voice_banks(container.words(self.img), self.map)
+        for v, k in ((500, "template"), (499, "template_loop")):
+            z = soundbank.zones(out, soundbank.instrument_addr(out, *soundbank.voice_to_bank_prog(banks, v)))[0]
+            self.assertEqual(len(soundbank.zone_record(out, z)[0]), len(soundbank.zone_record(self.bank, tz[k])[0]))
+        self.assertEqual([V for _, V, *_ in sample_blocks(out, self.img, self.map, 499)],
+                         [soundbank.tune_value(57, 4, 44100), soundbank.tune_value(64, -7, 22050)])
+
     def test_several(self):
         c = cat()
         out = soundbank.add(self.bank, self.img, self.map, [(c, 500), (c, 1), (c, 250)])
@@ -71,7 +111,12 @@ class TestSoundbank(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_web_matches_cli(self):
-        voices = [(500, "cat_piano", 0, "Cat Piano", "Kocie piano"), (2, "cat_piano", 0, "Meow", "")]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        saw_sf2 = os.path.join(tmp.name, "saw.sf2")
+        with open(saw_sf2, "wb") as f:
+            f.write(sf2.write(saw()))
+        voices = [(500, "cat_piano", 0, "Cat Piano", "Kocie piano"), (2, saw_sf2, 0, "Saw", "Piła")]
         if SF2:  # a third-party SoundFont: loops, other sample rates, stereo, layers
             sf = sf2.load(SF2)
             usable = []
