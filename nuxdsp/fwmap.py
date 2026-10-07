@@ -17,9 +17,10 @@ Format, one entry per line, `;` starts a comment that is kept as the entry descr
     label   ADDR NAME            named location inside a function
     var     ADDR NAME [SIZE]     RAM variable (word address), optional size in words
     glyphs  TABLE BITMAPS COUNT  file word addresses of the glyph/image table and its bitmap data
-    soundbank NAME sha256 HEX template VOICE ZONE
+    soundbank NAME sha256 HEX template VOICE ZONE [loop VOICE ZONE]
                                  the official soundbank file instruments are added to, and the zone
-                                 (sound number, zone index) whose settings added instruments copy
+                                 (sound number, zone index) whose settings added instruments copy;
+                                 instruments with loops copy the "loop" one when given
 """
 import os
 import shlex
@@ -114,6 +115,8 @@ def load(path=None):
                 m.glyphs = (int(t[1], 16), int(t[2], 16), int(t[3], 0))
             elif k == "soundbank":
                 m.soundbank = {"name": t[1], "sha256": t[3].lower(), "template": (int(t[5]), int(t[6]))}
+                if len(t) > 9 and t[7] == "loop":
+                    m.soundbank["template_loop"] = (int(t[8]), int(t[9]))
             elif k == "ramdata":
                 m.ramdata = (int(t[1], 16), int(t[2], 16))
             elif k in ("func", "label", "var"):

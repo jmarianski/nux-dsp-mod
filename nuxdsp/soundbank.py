@@ -7,12 +7,14 @@ The soundbank (NEK100_SBANK_*.bin) is flashed from word 0x80000 on, so its point
   - an instrument: 4 header bytes (byte 2 = 0x80 | number of zones), then per zone 6 bytes
     (first-zone flag, low key, 0x7f, high key, zone address in the page), 0 0, then the zone records;
   - a zone record holds in-page pointers to its parts and a sample block with the sample's start, loop and
-    end addresses (the loop runs L..E, sample E = sample L; one-shots loop over silence at the end); the word
-    before it is the tuning (V, 1/256 semitone). A zone plays the keys above the previous zone's high key.
+    end addresses (the loop runs L..E, sample E = sample L; one-shots loop over silence at the end; E is the
+    last word of a 256-word block, as in ~95% of the vendor's samples); the word
+    before it is the tuning (V, 1/256 semitone, always even). A zone plays the keys above the previous zone's high key.
   - header fields: u32 at 8 and 0x9c = end of the data, at 0xa6 = end of the parameter data. New samples go at
     the end (before the "PackNameDate:" trailer), new instruments into the free rest of the parameter page.
-A sound number maps to (bank, program) through the DSP's voice_banks table. The zone settings come from the
-target's template zone (soundbank line of target.map): nothing of the vendor's is in an instrument file.
+A sound number maps to (bank, program) through the DSP's voice_banks table. The zone settings (envelope, filter,
+...) come from a template zone of the target (soundbank line of target.map): one for one-shots, one for instruments
+with loops (a sustaining one); nothing of the vendor's is in an instrument file, and an SF2's envelope is not used.
 
 custom_voices (a DSP patch) shows the new names: fill_names() writes them into its table.
 """
@@ -27,6 +29,7 @@ DIRECTORY = 0x252
 K = -83.996                       # 12*log2(cycles per sample) + V/256 for zones that follow the keyboard
 SR = 44100
 CV_ENTRY, CV_NAME = 33, 16
+BLOCK = 256                       # samples end on the last word of a block of this size, as the vendor's
 
 
 class BankError(Exception):
@@ -115,8 +118,10 @@ def set_addrs(rec, S, L, E):
 
 
 def tune_value(midi, cents, rate=SR):
+    """even: the vendor's tunings all are (1277 of 1277), and an odd one breaks the synth until power-off
+    (C: squeal, wrong velocity and octave in other sounds, crashes) — bit 0 is not part of the tuning."""
     f = 440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200)
-    return round(256 * (K - 12 * math.log2(f / rate)))
+    return 2 * round(128 * (K - 12 * math.log2(f / rate)))
 
 
 def zone_record(d, z):
@@ -149,11 +154,12 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
         raise BankError("two instruments for the same sound")
     banks = voice_banks(container.words(dsp_image), fwmap)
     d = bytes(bank)
-    tvoice, tzone = sb["template"]
-    tinst = instrument_addr(d, *voice_to_bank_prog(banks, tvoice))
-    tz = zones(d, tinst)[tzone]
-    rec, ptr_offs, page_b, sb_off = zone_record(d, tz)
-    hdr = d[tinst:tinst + 4]
+    templates = {}
+    for kind in ("template", "template_loop"):               # one-shots, and instruments with loops
+        tvoice, tzone = sb.get(kind, sb["template"])
+        tinst = instrument_addr(d, *voice_to_bank_prog(banks, tvoice))
+        tz = zones(d, tinst)[tzone]
+        templates[kind] = (tz, d[tinst:tinst + 4]) + zone_record(d, tz)
 
     tail = d.index(b"PackNameDate:")
     body, trailer = bytearray(d[:tail]), d[tail:]
@@ -166,8 +172,10 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
             if z.key is not None and z.key in seen:          # the same sample in several zones: stored once
                 addrs.append(seen[z.key])
                 continue
-            start = len(body) + 4                             # two zero guard words, then the audio
-            S = FLASH_BASE_W + start // 2
+            end = z.loop[1] if z.loop else len(z.pcm) // 2 + 63   # E - S
+            S = FLASH_BASE_W + (len(body) + 4) // 2           # two zero guard words, then the audio
+            body += PAD * ((BLOCK - 1 - (S + end)) % BLOCK)   # E on the last word of a block, as the vendor's
+            S = FLASH_BASE_W + (len(body) + 4) // 2
             if z.loop:
                 body += b"\0\0\0\0" + z.pcm
                 a = (S, S + z.loop[0], S + z.loop[1])
@@ -175,6 +183,7 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
                 body += b"\0\0\0\0" + z.pcm + b"\0" * 128   # 64 zero words: the silent loop of a one-shot
                 E = FLASH_BASE_W + (len(body) - 2) // 2
                 a = (S, E - 43, E)
+            assert a[2] % BLOCK == BLOCK - 1
             addrs.append(a)
             if z.key is not None:
                 seen[z.key] = a
@@ -191,6 +200,8 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
         n = len(inst.zones)
         if not 1 <= n <= 127:
             raise BankError("%s: %d zones (1..127)" % (inst.name, n))
+        tz, hdr, rec, ptr_offs, page_b, sb_off = templates[
+            "template_loop" if any(z.loop for z in inst.zones) else "template"]
         head = bytearray(hdr)
         head[2] = 0x80 | n
         zone_at = base + 4 + 6 * n + 2
