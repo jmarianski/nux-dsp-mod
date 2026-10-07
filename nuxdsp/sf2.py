@@ -3,7 +3,7 @@
 What carries over to the instrument (one sample per key range, played by the template zone of the target):
 key ranges, root keys, tuning (coarse, fine, the sample's pitch correction), sample rate, loops (sampleModes
 1/3: the loop plays while the key is held; otherwise one-shot). Of several velocity layers the one sounding at
-VELOCITY is taken; linked stereo samples are mixed to mono; zones at the same pitch on every key (noise layers)
+VELOCITY is taken; of layers over the same keys, the first one of each key; linked stereo samples are mixed to mono; zones at the same pitch on every key (noise layers)
 are left out, presets made only of such (drum kits, effects) refused. Envelopes, filters, modulators, effects: not
 (the template zone's settings apply). The JavaScript in web/patcher.js mirrors this file.
 """
@@ -13,6 +13,7 @@ VELOCITY = 100
 GEN_KEYRANGE, GEN_VELRANGE, GEN_INSTRUMENT, GEN_SAMPLE = 43, 44, 41, 53
 GEN_COARSE, GEN_FINE, GEN_MODES, GEN_ROOT, GEN_SCALE = 51, 52, 54, 58, 56
 RANGES = (GEN_KEYRANGE, GEN_VELRANGE)
+DRUM_BANKS = (120, 128)  # percussion: SF2 bank 128, GM2 rhythm bank 120
 
 
 class SF2Error(Exception):
@@ -102,6 +103,8 @@ class SoundFont:
     def instrument(self, preset, velocity=VELOCITY):
         """the preset (index into phdr) -> Instrument"""
         name = self.phdr[preset][0]
+        if self.phdr[preset][2] in DRUM_BANKS:
+            raise SF2Error("drum kit (bank %d): not supported, the sound follows the keyboard" % self.phdr[preset][2])
         pg, pz = self._zones(self.pbag, self.pgen, self.phdr[preset][3], self.phdr[preset + 1][3])
         regions = []
         for z in pz:
@@ -133,14 +136,17 @@ class SoundFont:
                 if pair is not None:
                     done.add(pair)
             zones.append(self._zone(key, iz, pz, None if pair is None else regions[pair][1]))
-        zones.sort(key=lambda z: (z.lo, z.hi))
+        # layers (zones over the same keys, e.g. a second one an octave up): each key gets the zone of the
+        # first layer that has it, in the file's order, so neighbouring keys stay in one layer
+        owner = [next((z for z in zones if z.lo <= k <= z.hi), None) for k in range(128)]
         out = []
-        for z in zones:  # overlapping layers: the first one of each key
-            if out and z.hi <= out[-1].hi:
+        for k, z in enumerate(owner):
+            if z is None:
                 continue
-            if out and z.lo <= out[-1].hi:
-                z.lo = out[-1].hi + 1
-            out.append(z)
+            if out and owner[k - 1] is z:
+                out[-1].hi = k
+            else:
+                out.append(Zone(k, k, z.root, z.cents, z.rate, z.pcm, z.loop, z.key))
         return Instrument(name, out, self.info)
 
     def _sample(self, iz):
