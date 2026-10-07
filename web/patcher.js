@@ -172,6 +172,8 @@ function sf2Zone(sf, key, iz, pz, iz2) {
 }
 function sf2Instrument(sf, preset, velocity = 100) {
   const ph = sf.phdr, name = ph[preset][0];
+  if (ph[preset][2] === 120 || ph[preset][2] === 128)  // percussion: SF2 bank 128, GM2 rhythm bank 120
+    throw `drum kit (bank ${ph[preset][2]}): not supported, the sound follows the keyboard`;
   const [pg, pz] = sf2Zones(sf, sf.pbag, sf.pgen, ph[preset][3], ph[preset + 1][3], 41);
   let regions = [];
   for (const z of pz) {
@@ -198,13 +200,13 @@ function sf2Instrument(sf, preset, velocity = 100) {
     }
     zones.push(sf2Zone(sf, key, iz, pz, pair >= 0 ? regions[pair][1] : null));
   });
-  zones.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
-  const out = [];
-  for (const z of zones) {
-    if (out.length && z.hi <= out[out.length - 1].hi) continue;
-    if (out.length && z.lo <= out[out.length - 1].hi) z.lo = out[out.length - 1].hi + 1;
-    out.push(z);
-  }
+  // layers: each key gets the zone of the first layer that has it (as nuxdsp/sf2.py)
+  const owner = [...Array(128).keys()].map(k => zones.find(z => z.lo <= k && k <= z.hi) || null), out = [];
+  owner.forEach((z, k) => {
+    if (!z) return;
+    if (out.length && owner[k - 1] === z) out[out.length - 1].hi = k;
+    else out.push({...z, lo: k, hi: k});
+  });
   const seen = new Map();
   const size = out.reduce((s, z) => seen.has(z.key) ? s : (seen.set(z.key, 1), s + z.pcm.length), 0);
   return {name, zones: out, info: sf.info, size};
