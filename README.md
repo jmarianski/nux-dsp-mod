@@ -45,8 +45,10 @@ the one at velocity 100 is used; of layers sounding together (e.g. a second one 
 first; stereo is mixed to mono. The volume envelope (attack, decay, sustain, release) is the SoundFont's,
 converted to the device's own (its rates measured on the NEK-100). The rest of the zone settings come from a
 template sound of your own soundbank (a plucked one for one-shots, an organ for looped instruments), so the
-instruments contain no NUX data; the SoundFont's filters, LFOs and chorus are not taken over (a pad that is a
-filtered string sample sounds like the strings). Drum kits and effects that play the same pitch on every key are
+instruments contain no NUX data; the SoundFont's filters, LFOs and chorus are **not supported yet** (a pad that is
+a filtered string sample sounds like the strings). It looks doable: the device's zones have a second envelope in
+the same format (flat in pianos and organs, falling in synth basses: most likely the filter's) and blocks that look
+like LFO settings, but their meaning is not decoded yet. Drum kits and effects that play the same pitch on every key are
 not supported. A loop that clicks on the device but not in the page's preview is in the SoundFont itself (e.g.
 loops whose end is louder than their start); the sample layout follows the vendor's rules that keep loops clean. Bundled, in [`instruments/`](instruments):
 
@@ -169,8 +171,11 @@ sampli. Z pliku wybierasz jeden preset; przenoszone są zakresy klawiszy, stroje
 bierze pierwszą, a stereo jest miksowane do mono.
 Obwiednia głośności (atak, opadanie, podtrzymanie, wybrzmienie) pochodzi z pliku SF2, przeliczona na obwiednię
 urządzenia (jej tempa zmierzone na NEK-100). Pozostałe ustawienia strefy pochodzą z brzmienia-szablonu Twojego soundbanku
-(szarpanego dla dźwięków bez pętli, organów dla tych z pętlą), więc instrumenty nie zawierają danych NUX. Filtry, LFO i
-chorus z SF2 nie są przenoszone (pad zrobiony z przefiltrowanych smyczków zabrzmi jak smyczki). Jeśli pętla stuka na
+(szarpanego dla dźwięków bez pętli, organów dla tych z pętlą), więc instrumenty nie zawierają danych NUX. Filtrów, LFO i
+chorusa z SF2 **jeszcze nie obsługujemy** (pad zrobiony z przefiltrowanych smyczków zabrzmi jak smyczki). Wygląda to na
+wykonalne: strefy urządzenia mają drugą obwiednię w tym samym formacie (płaską w pianinach i organach, opadającą w
+syntezatorowych basach, więc najpewniej filtra) i bloki przypominające ustawienia LFO, ale ich znaczenia jeszcze nie
+rozszyfrowaliśmy. Jeśli pętla stuka na
 urządzeniu tak samo jak w podglądzie na stronie, to cecha samego pliku SF2 (np. koniec pętli głośniejszy niż początek);
 ułożenie sampli trzyma się reguł producenta, przy których pętle grają czysto.
 Perkusje i efekty grające tę samą wysokość na każdym klawiszu nie są obsługiwane. W repozytorium jest **Kocie piano**
