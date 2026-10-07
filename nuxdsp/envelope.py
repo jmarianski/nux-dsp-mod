@@ -20,6 +20,10 @@ Times and levels (C: fitted to a recording of rates 80/60/45/32 rising and 90/74
     40: about 15 s — the room and a turned knob blur these, the fit is within a factor of 2);
     level l is (l - 31) * 1.5 dB.
 Only these constants change when they are measured.
+
+Not decoded yet (H): the second envelope after this one (same grammar; flat in pianos and organs, falling to a low
+level in synth basses, e.g. Acid Bass "e3 1f 4c 41 5a 60": most likely the filter's) and the "01 .." blocks after
+it (LFO?). Mapping the SoundFont's filter, modulation envelope and LFOs onto them would carry pads over properly.
 """
 import math
 
