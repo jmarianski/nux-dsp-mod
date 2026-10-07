@@ -214,7 +214,9 @@ function addVoice() {
     <div class="row">sound / brzmienie <input type="number" min="1" max="500" data-k="slot">
       <span class="desc" data-k="was"></span></div>
     <div class="row">name <input type="text" data-k="name" maxlength="13"> nazwa PL
-      <input type="text" data-k="name_pl" maxlength="13"></div>`;
+      <input type="text" data-k="name_pl" maxlength="13"></div>
+    <div class="row">preview / odsłuch <select data-k="seq"></select>
+      <button class="small" data-k="play">▶ Play</button></div>`;
   const q = k => d.querySelector(`[data-k=${k}]`), src = q("src"), pre = q("preset");
   const fill = () => {
     const k = src.value;
@@ -269,18 +271,84 @@ function addVoice() {
     $("sf2file").click();
   });
   pre.addEventListener("change", pickPreset);
+  for (const [label] of SEQS) q("seq").add(new Option(label));
+  q("play").addEventListener("click", () => {
+    if (preview.stop()) return;
+    if (!d.inst) return;
+    preview.play(d.inst, SEQS[q("seq").selectedIndex][1], q("play"));
+  });
   d.refill = fill;
   const showWas = () => {
     const v = Number(q("slot").value);
     q("was").textContent = v >= 1 && v <= 500 ? `replaces / zastępuje ${names[v - 1]}` : "1..500";
   };
-  q("del").addEventListener("click", () => { d.remove(); voicesChanged(); });
+  q("del").addEventListener("click", () => { preview.stop(); d.remove(); voicesChanged(); });
   q("slot").value = freeSlot();
   q("slot").addEventListener("input", showWas);
   $("voices").appendChild(d);
   fill(); showWas(); voicesChanged();
   if (PACKS.length) pickFont(PACKS[0].id); else src.dispatchEvent(new Event("change"));
 }
+// --- preview: the chosen preset's samples with the zones, tuning and loops that go into the soundbank.
+// The envelope and filter on the instrument come from its template sound, so this is an approximation.
+const SEQS = [  // [label, [[midi notes, start s, length s], ...]]
+  ["C4 · C5 · C6", [[[60], 0, .6], [[72], .7, .6], [[84], 1.4, .6]]],
+  ["C4 D4 E4 F4 G4 A4 B4 C5", [60, 62, 64, 65, 67, 69, 71, 72].map((n, i) => [[n], i * .3, .28])],
+  ["C2 · C3 · C4 · C5 · C6 · C7", [36, 48, 60, 72, 84, 96].map((n, i) => [[n], i * .55, .5])],
+  ["chord C–E–G / akord", [[[48, 60, 64, 67], 0, 2]]],
+  ["held C4, 4 s (loop) / trzymane C4", [[[60], 0, 4]]],
+  ["arpeggio", [48, 52, 55, 60, 64, 67, 72, 76, 79, 84].map((n, i) => [[n], i * .15, .6])],
+  ["chromatic C4–C5 / chromatycznie", [...Array(13).keys()].map(i => [[60 + i], i * .18, .17])],
+];
+const preview = {
+  ctx: null, nodes: [], timer: 0, btn: null, cache: new WeakMap(),
+  // the device plays a key with the first zone whose high key is >= it (the last one takes the rest)
+  zoneFor(inst, key) { return inst.zones.find((z, i) => i === inst.zones.length - 1 || key <= z.hi); },
+  buffer(ctx, z) {
+    let b = this.cache.get(z);
+    if (!b) {
+      const n = z.pcm.length >> 1, dv = new DataView(z.pcm.buffer, z.pcm.byteOffset, z.pcm.length);
+      b = ctx.createBuffer(1, Math.max(n, 1), z.rate);
+      const ch = b.getChannelData(0);
+      for (let i = 0; i < n; i++) ch[i] = dv.getInt16(2 * i, true) / 32768;
+      this.cache.set(z, b);
+    }
+    return b;
+  },
+  // schedule seq on ctx (also an OfflineAudioContext, for tests); returns the end time
+  schedule(ctx, inst, seq, t0 = 0) {
+    let end = 0;
+    for (const [keys, at, len] of seq) for (const key of keys) {
+      const z = this.zoneFor(inst, key), src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = this.buffer(ctx, z);
+      src.playbackRate.value = 2 ** ((key - z.root) / 12 + z.cents / 1200);
+      if (z.loop) { src.loop = true; src.loopStart = z.loop[0] / z.rate; src.loopEnd = z.loop[1] / z.rate; }
+      const on = t0 + at, off = on + len;
+      g.gain.setValueAtTime(.5, on);
+      g.gain.setValueAtTime(.5, off);
+      g.gain.linearRampToValueAtTime(0, off + .15);  // release
+      src.connect(g).connect(ctx.destination);
+      src.start(on); src.stop(off + .2);
+      this.nodes.push(src);
+      end = Math.max(end, off + .2);
+    }
+    return end;
+  },
+  play(inst, seq, btn) {
+    this.ctx = this.ctx || new (globalThis.AudioContext || globalThis.webkitAudioContext)();
+    this.ctx.resume();
+    const end = this.schedule(this.ctx, inst, seq, this.ctx.currentTime + .05);
+    this.btn = btn; btn.textContent = "■ Stop";
+    this.timer = setTimeout(() => this.stop(), (end - this.ctx.currentTime) * 1000 + 50);
+  },
+  stop() {  // -> whether something was playing
+    const was = this.nodes.length > 0;
+    for (const n of this.nodes) try { n.stop(); } catch (e) {}
+    this.nodes = []; clearTimeout(this.timer);
+    if (this.btn) this.btn.textContent = "▶ Play";
+    return was;
+  },
+};
 function voicesChanged() {
   const n = document.querySelectorAll(".voice").length;
   $("addv").disabled = !target || !target.voices || n >= target.voices.max;
