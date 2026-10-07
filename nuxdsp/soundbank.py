@@ -8,20 +8,22 @@ The soundbank (NEK100_SBANK_*.bin) is flashed from word 0x80000 on, so its point
     (first-zone flag, low key, 0x7f, high key, zone address in the page), 0 0, then the zone records;
   - a zone record holds in-page pointers to its parts and a sample block with the sample's start, loop and
     end addresses (the loop runs L..E, sample E = sample L; one-shots loop over silence at the end; E is the
-    last word of a 256-word block, as in ~95% of the vendor's samples); the word
+    last word of a 512-word block, as in ~95% of the vendor's samples, and L in the first half of a 1024-word
+    block, as in all their long loops); the word
     before it is the tuning (V, 1/256 semitone, always even). A zone plays the keys above the previous zone's high key.
   - header fields: u32 at 8 and 0x9c = end of the data, at 0xa6 = end of the parameter data. New samples go at
     the end (before the "PackNameDate:" trailer), new instruments into the free rest of the parameter page.
 A sound number maps to (bank, program) through the DSP's voice_banks table. The zone settings (envelope, filter,
 ...) come from a template zone of the target (soundbank line of target.map): one for one-shots, one for instruments
-with loops (a sustaining one); nothing of the vendor's is in an instrument file, and an SF2's envelope is not used.
+with loops (a sustaining one), except the volume envelope, which is the SF2's (envelope.py); nothing of the
+vendor's is in an instrument file.
 
 custom_voices (a DSP patch) shows the new names: fill_names() writes them into its table.
 """
 import math
 import struct
 
-from . import asm, container, patcher
+from . import asm, container, envelope, patcher, sf2
 
 FLASH_BASE_W = 0x80000
 PAD = b"\xef\xad"                 # the bank compiler's filler word 0xadef
@@ -29,7 +31,10 @@ DIRECTORY = 0x252
 K = -83.996                       # 12*log2(cycles per sample) + V/256 for zones that follow the keyboard
 SR = 44100
 CV_ENTRY, CV_NAME = 33, 16
-BLOCK = 256                       # samples end on the last word of a block of this size, as the vendor's
+BLOCK = 512                       # samples end on the last word of a block of this size, as all the vendor's
+LOOP_HALF = 1024                  # a loop must start in the first half of a block of this size, as all the
+                                  # vendor's long loops: one starting in the second half clicks after each pass
+                                  # (C: 48 sines at random addresses, the click split exactly by L % 1024 < 512)
 
 
 class BankError(Exception):
@@ -172,18 +177,22 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
             if z.key is not None and z.key in seen:          # the same sample in several zones: stored once
                 addrs.append(seen[z.key])
                 continue
-            end = z.loop[1] if z.loop else len(z.pcm) // 2 + 63   # E - S
+            pcm, loop = z.pcm, z.loop
+            end = loop[1] if loop else len(pcm) // 2 + 63       # E - S
             S = FLASH_BASE_W + (len(body) + 4) // 2           # two zero guard words, then the audio
             body += PAD * ((BLOCK - 1 - (S + end)) % BLOCK)   # E on the last word of a block, as the vendor's
             S = FLASH_BASE_W + (len(body) + 4) // 2
-            if z.loop:
-                body += b"\0\0\0\0" + z.pcm
-                a = (S, S + z.loop[0], S + z.loop[1])
+            if loop and (S + loop[0]) % LOOP_HALF >= LOOP_HALF // 2:
+                body += PAD * BLOCK                               # L into the first half of its block
+                S += BLOCK
+            if loop:
+                body += b"\0\0\0\0" + pcm
+                a = (S, S + loop[0], S + loop[1])
             else:
-                body += b"\0\0\0\0" + z.pcm + b"\0" * 128   # 64 zero words: the silent loop of a one-shot
+                body += b"\0\0\0\0" + pcm + b"\0" * 128   # 64 zero words: the silent loop of a one-shot
                 E = FLASH_BASE_W + (len(body) - 2) // 2
                 a = (S, E - 43, E)
-            assert a[2] % BLOCK == BLOCK - 1
+            assert a[2] % BLOCK == BLOCK - 1 and not (loop and a[1] % LOOP_HALF >= LOOP_HALF // 2)
             addrs.append(a)
             if z.key is not None:
                 seen[z.key] = a
@@ -221,6 +230,11 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
             set_addrs(blk, *addrs[i])
             r[sb_off:sb_off + 18] = blk
             struct.pack_into("<h", r, sb_off - 2, tune_value(z.root, z.cents, z.rate))
+            if z.env is not None:                             # the instrument's volume envelope (envelope.py)
+                at = envelope.amp_env_at(r, sb_off)
+                if at is None or len(envelope.parse(r, at) or ()) != 3:
+                    raise BankError("the template zone's volume envelope is not rise, hold/fall, release")
+                r[at + 1:at + 8] = envelope.encode(z.env)
             blob += r
         inst_b = head + b"\0\0" + blob
         free = body[base - 0x10:base + len(inst_b)]
@@ -274,3 +288,52 @@ def fill_names(dsp_image, fwmap, entries):
     if container.validate(out):
         raise BankError("internal error: DSP container invalid")
     return out
+
+
+def sample_block(d, o):
+    """(flag, tuning V, S, L, E) of the sample block at byte offset o"""
+    b = d[o:o + 18]
+    hi = ((b[0] >> 6) & 3) | (b[1] << 2)
+    S, L, E = ((hi << 24) | (struct.unpack_from("<H", b, w)[0] << 8) | b[lo] for w, lo in ((10, 8), (2, 5), (16, 14)))
+    return d[o - 4], struct.unpack_from("<h", d, o - 2)[0], S, L, E
+
+
+def root_of(V, rate=SR):
+    """inverse of tune_value: (root key, cents)"""
+    f = rate * 2 ** ((K - V / 256) / 12)
+    m = 69 + 12 * math.log2(f / 440)
+    return round(m), round((m - round(m)) * 100)
+
+
+def export(bank, dsp_image, fwmap, voice):
+    """an official sound -> sf2.Instrument (samples, key ranges, tuning, loops, volume envelope as far as
+    envelope.py reads it). For your own tests: the result is the vendor's data, keep it to yourself."""
+    banks = voice_banks(container.words(dsp_image), fwmap)
+    d = bytes(bank)
+    inst = instrument_addr(d, *voice_to_bank_prog(banks, voice))
+    if d[inst] != 0x40:
+        raise BankError("sound %d: instrument format %#x not supported (velocity layers or a drum kit)" % (voice, d[inst]))
+    page = (inst // 2) & ~0xFFFF
+    zones_out, o, n = [], inst + 4, d[inst + 2] & 0x7F
+    for i in range(n):
+        e = d[o + 6 * i:o + 6 * i + 6]                       # a zone plays the keys above the previous one's
+        lo, hi_k = (0 if i == 0 else (e[1] & 0x7F) + 1), (127 if e[3] == 0xFF else e[3])
+        z = (page | struct.unpack_from("<H", e, 4)[0]) * 2
+        try:
+            sb_o = find_sample_block(d, z)
+        except BankError:
+            continue                                          # a zone without a sample of its own
+        flag, V, S, L, E = sample_block(d, sb_o)
+        w = lambda a: (a - FLASH_BASE_W) * 2
+        pcm = d[w(S):w(E) + 2]
+        loop = (L - S, E - S) if S < L < E else None             # L = S - 2: no loop (flags 0x81, 0x82 both loop)
+        rec_at = sb_o - 4
+        at = envelope.amp_env_at(d[sb_o - 4:sb_o + 80], 4)
+        env = envelope.decode(envelope.parse(d[rec_at:rec_at + 80], at) or [], d[rec_at + at + 1]) \
+            if at is not None else None
+        root, cents = root_of(V)
+        zones_out.append(sf2.Zone(lo, min(hi_k, 127), root, cents, SR, pcm, loop, ("x", S, E), env))
+    if not zones_out:
+        raise BankError("sound %d: no zones with samples" % voice)
+    return sf2.Instrument(sound_names(container.words(dsp_image), fwmap)[voice - 1].split(".", 1)[1], zones_out,
+                          {"ICMT": "exported from the NUX soundbank for local tests only; not for distribution"})

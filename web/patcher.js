@@ -166,9 +166,16 @@ function sf2Zone(sf, key, iz, pz, iz2) {
   const cents = 100 * (s16(iz[51] || 0) + s16(pz[51] || 0)) + s16(iz[52] || 0) + s16(pz[52] || 0) + corr;
   let loop = null;
   if ((iz[54] || 0) & 1 && start <= ls && ls < le && le <= end) {
-    loop = [ls - start, le - start]; pcm = pcm.subarray(0, 2 * (le - start + 1)); skey += `,loop,${ls},${le}`;
+    loop = [ls - start, le - start];
+    const t = new Uint8Array(2 * (le - start + 1));          // the loop end repeats the loop start (sf2.py)
+    t.set(pcm.subarray(0, 2 * (le - start))); t.set(pcm.subarray(2 * (ls - start), 2 * (ls - start) + 2), 2 * (le - start));
+    pcm = t; skey += `,loop,${ls},${le}`;
   }
-  return {lo: key[0], hi: key[1], root, cents, rate, pcm, loop, key: skey};
+  // volume envelope: instrument value (or the SF2 default) plus the preset's offset (as nuxdsp/sf2.py)
+  const gen = op => s16(iz[op] ?? ENV_SF2_DEFAULT[op]) + s16(pz[op] || 0), tc = op => 2 ** (gen(op) / 1200);
+  const sus = gen(37);
+  const env = {attack: tc(34), decay: tc(36), sustain: sus >= 960 ? null : -sus / 10, release: tc(38)};
+  return {lo: key[0], hi: key[1], root, cents, rate, pcm, loop, key: skey, env};
 }
 function sf2Instrument(sf, preset, velocity = 100) {
   const ph = sf.phdr, name = ph[preset][0];
@@ -277,6 +284,31 @@ function setAddrs(r, o, S, L, E) {
   r[o + 8] = S & 0xff; put16(r, o + 10, (S >>> 8) & 0xffff);
   r[o + 14] = E & 0xff; put16(r, o + 16, (E >>> 8) & 0xffff);
 }
+// --- volume envelope (as nuxdsp/envelope.py: the model and its H constants are explained there)
+const ENV_SF2_DEFAULT = {34: -12000, 36: -12000, 37: 0, 38: -12000};
+const ENV_RISE = [0.064, 8.68], ENV_FALL = [0.070, 8.03], ENV_DB_STEP = 1.5;
+const pyRound = x => x - Math.floor(x) === 0.5 ? 2 * Math.round(x / 2) : Math.round(x);  // Python's round()
+const envSeconds = r => { const [t, dd] = r & 0x80 ? ENV_RISE : ENV_FALL; return t * 2 ** ((99 - Math.min(r & 0x7f, 99)) / dd); };
+function envRate(sec, rising) {
+  const [t, dd] = rising ? ENV_RISE : ENV_FALL;
+  return Math.max(0, Math.min(99, 99 - pyRound(dd * Math.log2(Math.max(sec, 1e-6) / t)))) | (rising ? 0x80 : 0);
+}
+const envLevel = db => Math.max(0, Math.min(31, 31 + pyRound(db / ENV_DB_STEP)));
+// env -> start level and 3 segments (rise to full; hold at the sustain level or fall to silence; release)
+function envEncode(env) {
+  const lv = env.sustain === null ? 0 : envLevel(env.sustain);
+  const mid = lv === 0 ? [envRate(env.decay, false), 0x80]
+    : lv >= 31 || env.decay <= 0 ? [envRate(0, true), 0x40 | lv] : [envRate(env.decay, false), 0x40 | lv];
+  return new Uint8Array([0, envRate(env.attack, true), 31, ...mid, envRate(env.release, false), 0x60]);
+}
+// offset in a zone record of its volume envelope (the 00 byte), if it is rise, hold/fall, release
+function ampEnvAt(rec, sbOff) {
+  const at = sbOff + 18;
+  if (rec[at] !== 0x0e || rec[at + 1] !== 0x7f || rec[at + 2] !== 6 || rec[at + 6] !== 0) return -1;
+  let p = at + 8, n = 0;
+  for (; n < 12; n++, p += 2) if (rec[p + 1] & 0x20) break;
+  return n === 2 ? at + 6 : -1;
+}
 // even: the vendor's tunings all are, and an odd one breaks the synth until power-off (bit 0 is no tuning bit)
 const tuneValue = (midi, cents, rate) =>
   2 * Math.round(128 * (-83.996 - 12 * Math.log2(440 * 2 ** ((midi - 69) / 12) * 2 ** (cents / 1200) / rate)));
@@ -299,20 +331,23 @@ async function addInstruments(target, dsp, bank, items) {
     if (mark.every((c, j) => d[i + j] === c)) tail = i;
   if (tail < 0) throw "soundbank trailer not found";
   const align = n => Math.ceil(n / 0x800) * 0x800;
-  // samples: appended at the end, each with E on the last word of a 256-word block (as the vendor's)
+  // samples: appended at the end, each with E on the last word of a 512-word block
+  // (as the vendor's; a loop ending mid-block clicks after each pass, soundbank.py)
   let pos = tail;
   const layout = items.map(({pack}) => {
     pos = align(pos);
     const seen = new Map();
     return pack.zones.map(z => {
       if (seen.has(z.key)) return seen.get(z.key);
-      const end = z.loop ? z.loop[1] : z.pcm.length / 2 + 63;  // E - S
+      const pcm = z.pcm, loop = z.loop;
+      const end = loop ? loop[1] : pcm.length / 2 + 63;     // E - S
       let S = FB + (pos + 4) / 2;
-      pos += 2 * (((255 - (S + end)) % 256 + 256) % 256);
-      const start = pos + 4; S = FB + start / 2;
-      pos = start + z.pcm.length + (z.loop ? 0 : 128);       // two zero guard words; one-shots: 64 silent ones
-      const a = {start, pcm: z.pcm, silence: z.loop ? 0 : 128,
-                 addr: z.loop ? [S, S + z.loop[0], S + z.loop[1]] : [S, S + end - 43, S + end]};
+      pos += 2 * (((511 - (S + end)) % 512 + 512) % 512);
+      if (loop && (FB + (pos + 4) / 2 + loop[0]) % 1024 >= 512) pos += 2 * 512;  // L in the first half of its
+      const start = pos + 4; S = FB + start / 2;                                // 1024-word block (soundbank.py)
+      pos = start + pcm.length + (loop ? 0 : 128);           // two zero guard words; one-shots: 64 silent ones
+      const a = {start, pcm, silence: loop ? 0 : 128,
+                 addr: loop ? [S, S + loop[0], S + loop[1]] : [S, S + end - 43, S + end]};
       seen.set(z.key, a);
       return a;
     });
@@ -349,6 +384,11 @@ async function addInstruments(target, dsp, bank, items) {
       }
       setAddrs(z, T.sbOff, ...placed[k][i]);
       put16(z, T.sbOff - 2, tuneValue(zn.root, zn.cents, zn.rate) & 0xffff);
+      if (zn.env) {                                       // the instrument's volume envelope
+        const at = ampEnvAt(z, T.sbOff);
+        if (at < 0) throw "the template zone's volume envelope is not rise, hold/fall, release";
+        z.set(envEncode(zn.env), at + 1);
+      }
       inst.set(z, 4 + 6 * n + 2 + i * recLen);
     });
     out.set(inst, base);

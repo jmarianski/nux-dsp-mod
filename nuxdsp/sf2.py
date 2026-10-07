@@ -2,17 +2,21 @@
 
 What carries over to the instrument (one sample per key range, played by the template zone of the target):
 key ranges, root keys, tuning (coarse, fine, the sample's pitch correction), sample rate, loops (sampleModes
-1/3: the loop plays while the key is held; otherwise one-shot). Of several velocity layers the one sounding at
+1/3: the loop plays while the key is held; otherwise one-shot), the volume envelope (attack, decay, sustain,
+release: envelope.py; delay and hold are left out). Of several velocity layers the one sounding at
 VELOCITY is taken; of layers over the same keys, the first one of each key; linked stereo samples are mixed to mono; zones at the same pitch on every key (noise layers)
-are left out, presets made only of such (drum kits, effects) refused. Envelopes, filters, modulators, effects: not
-(the template zone's settings apply). The JavaScript in web/patcher.js mirrors this file.
+are left out, presets made only of such (drum kits, effects) refused. Filters, modulators, other envelopes, effects:
+not (the template zone's settings apply). The JavaScript in web/patcher.js mirrors this file.
 """
 import struct
+
+from . import envelope
 
 VELOCITY = 100
 GEN_KEYRANGE, GEN_VELRANGE, GEN_INSTRUMENT, GEN_SAMPLE = 43, 44, 41, 53
 GEN_COARSE, GEN_FINE, GEN_MODES, GEN_ROOT, GEN_SCALE = 51, 52, 54, 58, 56
 RANGES = (GEN_KEYRANGE, GEN_VELRANGE)
+ENV_GENS = (envelope.GEN_ATTACK, envelope.GEN_DECAY, envelope.GEN_SUSTAIN, envelope.GEN_RELEASE)
 DRUM_BANKS = (120, 128)  # percussion: SF2 bank 128, GM2 rhythm bank 120
 
 
@@ -24,9 +28,10 @@ class Zone:
     """lo..hi: MIDI keys (inclusive); pcm: s16le mono; loop: (start, end) in samples, SF2 style
     (pcm[end] is the point after the loop, equal to pcm[start]) or None for one-shot."""
 
-    def __init__(self, lo, hi, root, cents, rate, pcm, loop=None, key=None):
+    def __init__(self, lo, hi, root, cents, rate, pcm, loop=None, key=None, env=None):
         self.lo, self.hi, self.root, self.cents, self.rate, self.pcm, self.loop = lo, hi, root, cents, rate, pcm, loop
         self.key = key  # same key = same sample data (stored once)
+        self.env = env  # envelope.Envelope, or None: the template zone's
 
 
 class Instrument:
@@ -146,7 +151,7 @@ class SoundFont:
             if out and owner[k - 1] is z:
                 out[-1].hi = k
             else:
-                out.append(Zone(k, k, z.root, z.cents, z.rate, z.pcm, z.loop, z.key))
+                out.append(Zone(k, k, z.root, z.cents, z.rate, z.pcm, z.loop, z.key, z.env))
         return Instrument(name, out, self.info)
 
     def _sample(self, iz):
@@ -182,9 +187,13 @@ class SoundFont:
         loop = None
         if iz.get(GEN_MODES, 0) & 1 and start <= ls < le <= end:
             loop = (ls - start, le - start)
-            pcm = pcm[:2 * (le - start + 1)]  # nothing after the loop is ever played
+            # nothing after the loop is ever played; the point at the loop end repeats the loop start (as in every
+            # vendor loop, C) — a loop ending on the sample's end would read past it, a click on every pass (C)
+            pcm = pcm[:2 * (le - start)] + pcm[2 * (ls - start):2 * (ls - start) + 2]
             skey += ("loop", ls, le)
-        return Zone(key[0], key[1], root, cents, rate, pcm, loop, skey)
+        # instrument value (or the SF2 default), plus the preset's offset
+        gens = {op: _s16(iz.get(op, envelope.SF2_DEFAULT[op])) + _s16(pz.get(op, 0)) for op in ENV_GENS}
+        return Zone(key[0], key[1], root, cents, rate, pcm, loop, skey, envelope.from_sf2(gens))
 
 
 def _s16(v):
@@ -243,6 +252,8 @@ def write(inst):
             gens.append((GEN_FINE, frac & 0xFFFF))
         if z.loop:
             gens.append((GEN_MODES, 1))
+        if z.env:
+            gens += envelope.to_sf2(z.env)
         gens.append((GEN_SAMPLE, n))
         igen += b"".join(struct.pack("<HH", *g) for g in gens)
     shdr += struct.pack("<20sIIIIIBbHH", _zstr("EOS", 20), 0, 0, 0, 0, 0, 0, 0, 0, 0)

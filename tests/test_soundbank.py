@@ -8,12 +8,12 @@ import subprocess
 import tempfile
 import unittest
 
-from nuxdsp import container, fwmap, instrument, patcher, sf2, soundbank, web
+from nuxdsp import container, envelope, fwmap, instrument, patcher, sf2, soundbank, web
 
 FW, SBANK, SF2 = os.environ.get("NEK100_FW"), os.environ.get("NEK100_SBANK"), os.environ.get("NUX_TEST_SF2")
 HERE = os.path.dirname(os.path.abspath(__file__))
-# cat_piano on sound 500: the bank played on hardware (attack-trimmed Cat Piano, samples ending on 256-word blocks)
-CAT_SHA = "6dfc7711d0753ed8a6b2c1dddee5c61965d5e2deed5a6fcd6b187b2c2c53cbcc"
+# cat_piano on sound 500 (attack-trimmed Cat Piano, samples ending on 256-word blocks, its SoundFont envelope)
+CAT_SHA = "dbbecaeca5d740bdbe92dbff41c497650f0c072a6eedfb1535ad273fb7d838de"
 
 
 def cat():
@@ -59,6 +59,29 @@ class TestSf2(unittest.TestCase):
         self.assertEqual(ins.zones[0].pcm, z[0].pcm)
         self.assertEqual(ins.zones[1].pcm, z[1].pcm[:2 * 71])
 
+    def test_loop_end_repeats_start(self):
+        """a loop that ends on the sample's end gets the point after it (the device reads it, C: clicks)"""
+        pcm = struct.pack("<100h", *range(100))
+        got = sf2.SoundFont(sf2.write(sf2.Instrument("L", [sf2.Zone(0, 127, 60, 0, 44100, pcm, (40, 100))])))
+        z = got.instrument(0).zones[0]
+        self.assertEqual(struct.unpack("<101h", z.pcm)[100], 40)
+
+    def test_envelope_bytes(self):
+        for hexs in ("e31fe35f5a60", "e31f3c804a60", "c31fe35f4060"):    # Organ 7, Shamisen, an organ-like one
+            segs = envelope.parse(bytes.fromhex("0000" + hexs), 0)
+            self.assertEqual(envelope.encode(envelope.decode(segs)).hex(), "00" + hexs)
+        self.assertIsNone(envelope.parse(bytes.fromhex("0000e31f"), 0))
+        self.assertEqual(envelope.decode(envelope.parse(bytes.fromhex("007fc31f3c804a60"), 0), 0x7F).attack,
+                         envelope.seconds(0xE3))                       # starts at full: no attack
+
+    def test_envelope_sf2(self):
+        env = envelope.Envelope(0.25, 1.5, -12.0, 0.4)
+        z = sf2.Zone(0, 127, 60, 0, 44100, b"\1\0" * 100, None, None, env)
+        got = sf2.SoundFont(sf2.write(sf2.Instrument("Env", [z]))).instrument(0).zones[0].env
+        self.assertEqual(envelope.encode(got), envelope.encode(env))
+        self.assertEqual(envelope.encode(envelope.from_sf2({})), envelope.encode(envelope.Envelope(0, 0, 0, 0)))
+        self.assertIsNone(envelope.from_sf2({envelope.GEN_SUSTAIN: 1000}).sustain)
+
     def test_name_checks(self):
         self.assertEqual(len(soundbank.name_words(500, "Cat Piano")), 16)
         self.assertRaises(soundbank.BankError, soundbank.name_words, 500, "Twelve chars")
@@ -86,7 +109,9 @@ class TestSoundbank(unittest.TestCase):
         for v in (500, 499):
             for flag, V, S, L, E in sample_blocks(out, self.img, self.map, v):
                 self.assertEqual(V % 2, 0, "odd tuning on sound %d" % v)     # breaks the synth (C)
-                self.assertEqual(E % soundbank.BLOCK, soundbank.BLOCK - 1)
+                self.assertEqual(E % 512, 511)                                # as all the vendor's loops
+                if v == 499:                                                  # looped: L in the first half of
+                    self.assertLess(L % 1024, 512)                            # its 1024-word block, or it clicks
                 self.assertTrue(S < L < E)
         tz = {k: soundbank.zones(self.bank, soundbank.instrument_addr(self.bank, *soundbank.voice_to_bank_prog(
             soundbank.voice_banks(container.words(self.img), self.map), self.map.soundbank[k][0])))[
@@ -97,6 +122,22 @@ class TestSoundbank(unittest.TestCase):
             self.assertEqual(len(soundbank.zone_record(out, z)[0]), len(soundbank.zone_record(self.bank, tz[k])[0]))
         self.assertEqual([V for _, V, *_ in sample_blocks(out, self.img, self.map, 499)],
                          [soundbank.tune_value(57, 4, 44100), soundbank.tune_value(64, -7, 22050)])
+
+    def test_export_add(self):
+        """an official sound exported to SoundFont and added back plays the same samples, tuning and envelope"""
+        voice = self.map.soundbank["template"][0]
+        ins = sf2.SoundFont(sf2.write(soundbank.export(self.bank, self.img, self.map, voice))).instrument(0)
+        out = soundbank.add(self.bank, self.img, self.map, [(ins, 499)])
+        a, b = sample_blocks(self.bank, self.img, self.map, voice), sample_blocks(out, self.img, self.map, 499)
+        geo = lambda blocks: [(V, E - L) for _, V, S, L, E in blocks]     # flag: the template's; S: may move
+        self.assertEqual(geo(a), geo(b))
+        banks = soundbank.voice_banks(container.words(self.img), self.map)
+        recs = [soundbank.zone_record(d, soundbank.zones(d, soundbank.instrument_addr(
+            d, *soundbank.voice_to_bank_prog(banks, v)))[0]) for d, v in ((self.bank, voice), (out, 499))]
+        (r0, _, _, sb0), (r1, _, _, sb1) = recs
+        a0, a1 = envelope.amp_env_at(r0, sb0), envelope.amp_env_at(r1, sb1)
+        self.assertEqual(r1[a1 + 2:a1 + 8], r0[a0 + 2:a0 + 8])
+        self.assertEqual(r1[a1 + 1], 0)                            # starts from silence: the attack plays
 
     def test_several(self):
         c = cat()
