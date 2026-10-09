@@ -185,7 +185,7 @@
 .draw 0xc5 at 0 8 128 9                 ; above the tick
     2 "GOTOWE!"
 .end
-.draw 0xd3 at 0 13 88 15 bold           ; power-on screen, below the logo
+.draw 0xd3 at 16 13 56 15 bold          ; power-on screen, below the logo (columns 0..15, 72..87: welcome_cat)
     5 "WITAJ!"
 .end
 

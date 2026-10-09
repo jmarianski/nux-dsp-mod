@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus custom_voices (empty name table), boot_preset's preset labels (confirmed on hardware too), polish_font's small font
 # mapping and the full lang_pl translation (all confirmed on hardware).
-ALL_SHA = "7f659b105b690c137d22910b0c016e236754eff716744a81a7d89284e74917db"
+ALL_SHA = "3cb4ad89edcf5690b1b774d5f178dc9b35c3c0ac2eeae6d33a7e9e5c54aa354d"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -54,16 +54,20 @@ class TestFirmware(unittest.TestCase):
         path = os.path.join(self.map.patch_dir, "extra_menu.patch")
         with open(path) as f:
             rows = re.findall(r"\.dw\s+(\d), (0x[0-9a-f]+), (0x[0-9a-f]+), pp_n\d+, pp_p\d+\s+; (\w+)", f.read())
-        self.assertEqual(sorted(r[3] for r in rows), sorted(patcher.available(self.map)))
+        # short_welcome only changes an initial RAM value (a counter that runs down to 0): nothing to look at later
+        listed = [n for n in patcher.available(self.map) if n != "short_welcome"]
+        self.assertEqual(sorted(r[3] for r in rows), sorted(listed))
         r0 = self.map.ramdata[0]
         for kind, addr, stock, name in rows:
             if kind == "2":
                 continue
-            a = int(addr, 16) + (r0 if kind == "1" else 0)
+            a = int(addr, 16)
+            if kind == "1":   # RAM: glyphs and images are copied to 0x3a2a.. (file - 0xf2cd), the rest from ramdata
+                a += 0xf2cd if 0x3a2a <= a < 0x662a else r0
             for names in ([name] + patcher.load(name, self.map).requires, patcher.available(self.map)):
                 out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
                 self.assertNotEqual(container.words(out)[a], int(stock, 16), name)
-            others = [n for n in patcher.available(self.map) if n != name and name not in patcher.load(n, self.map).requires]
+            others = [n for n in listed if n != name and name not in patcher.load(n, self.map).requires]
             out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(others))
             self.assertEqual(container.words(out)[a], int(stock, 16), name)
 

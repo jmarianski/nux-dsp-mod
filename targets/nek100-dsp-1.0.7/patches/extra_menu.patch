@@ -24,8 +24,9 @@
 ; 1 Autosave: switching off with the power key or by Auto Off first saves the current settings to a hidden
 ; seventh flash page (0x706, next to the header 0x700 and the presets 0x701..0x705, in the same erase block;
 ; nothing else in the firmware touches that flash), and power-on loads them from there (when the page holds a
-; preset). Not on low battery: the instrument may die while the page is being written. 2 Factory: power-on
-; loads the factory default, as the stock firmware. With Autosave boot_preset names the presets User1..User5
+; preset; the Sustain key's state, no preset field, rides along in bit 7 of field 12). Not on low battery:
+; the instrument may die while the page is being written. 2 Factory: power-on loads the factory default, as
+; the stock firmware. With Autosave boot_preset names the presets User1..User5
 ; again, as none of them is the start preset. The settings travel through User5's RAM copy (user_presets + 124):
 ; at power-off it is not needed any more, at power-on it is read back from flash right after.
 ;
@@ -843,6 +844,14 @@ st_off:
     bne   .o_off
     push  #user_presets+124
     ccall collect_preset
+    ld    r7, [sustain_on]    ; the Sustain key is no preset field: bit 7 of field 12 (touch is 0..5)
+    cmp   r7, #0
+    beq   .o_write
+    ld    r7, [user_presets+136]
+    mov   r6, #0x80
+    or    r7, r6
+    st    [user_presets+136], r7
+.o_write:
     push  #5                  ; page 0x701 + 5
     push  #user_presets+124
     ccall preset_write_flash
@@ -881,8 +890,22 @@ st_apply:                     ; the hidden page is in the buffer: erased flash r
     ld    r7, [user_presets+125]
     cmp   r7, r6
     beq   .sb_restore
+    ld    r7, [user_presets+136]  ; bit 7 of field 12: the Sustain key was on (apply_preset leaves sustain_on alone)
+    mov   r6, r7
+    and   r6, #0x80
+    st    [sustain_on], r6
+    li    r6, #0xff7f
+    and   r7, r6
+    st    [user_presets+136], r7
     push  #user_presets+124
     ccall apply_preset
+    ld    r7, [sustain_on]
+    cmp   r7, #0
+    beq   .sb_restore
+    mov   r7, #1
+    st    [sustain_on], r7
+    push  #0x50               ; as the key does: CC64 = sustain_cc64[k] on every part
+    ccall sustain_switch
 .sb_restore:
     li    r6, #0x0705
     .dw   0xd0ce, st_read
@@ -936,7 +959,7 @@ pp_screen:
     st    [text_buf+15], r7
 .p_count:
     ld    r7, [text_buf+14]
-    cmp   r7, #9
+    cmp   r7, #10
     blt   .p_count_go
     jmp   .p_counted
 .p_count_go:
@@ -964,7 +987,7 @@ pp_screen:
     st    [text_buf+15], r7   ; installed ones before it
 .p_loop:
     ld    r7, [text_buf+14]
-    cmp   r7, #9
+    cmp   r7, #10
     blt   .p_go
     .dw   0xd0ce, 0x061f5
 .p_go:
@@ -1086,6 +1109,7 @@ pp_tab:                       ; kind (0 code word, 1 RAM word, 2 always), addres
     .dw   0, 0x04b0d, 0xd14a, pp_n6, pp_p6      ; polish_font
     .dw   1, 0x00168, 0x0047, pp_n7, pp_p7      ; lang_pl
     .dw   0, 0x04fb6, 0xd14a, pp_n8, pp_p8      ; custom_voices
+    .dw   1, 0x05806, 0x0000, pp_n9, pp_p9      ; welcome_cat
 pp_n0:
     .dw   0x54, 0x4f, 0x55, 0x43, 0x48, 0x20, 0x4f, 0x46, 0x46, 0
 pp_p0:
@@ -1122,6 +1146,10 @@ pp_n8:
     .dw   0x43, 0x55, 0x53, 0x54, 0x4f, 0x4d, 0x20, 0x53, 0x4f, 0x55, 0x4e, 0x44, 0x53, 0
 pp_p8:
     .dw   0x57, 0x141, 0x41, 0x53, 0x4e, 0x45, 0x20, 0x42, 0x52, 0x5a, 0x4d, 0x2e, 0
+pp_n9:
+    .dw   0x57, 0x45, 0x4c, 0x43, 0x4f, 0x4d, 0x45, 0x20, 0x43, 0x41, 0x54, 0
+pp_p9:
+    .dw   0x50, 0x4f, 0x57, 0x49, 0x54, 0x41, 0x4e, 0x49, 0x45, 0x20, 0x4b, 0x4f, 0x54, 0
 
 ; ---- images 0x100.. : draw_glyph(x, y, id, inverse) for our ids, from program memory.
 ; Format: W, H, then per column ceil(H / 16) words, MSB = top row. Frame locals of draw_glyph:

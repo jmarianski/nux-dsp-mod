@@ -1,0 +1,31 @@
+.patch welcome_cat
+.title "Two cats beside the welcome text on the power-on screen"
+
+; The power-on image (glyph 0xd3, 88 x 28: NEK-100 above, WELCOME! below) keeps its columns 16..71 for the
+; text, which lang_pl redraws as WITAJ!; the cats sit left and right of it.
+.bitmap 0xd3 at 1 16
+    ..#.......#..
+    ..##.....##..
+    ..#.#####.#..
+    .#.........#.
+    .#..#...#..#.
+    .#.........#.
+    ###...#...###
+    .#..#.#.#..#.
+    ###..#.#..###
+    ..#.......#..
+    ...#######...
+.end
+.bitmap 0xd3 at 74 16
+    ..#.......#..
+    ..##.....##..
+    ..#.#####.#..
+    .#.........#.
+    .#..#...#..#.
+    .#.........#.
+    ###...#...###
+    .#..#.#.#..#.
+    ###..#.#..###
+    ..#.......#..
+    ...#######...
+.end
