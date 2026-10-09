@@ -1,0 +1,12 @@
+.patch short_welcome
+.title "Shorter welcome screen at power-on (stock about 3 s)"
+.param WELCOME_TICKS 100 10 300 "Welcome screen time in 10 ms ticks (stock 300 = about 3 s)"
+
+; RAM 0x0011 counts the welcome screen down: initial value 300, tick_10ms takes 1 off every tick and at 5
+; switches to the main screen (screen 1). USB starts once it reaches 0 and the battery is first drawn at 5.
+; Only the initial value changes (initialised data, file word 0x155f7 + 0x11). Not below 10: the switch
+; happens at 5. extra_menu's Patches screen does not list it: by then the counter is 0 either way.
+; (H) Whether the keys play sooner depends on the MCU: it may hold notes back by itself.
+.hook 0x15608 expect 0x012c
+    .dw   WELCOME_TICKS
+.end

@@ -48,7 +48,8 @@ func  0x02e40 midi_out_packet         ; (port, packet): port 1 -> queue at port1
 func  0x02e5b midi_out_byte
 func  0x0be50 port1_queue_put         ; put one byte into the port-1 ring buffer
 func  0x0be88 port1_put_usbpacket     ; split a USB-MIDI packet (CIN -> length) into port1_queue_put calls
-label 0x033c4 pedal_send_cc64         ; sustain pedal: for k in 0..3: synth_send(0xB0|k, 64<<8 | sustain_cc64[k])
+func  0x03377 sustain_switch          ; (v) v = 0: CC64 0 on parts 0..3; else CC64 sustain_cc64[k] (H: the Sustain soft key, panel_buttons 0x3428)
+label 0x033c4 pedal_send_cc64         ; sustain_switch on: for k in 0..3: synth_send(0xB0|k, 64<<8 | sustain_cc64[k])
 
 # --- presets ---------------------------------------------------------------------------------
 func  0x02290 collect_preset          ; (ptr) current settings -> 31-word preset
@@ -89,6 +90,7 @@ var   0x0000f ui_part                 ; (H) index of the part being edited (0 = 
 var   0x00069 factory_presets 155     ; 5 x 31 words, initialised data
 var   0x00158 octave                  ; Octave 0..2 = -1/0/+1 (C: menu), read through param_get, saved in presets
 var   0x00144 touch                   ; Touch 0..4 = LIGHT2 LIGHT1 NORMAL HARD1 HARD2 (C); sent to MCU as CC 0x32
+var   0x0015d sustain_on              ; Sustain key state 0/1 (init 0, not in presets); drawn as soft key 2 (glyphs 0xf1/0xf2)
 var   0x0015e sustain_cc64 4          ; CC64 value per part used by the pedal, defaults 90,64,64,64 (C)
 var   0x0011c voice_banks 38        ; (soundbank bank, number of sounds) pairs in sound number order, ends with 0, 0 (C: added instruments go where this says)
 var   0x0233c sound_names 600         ; pointers to the 500 sound names, then the 100 demo song names
