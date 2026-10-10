@@ -22,7 +22,7 @@
 ;                      bits 10-11 Startup mode
 ; The menu state lives in RAM (ex_ui: bit 6 which time the Auto Off screen edits, bits 7-9 Extra cursor;
 ; ex_pg: Patches page). ex_norm returns the settings with ex_ui's bits in 6-9, ex_put stores such a word
-; back; the Backlight code reads bits 6-8 of presets_header itself. RAM words 0x6a46..0x6a4b: the end of
+; back; the Backlight code reads bits 6-8 of presets_header itself. RAM words 0x6a45..0x6a4b: the end of
 ; text_buf's area, which nothing in the firmware addresses (H: text_buf is 30 words, labels use at most 21).
 ; The firmware reads that word from flash at power-on and writes it back with every preset load, but
 ; never uses it. Defaults: battery 30 min (as stock), cable Off (as stock). power_src 0 counts as cable.
@@ -43,9 +43,11 @@
 ; power_off). tick_10ms counts bl_count up to the limit and keeps the pin on below it, off at it; key_event
 ; (every panel key) and the dial's handler 0x391a zero bl_count; the keyboard does not. The key that wakes it also does its job.
 ;
-; AMP_IDLE_SECS (no menu yet, 0 = never): tick_10ms switches the outputs on every tick once the welcome
+; AMP_IDLE_SECS (no menu: no bits left in the settings word; 0 = never; C: on hardware with the metronome, demo,
+; accompaniment): tick_10ms switches the outputs on every tick once the welcome
 ; counter is 0: port 0xe0 bit 0x1000 and bit 0x100 = [0x0005] (H: speaker amplifier, off with headphones).
-; After that many seconds of idle_ticks (zeroed by keys, panel and MIDI) we skip that and clear both, as
+; After that many seconds of idle_ticks (zeroed by keys, panel and MIDI from the MCU) and without any
+; message to the synthesizer (amp_cnt: accompaniment, demo, metronome too) we skip that and clear both, as
 ; power_off does; the next note brings them back within a tick.
 ;
 ; With lang_pl (found by its first changed word, RAM 0x168 'G' -> 'F') headers, keys and texts are Polish.
@@ -69,7 +71,7 @@
 
 .param BATT_DEFAULT 4 0 7 "Battery time when not set yet: 0 Off, 1 5 min, 2 10, 3 15, 4 30, 5 60, 6 90, 7 120 min"
 .param CABLE_DEFAULT 0 0 7 "Cable time when not set yet (same values)"
-.param AMP_IDLE_SECS 0 0 300 "Switch the amplifier off after this many seconds without keys, panel or MIDI (0 = never; H: port 0xe0 bits 0x1000, 0x100)"
+.param AMP_IDLE_SECS 60 0 300 "Switch the speaker amplifier off after this many seconds without anything to play (0 = never; H: port 0xe0 bits 0x1000, 0x100)"
 
 .hook 0x009a4 expect 0xfbf1 0xbf20 0x0002 0xd148 0x000b 0xfa81 0xfaf7 0xfa13 0xe102 0xd7c8 0x0948  ; idle_ticks >= 180000 -> power_off
     .dw   0xd0ce, ao_due
@@ -102,6 +104,10 @@
 
 .hook 0x0391b expect 0xd148 0x000b     ; the dial's handler, same
     call  bl_wake
+.end
+
+.hook 0x0d6d3 expect 0x1c01 0x070d     ; the synthesizer's MIDI input (library, all callers): and r4, #1; mov r7, #0xd
+    call  amp_note
 .end
 
 .hook 0x00b15 expect 0xfb63 0xd148 0x000b 0xce91 0xcf90   ; battery_tick on cable: idle_ticks = 0
@@ -162,6 +168,7 @@
 ; make sure presets_header[0] holds our settings (defaults when the flash holds something else); r7 = it.
 ; Leaf, uses r6.
 ; With ex_ui's bits in 6-9 (the menu state, see the top). Leaf, uses r6 and ex_tmp.
+.equ amp_cnt, 0x6a45
 .equ ex_ui, 0x6a46
 .equ ex_pg, 0x6a47
 .equ ex_tmp, 0x6a48
@@ -988,6 +995,7 @@ st_boot:
     st    [ex_ui], r7
     st    [ex_pg], r7
     st    [bl_count], r7
+    st    [amp_cnt], r7
     call  ex_norm
     shr   r7, 10
     and   r7, #3
@@ -1436,26 +1444,49 @@ bl_wake:
     li    r1, #0x000b
     ret
 
-; tick_10ms (0x0821): r7 = the welcome counter; 0 switches the outputs on. After AMP_IDLE_SECS of
-; idle_ticks: amplifier bit off and r7 = 1, so the stock code leaves the outputs alone this tick.
+; tick_10ms (0x0821): r7 = the welcome counter; 0 switches the outputs on. amp_cnt counts ticks since the
+; last message to the synthesizer (amp_note), whoever sent it: keys, accompaniment, demo, metronome, USB.
+; After AMP_IDLE_SECS of both that and idle_ticks: outputs off and r7 = 1, so the stock code leaves them
+; alone this tick.
 amp_chk:
+    ld    r6, [amp_cnt]
+    li    r7, #30000
+    cmp   r6, r7
+    blt   .m_inc
+    jmp   .m_test
+.m_inc:
+    add   r6, #1
+    st    [amp_cnt], r6
+.m_test:
     li    r7, #(AMP_IDLE_SECS * 50)   ; half the ticks, so it stays positive
     cmp   r7, #0
     beq   .m_stock
     ld    r6, [idle_ticks]    ; high word
     cmp   r6, #0
-    bne   .m_off
+    bne   .m_synth
     ld    r6, [idle_ticks+1]
     shr   r6, 1
     cmp   r6, r7
     blt   .m_stock
-.m_off:
+.m_synth:
+    ld    r6, [amp_cnt]
+    shr   r6, 1
+    cmp   r6, r7
+    blt   .m_stock
     .dw   0x00e0, 0xd0cd, 0xefff   ; port 0xe0 &= ~0x1000 (C: not enough on its own, the speaker hissed on)
     .dw   0xd0cd, 0xfeff           ; and ~0x100 (H: speaker amplifier; on unless headphones), as power_off
     mov   r7, #1
     ret
 .m_stock:
     ld    r7, [0x0011]
+    ret
+
+; the synthesizer's MIDI input (0x0d6d0, the library's; synth_send and many others call it): a message
+amp_note:
+    mov   r7, #0
+    st    [amp_cnt], r7
+    and   r4, #1
+    mov   r7, #0xd
     ret
 
 ; ---- images 0x100.. : draw_glyph(x, y, id, inverse) for our ids, from program memory.
