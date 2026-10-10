@@ -1,12 +1,18 @@
 .patch short_welcome
 .title "Shorter welcome screen at power-on (stock about 3 s)"
-.param WELCOME_TICKS 100 10 300 "Welcome screen time in 10 ms ticks (stock 300 = about 3 s)"
+.param WELCOME_TICKS 30 10 300 "Welcome screen time in 10 ms ticks (stock 300 = about 3 s)"
 
 ; RAM 0x0011 counts the welcome screen down: initial value 300, tick_10ms takes 1 off every tick and at 5
-; switches to the main screen (screen 1). USB starts once it reaches 0 and the battery is first drawn at 5.
-; Only the initial value changes (initialised data, file word 0x155f7 + 0x11). Not below 10: the switch
-; happens at 5. extra_menu's Patches screen does not list it: by then the counter is 0 either way.
-; (H) Whether the keys play sooner depends on the MCU: it may hold notes back by itself.
+; switches to the main screen (screen 1); the battery is first drawn at 5. Only at 0 does tick_10ms switch on
+; the outputs at port 0xe0 that power_off and init clear: bit 0x1000 (H: amplifier) and bit 0x100 = [0x0005]
+; (input 0x28e0 bit 0x10, H: speaker unless headphones). So the instrument is silent for the whole welcome
+; screen: a key played then is heard only as its tail (C: on hardware). Only the initial value changes
+; (initialised data, file word 0x155f7 + 0x11). Not below 10: the switch happens at 5. extra_menu's Patches
+; screen does not list it: by then the counter is 0 either way.
+; The counter runs from early in init_all (timer set up at 0x0c9b), and the welcome screen is drawn during
+; init_all too (sub_04e60 -> sub_057d5), so at 30 the counter ends while the instrument is still starting up:
+; what stays visible (C: about 0.8 s on hardware) is the rest of init_all. Keys are handled only once the
+; main loop runs; notes played before that come out together as it starts.
 .hook 0x15608 expect 0x012c
     .dw   WELCOME_TICKS
 .end
