@@ -29,6 +29,8 @@
 ; the stock firmware. With Autosave boot_preset names the presets User1..User5
 ; again, as none of them is the start preset. The settings travel through User5's RAM copy (user_presets + 124):
 ; at power-off it is not needed any more, at power-on it is read back from flash right after.
+; The panel's factory reset puts all of this back: the stock code writes the factory header (Auto Off and
+; Startup defaults), fr_wipe erases the Autosave page.
 ;
 ; With lang_pl (found by its first changed word, RAM 0x168 'G' -> 'F') headers, keys and texts are Polish.
 ;
@@ -61,6 +63,10 @@
 
 .hook 0x02602 expect 0xd5c8 0xffff     ; end of boot_presets (presets read, start preset loaded)
     .dw   0xd0ce, st_boot
+.end
+
+.hook 0x025dc expect 0xd7c8 0x24f9     ; presets_factory_reset: factory presets written, header read next
+    .dw   0xd0ce, fr_wipe
 .end
 
 .hook 0x00b15 expect 0xfb63 0xd148 0x000b 0xce91 0xcf90   ; battery_tick on cable: idle_ticks = 0
@@ -911,6 +917,26 @@ st_apply:                     ; the hidden page is in the buffer: erased flash r
     .dw   0xd0ce, st_read
 st_done:
     .dw   0xd0ce, 0x02564
+
+; factory reset (presets_factory_reset's frame): the stock code has already written the factory header
+; (word 0 = 1, so Auto Off and Startup fall back to their defaults) and presets 0x701..0x705; also erase the
+; Autosave page 0x706, so an old snapshot never comes back. User5's RAM copy is the buffer: presets_load_all
+; reads it back right after.
+fr_wipe:
+    li    r7, #0xffff
+    li    r1, #user_presets+124
+    mov   r6, #0
+.f_fill:
+    st    [r1+0], r7
+    add   r1, #1
+    add   r6, #1
+    cmp   r6, #31
+    blt   .f_fill
+    push  #5                  ; page 0x701 + 5
+    push  #user_presets+124
+    ccall preset_write_flash
+    ccall presets_read_flash
+    .dw   0xd0ce, 0x025de
 
 ; read flash page r6 (31 words) into User5's RAM copy, as presets_load_all does; then on to st_apply
 ; (page 0x706) or st_done (0x705). Counters in text_buf: the flash routines keep no registers.
