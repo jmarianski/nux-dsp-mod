@@ -56,6 +56,10 @@ variable `X` lives at file word `ramdata_start + X`.
 | `d0ce a` | branch/jump with 16-bit target |
 | `b7kk` / `bfkk` | skip kk words if r7 is zero / not zero (H) |
 | `830d 2b0N` | recompute fp after a call (`ccall` clobbers it) |
+| `c749` | jump to the address in r7 (the stock `switch`: `ldc r7, [r1+0]` from a table, then this; H, strong) |
+| `00nn` + `d0cc m` / `d0cd m` | `mov r0, #nn` then port 0x2800+nn \|= m / &= m (I/O registers: 0x28e0 power hold and amplifier, 0x28e7 backlight, 0x2840 clock/PLL; H) |
+| `fRf6 a` | port access: bit 15 of `a` set = write rR to port `a & 0x7fff`, clear = read it into rR (H) |
+| `6cff` | busy-wait for r4 iterations (used with `li r4, #0x2710` while the PLL starts; H) |
 | `fXf1 …` | possibly a three-word form with a 32-bit address; the length rule counts it as one word, which can misalign a few lines of the listing locally (the round trip stays exact) |
 
 ## Writing hook code

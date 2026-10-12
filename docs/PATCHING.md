@@ -45,6 +45,11 @@ my_hook:
 .end                                    ; space the table's strings occupy
 ```
 
+A patch may have several `.code` blocks. Each is placed on its own, so a big patch can use the space
+left in more than one pool (the layout names them `NAME`, `NAME#2`, …). Labels and `.equ` constants are
+shared between the blocks, but `jmp` and the conditional branches are short: go to another block with
+`call` (or `.dw 0xd0ce, label`).
+
 Inside `.code`, an `.art` … `.endart` block turns '#'/'.' rows into column words (bit 0 = top row,
 terminated by `0xf000`) that your code can read with `ldc` — see `targets/nek100-dsp-1.0.7/patches/polish_font.patch`.
 

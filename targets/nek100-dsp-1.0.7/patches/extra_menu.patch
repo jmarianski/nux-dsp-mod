@@ -10,17 +10,19 @@
 ;             stays on (stock)
 ;   Patches   screen 22: which patches of this project are in the firmware (found by looking at their words)
 ;   Info      the stock screen 19; its Back key now returns to Extra
-; Extra itself is screen 20, the cursor's item picks the page (arrows show the other one). Screens 20..25 are reached through hooks in front of the range checks of
+;   Sleep test screen 26 (page 3, makeshift: Extra's header, the Startup icon): see Sleep below
+; Extra itself is screen 20, the cursor's item picks the page (arrows show the others). Screens 20..25 are reached through hooks in front of the range checks of
 ; draw_screen and the key dispatchers (A, B, D, dial); their images (ids 0x100 and up) are drawn by our
 ; own blitter from program memory, hooked into draw_glyph.
 ;
 ; Auto Off. Stock: power_key_poll switches off after 180000 ticks (30 min) of idle_ticks, and battery_tick
 ; zeroes idle_ticks every tick while the charger is plugged, so on cable the instrument never switches off.
 ; Here the zeroing is gone and the limit comes from the settings word:
-;   presets_header[0]  binary 10 in bits 14-15 when set by us (stock flash holds 1 -> defaults)
+;   presets_header[0]  bit 15 set by us (stock flash holds 1 -> defaults; it was binary 10 in bits 14-15)
 ;                      bits 0-2 battery time, bits 3-5 cable time (0 = Off, 5, 10, 15, 30, 60, 90, 120 min),
 ;                      bits 6-8 Backlight (0 always off, 5 s, 10 s, 15 s, 30 s, 1 min, 5 min, 7 always on),
-;                      bit 9 set (this layout; before it, bits 6-9 held the menu state: then Backlight = on),
+;                      bits 9 and 14 Sleep: (bit 14 * 2 + bit 9 + 3) mod 4 = Off, 30 s, 1 min, 5 min (Off for the
+;                      words before it: bit 9 was set, bit 14 clear),
 ;                      bits 10-11 Startup mode,
 ;                      bits 12-13 Speaker: 0 30 s, 1 1 min, 2 5 min, 3 always on (the default, stock; the marker
 ;                      used to be 0xB in bits 12-15: such words read as always on)
@@ -53,6 +55,16 @@
 ; message to the synthesizer (amp_cnt: accompaniment, demo, metronome too) we skip that and clear both, as
 ; power_off does; the next note brings them back within a tick.
 ;
+; Sleep (screen 26). After its time of idle_ticks and amp_cnt (as Speaker), screen 27 shows SLEEP and the
+; battery, backlight and amplifier go off and every MIDI byte (MCU: keys, panel, dial; USB) is turned into 0xf8 before the parser looks at it (no message, running status dropped) and
+; asks for a wake-up. After 1 s (the amplifier is off by then: switching the clock under it pops) port 0x40 bit
+; 0x8000 is cleared (H: the system clock leaves the PLL for the 12.288 MHz crystal, the first step of the start-up
+; code at 0x479), then bit 0x4000 (H: PLL off, the second step; datasheet: 6 mA instead of 76 for the chip). Ticks
+; run about 60 times slower then (C: a 100-tick wait took about a minute). The UART to the MCU runs at the wrong
+; speed: any byte is garbage, and only means "wake up" (C: keys, panel keys and the dial all wake it).
+; Wake-up in tick_10ms: bit 0x4000, the start-up's wait, bit 0x8000, the screen back; bytes are dropped and the
+; amplifier stays off for SLEEP_GRACE more ticks (garbage still queued, the clock settling).
+
 ; With lang_pl (found by its first changed word, RAM 0x168 'G' -> 'F') headers, keys and texts are Polish.
 ;
 ; Images (the Polish ones are drawn with nuxdsp/pixfont.py, as lang_pl's):
@@ -73,6 +85,9 @@
 ; 0x10e bl_g_head
 ; 0x10f am_g_icon
 ; 0x110 am_g_head
+; 0x111 sl_g_icon
+; 0x112 sl_g_head
+.param SLEEP_GRACE 30 0 200 "Sleep: ticks (10 ms) after a wake-up during which MIDI bytes are dropped and the speaker stays off"
 
 .param BATT_DEFAULT 4 0 7 "Battery time when not set yet: 0 Off, 1 5 min, 2 10, 3 15, 4 30, 5 60, 6 90, 7 120 min"
 .param CABLE_DEFAULT 0 0 7 "Cable time when not set yet (same values)"
@@ -108,6 +123,10 @@
 
 .hook 0x0391b expect 0xd148 0x000b     ; the dial's handler, same
     call  bl_wake
+.end
+
+.hook 0x01349 expect 0xc7b7 0x1ff0     ; midi_parse_byte: ld r7, [fp+7] (the byte); and r7, #0xf0
+    call  sl_byte
 .end
 
 .hook 0x0d6d3 expect 0x1c01 0x070d     ; the synthesizer's MIDI input (library, all callers): and r4, #1; mov r7, #0xd
@@ -172,6 +191,11 @@
 ; make sure presets_header[0] holds our settings (defaults when the flash holds something else); r7 = it.
 ; Leaf, uses r6.
 ; With ex_ui's bits in 6-9 (the menu state, see the top). Leaf, uses r6 and ex_tmp.
+.equ sl_magic, 0x6a3f         ; 0xa55a once st_boot has set the sleep state up (RAM is not cleared at power-on)
+.equ sl_on, 0x6a41
+.equ sl_wake, 0x6a42
+.equ sl_scr, 0x6a44
+.equ sl_grace, 0x6a4a
 .equ amp_cnt, 0x6a45
 .equ ex_ui, 0x6a46
 .equ ex_pg, 0x6a47
@@ -181,23 +205,12 @@
 ex_norm:
     ld    r7, [presets_header]
     mov   r6, r7
-    shr   r6, 14
-    cmp   r6, #2
-    beq   .n_b
-    li    r7, #0xb3c0         ; defaults, Backlight always on, this layout, Speaker always on
+    shr   r6, 15
+    cmp   r6, #1
+    beq   .n_view
+    li    r7, #0xb3c0         ; defaults, Backlight always on, Sleep off, Speaker always on
     add   r7, #BATT_DEFAULT
     add   r7, #(CABLE_DEFAULT * 8)
-    jmp   .n_store
-.n_b:
-    li    r6, #0x0200
-    and   r6, r7
-    cmp   r6, #0
-    bne   .n_view
-    li    r6, #0xfc3f         ; the layout before Backlight: bits 6-9 held the menu state
-    and   r7, r6
-    li    r6, #0x03c0
-    or    r7, r6
-.n_store:
     st    [presets_header], r7
 .n_view:
     li    r6, #0xfc3f
@@ -308,6 +321,9 @@ ex_head:
     li    r1, #0x103
     cmp   r7, #4
     beq   .h_ours
+    li    r1, #0x112
+    cmp   r7, #6
+    beq   .h_ours
     jmp   .h_stock            ; Info
 .h_21:
     li    r1, #0x102
@@ -324,6 +340,9 @@ ex_head:
     beq   .h_ours
     li    r1, #0x110
     cmp   r7, #25
+    beq   .h_ours
+    li    r1, #0x112
+    cmp   r7, #26
     beq   .h_ours
     cmp   r7, #19
     beq   .h_stock            ; Info keeps its own (item 11)
@@ -367,38 +386,19 @@ ex_info_back:
     ccall draw_screen
     .dw   0xd0ce, 0x0314c
 
-; ---- dispatch. draw_screen: r1 = screen
+; ---- dispatch: screens 20..27 through a table (ldc r7 + 0xc749, the stock switch's jump to r7), the rest to the
+; stock range check. draw_screen: r1 = screen
 ex_draw:
     .dw   0xd2c9, 0x0002
     mov   r4, #20
     cmp   r1, r4
-    bne   .s_25
-    .dw   0xd0ce, ex_scr_extra
-.s_25:
-    mov   r4, #25
-    cmp   r1, r4
-    bne   .s_21
-    .dw   0xd0ce, am_screen
-.s_21:
-    mov   r4, #21
-    cmp   r1, r4
-    bne   .s_22
-    .dw   0xd0ce, ao_screen
-.s_22:
-    mov   r4, #22
-    cmp   r1, r4
-    bne   .s_23
-    .dw   0xd0ce, pp_screen
-.s_23:
-    mov   r4, #23
-    cmp   r1, r4
-    bne   .s_24
-    .dw   0xd0ce, st_screen
-.s_24:
-    mov   r4, #24
-    cmp   r1, r4
-    bne   .s_stock
-    .dw   0xd0ce, bl_screen
+    blt   .s_stock
+    mov   r4, #27
+    cmp   r4, r1
+    blt   .s_stock
+    addi  r1, #(ex_t_draw - 20)
+    ldc   r7, [r1+0]
+    .dw   0xc749
 .s_stock:
     mov   r4, #0x13
     cmp   r4, r1
@@ -406,38 +406,20 @@ ex_draw:
     .dw   0xd0ce, 0x05c81
 .s_none:
     .dw   0xd0ce, 0x061f5
+ex_t_draw:
+    .dw   ex_scr_extra, ao_screen, pp_screen, st_screen, bl_screen, am_screen, am_screen, sl_zzz
 
-; keys: r1 = screen. Screens 20..25 go to us, the rest to the stock range check and table.
+; keys: r1 = screen
 ex_key_a:
     mov   r4, #20
     cmp   r1, r4
-    bne   .a_21
-    .dw   0xd0ce, ex_back_menu
-.a_21:
-    mov   r4, #21
-    cmp   r1, r4
-    bne   .a_22
-    .dw   0xd0ce, ao_batt
-.a_22:
-    mov   r4, #22
-    cmp   r1, r4
-    bne   .a_23
-    .dw   0xd0ce, ex_back_a
-.a_23:
-    mov   r4, #23
-    cmp   r1, r4
-    bne   .a_24
-    .dw   0xd0ce, ex_back_a
-.a_24:
-    mov   r4, #24
-    cmp   r1, r4
-    bne   .a_25
-    .dw   0xd0ce, ex_back_a
-.a_25:
-    mov   r4, #25
-    cmp   r1, r4
-    bne   .a_stock
-    .dw   0xd0ce, ex_back_a
+    blt   .a_stock
+    mov   r4, #27
+    cmp   r4, r1
+    blt   .a_stock
+    addi  r1, #(ex_t_a - 20)
+    ldc   r7, [r1+0]
+    .dw   0xc749
 .a_stock:
     mov   r4, #0x13
     cmp   r4, r1
@@ -445,43 +427,39 @@ ex_key_a:
     .dw   0xd0ce, 0x03027
 .a_out:
     .dw   0xd0ce, 0x0314c
+ex_t_a:
+    .dw   ex_back_menu, ao_batt, ex_back_a, ex_back_a, ex_back_a, ex_back_a, ex_back_a, 0x0314c
 
 ex_key_b:
     mov   r4, #20
     cmp   r1, r4
-    bne   .b_21
-    .dw   0xd0ce, ex_next
-.b_21:
-    mov   r4, #21
-    cmp   r1, r4
-    bne   .b_22
-    .dw   0xd0ce, ao_cable
-.b_22:
-    mov   r4, #22
-    cmp   r1, r4
-    beq   .b_out              ; Patches: nothing
+    blt   .b_stock
+    mov   r4, #27
+    cmp   r4, r1
+    blt   .b_stock
+    addi  r1, #(ex_t_b - 20)
+    ldc   r7, [r1+0]
+    .dw   0xc749
+.b_stock:
     mov   r4, #0x11
     cmp   r4, r1
     blt   .b_out
     .dw   0xd0ce, 0x03162
 .b_out:
     .dw   0xd0ce, 0x03374
+ex_t_b:
+    .dw   ex_next, ao_cable, 0x03374, 0x03374, 0x03374, 0x03374, 0x03374, 0x03374
 
 ex_key_d:
     mov   r4, #20
     cmp   r1, r4
-    bne   .k_21
-    .dw   0xd0ce, ex_enter
-.k_21:
-    mov   r4, #21
-    cmp   r1, r4
-    bne   .k_22
-    .dw   0xd0ce, ex_back_d
-.k_22:
-    mov   r4, #22
-    cmp   r1, r4
-    bne   .k_stock
-    .dw   0xd0ce, pp_page_d
+    blt   .k_stock
+    mov   r4, #27
+    cmp   r4, r1
+    blt   .k_stock
+    addi  r1, #(ex_t_d - 20)
+    ldc   r7, [r1+0]
+    .dw   0xc749
 .k_stock:
     mov   r4, #0x13
     cmp   r4, r1
@@ -489,37 +467,19 @@ ex_key_d:
     .dw   0xd0ce, 0x03424
 .k_out:
     .dw   0xd0ce, 0x036a5
+ex_t_d:
+    .dw   ex_enter, ex_back_d, pp_page_d, 0x036a5, 0x036a5, 0x036a5, 0x036a5, 0x036a5
 
 ex_key_f:
     mov   r4, #20
     cmp   r1, r4
-    bne   .f_21
-    .dw   0xd0ce, ex_dial
-.f_21:
-    mov   r4, #21
-    cmp   r1, r4
-    bne   .f_22
-    .dw   0xd0ce, ao_dial
-.f_22:
-    mov   r4, #22
-    cmp   r1, r4
-    bne   .f_23
-    .dw   0xd0ce, pp_page_f
-.f_23:
-    mov   r4, #23
-    cmp   r1, r4
-    bne   .f_24
-    .dw   0xd0ce, st_dial
-.f_24:
-    mov   r4, #24
-    cmp   r1, r4
-    bne   .f_25
-    .dw   0xd0ce, bl_dial
-.f_25:
-    mov   r4, #25
-    cmp   r1, r4
-    bne   .f_stock
-    .dw   0xd0ce, am_dial
+    blt   .f_stock
+    mov   r4, #27
+    cmp   r4, r1
+    blt   .f_stock
+    addi  r1, #(ex_t_f - 20)
+    ldc   r7, [r1+0]
+    .dw   0xc749
 .f_stock:
     mov   r4, #0x12
     cmp   r4, r1
@@ -527,6 +487,8 @@ ex_key_f:
     .dw   0xd0ce, 0x03992
 .f_out:
     .dw   0xd0ce, 0x03b5f
+ex_t_f:
+    .dw   ex_dial, ao_dial, pp_page_f, st_dial, bl_dial, am_dial, sl_dial, 0x03b5f
 
 ; ---- Extra (screen 20): Auto Off, Startup, Backlight | Speaker, Patches, Info; cursor in bits 7-9 (0..5), the
 ; page is the cursor's. Icons where the menu has them.
@@ -553,8 +515,27 @@ ex_scr_extra:
     call  ex_norm
     shr   r7, 7
     and   r7, #7
+    cmp   r7, #6
+    blt   .x_page01
+    push  #0
+    push  #0x111              ; moon
+    push  #0x10
+    push  #16
+    ccall draw_glyph
+    push  #0
+    push  #0xb7
+    push  #0x1e
+    push  #6
+    ccall draw_glyph
+    jmp   .x_cursor
+.x_page01:
     cmp   r7, #3
     blt   .x_page0
+    push  #0
+    push  #0xba               ; arrow: more to the right
+    push  #0x1e
+    push  #118
+    ccall draw_glyph
     push  #0
     push  #0x10f              ; speaker
     push  #0x10
@@ -603,7 +584,10 @@ ex_scr_extra:
     and   r7, #7
     cmp   r7, #3
     blt   .x_col
-    li    r6, #0xfffd         ; the second page: same columns
+    li    r6, #0xfffd         ; the other pages: same columns
+    add   r7, r6
+    cmp   r7, #3
+    blt   .x_col
     add   r7, r6
 .x_col:
     mov   r6, #25             ; cursor under the icon: 25 + 36 * column
@@ -627,7 +611,7 @@ ex_next:                      ; middle key: next item, round
     shr   r6, 7
     and   r6, #7
     add   r6, #1
-    cmp   r6, #6
+    cmp   r6, #7
     blt   .x_set
     mov   r6, #0
 .x_set:
@@ -652,7 +636,7 @@ ex_dial:
     and   r6, #7
     cmp   r5, #0
     bne   .xd_down
-    cmp   r6, #5
+    cmp   r6, #6
     beq   .xd_out
     add   r6, #1
     jmp   .xd_set
@@ -693,6 +677,9 @@ ex_enter:                     ; right key: open the item
     beq   .xe_go
     mov   r6, #22
     cmp   r7, #4
+    beq   .xe_go
+    mov   r6, #26
+    cmp   r7, #6
     beq   .xe_go
     mov   r7, #0
     st    [0x6a4d], r7        ; Info: first page, as the stock Enter
@@ -787,15 +774,9 @@ ao_screen:
     shr   r7, 3
 .v_batt:
     and   r7, #7
-    shl   r7, 3
-    mov   r5, r7
-    addi  r5, #ao_names
-    ld    r6, [0x0168]        ; lang_pl: Polish names, 64 words further
-    cmp   r6, #0x47
-    beq   .v_en
-    add   r5, #64
-.v_en:
-    call  ex_copy
+    li    r5, #ao_names
+    mov   r6, #8
+    call  ex_name
     mov   r7, #0
     push  r7
     push  #0x10
@@ -813,6 +794,26 @@ ao_screen:
     ccall draw_text_centered
     .dw   0xd0ce, 0x061f5
 
+; string r7 of the table at r5 (zero-terminated strings, r6 English ones, then as many Polish) to text_buf,
+; the Polish one with lang_pl. Leaf, uses r1, r4..r7.
+ex_name:
+    ld    r4, [0x0168]        ; lang_pl changes it from 'G'
+    cmp   r4, #0x47
+    beq   .nm_skip
+    add   r7, r6
+.nm_skip:
+    cmp   r7, #0
+    beq   ex_copy
+.nm_char:
+    mov   r1, r5
+    ldc   r4, [r1+0]
+    add   r5, #1
+    cmp   r4, #0
+    bne   .nm_char
+    li    r4, #0xffff
+    add   r7, r4
+    jmp   .nm_skip
+
 ; copy the string at r5 (program memory, 1 char per word) to text_buf. Leaf, uses r1, r4, r5, r7.
 ex_copy:
     li    r4, #text_buf
@@ -827,22 +828,22 @@ ex_copy:
     bne   .c_loop
     ret
 
-ao_names:                     ; 8 words each, English then Polish
-    .dw   0x4f, 0x46, 0x46, 0, 0, 0, 0, 0   ; OFF
-    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0   ; 5 MIN
-    .dw   0x31, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 10 MIN
-    .dw   0x31, 0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 15 MIN
-    .dw   0x33, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 30 MIN
-    .dw   0x36, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 60 MIN
-    .dw   0x39, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 90 MIN
+ao_names:                     ; zero-terminated, English then Polish (ex_name)
+    .dw   0x4f, 0x46, 0x46, 0   ; OFF
+    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 5 MIN
+    .dw   0x31, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 10 MIN
+    .dw   0x31, 0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 15 MIN
+    .dw   0x33, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 30 MIN
+    .dw   0x36, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 60 MIN
+    .dw   0x39, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 90 MIN
     .dw   0x31, 0x32, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 120 MIN
-    .dw   0x57, 0x59, 0x141, 0, 0, 0, 0, 0   ; WYŁ
-    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0   ; 5 MIN
-    .dw   0x31, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 10 MIN
-    .dw   0x31, 0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 15 MIN
-    .dw   0x33, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 30 MIN
-    .dw   0x36, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 60 MIN
-    .dw   0x39, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0, 0   ; 90 MIN
+    .dw   0x57, 0x59, 0x141, 0   ; WYŁ
+    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 5 MIN
+    .dw   0x31, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 10 MIN
+    .dw   0x31, 0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 15 MIN
+    .dw   0x33, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 30 MIN
+    .dw   0x36, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 60 MIN
+    .dw   0x39, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 90 MIN
     .dw   0x31, 0x32, 0x30, 0x20, 0x4d, 0x49, 0x4e, 0   ; 120 MIN
 
 ao_batt:                      ; left key: edit the battery time
@@ -936,17 +937,9 @@ st_screen:
     call  ex_norm
     shr   r7, 10
     and   r7, #3
-    mov   r5, r7              ; 10 words a name
-    shl   r5, 3
-    add   r5, r7
-    add   r5, r7
-    addi  r5, #st_names
-    ld    r6, [0x0168]        ; lang_pl: Polish names, 30 words further
-    cmp   r6, #0x47
-    beq   .st_en
-    add   r5, #30
-.st_en:
-    call  ex_copy
+    li    r5, #st_names
+    mov   r6, #3
+    call  ex_name
     mov   r7, #0
     push  r7
     push  #0x10
@@ -964,11 +957,11 @@ st_screen:
     ccall draw_text_centered
     .dw   0xd0ce, 0x061f5
 
-st_names:                     ; 10 words each, English then Polish
-    .dw   0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0, 0, 0   ; DEFAULT
-    .dw   0x41, 0x55, 0x54, 0x4f, 0x53, 0x41, 0x56, 0x45, 0, 0   ; AUTOSAVE
-    .dw   0x46, 0x41, 0x43, 0x54, 0x4f, 0x52, 0x59, 0, 0, 0   ; FACTORY
-    .dw   0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0, 0, 0   ; DEFAULT
+st_names:                     ; zero-terminated, English then Polish (ex_name)
+    .dw   0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0   ; DEFAULT
+    .dw   0x41, 0x55, 0x54, 0x4f, 0x53, 0x41, 0x56, 0x45, 0   ; AUTOSAVE
+    .dw   0x46, 0x41, 0x43, 0x54, 0x4f, 0x52, 0x59, 0   ; FACTORY
+    .dw   0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0   ; DEFAULT
     .dw   0x41, 0x55, 0x54, 0x4f, 0x5a, 0x41, 0x50, 0x49, 0x53, 0   ; AUTOZAPIS
     .dw   0x46, 0x41, 0x42, 0x52, 0x59, 0x43, 0x5a, 0x4e, 0x45, 0   ; FABRYCZNE
 
@@ -1047,6 +1040,11 @@ st_boot:
     st    [ex_pg], r7
     st    [bl_count], r7
     st    [amp_cnt], r7
+    st    [sl_on], r7
+    st    [sl_wake], r7
+    st    [sl_grace], r7
+    li    r7, #0xa55a
+    st    [sl_magic], r7
     call  ex_norm
     shr   r7, 10
     and   r7, #3
@@ -1365,18 +1363,9 @@ bl_screen:
     ld    r7, [presets_header]
     shr   r7, 6
     and   r7, #7
-    mov   r5, r7              ; 12 words a name
-    shl   r5, 3
-    mov   r6, r7
-    shl   r6, 2
-    add   r5, r6
-    addi  r5, #bl_names
-    ld    r6, [0x0168]        ; lang_pl: Polish names, 96 words further
-    cmp   r6, #0x47
-    beq   .bl_en
-    add   r5, #96
-.bl_en:
-    call  ex_copy
+    li    r5, #bl_names
+    mov   r6, #8
+    call  ex_name
     mov   r7, #0
     push  r7
     push  #0x10
@@ -1394,23 +1383,23 @@ bl_screen:
     ccall draw_text_centered
     .dw   0xd0ce, 0x061f5
 
-bl_names:                     ; 12 words each, English then Polish
-    .dw   0x41, 0x4c, 0x57, 0x41, 0x59, 0x53, 0x20, 0x4f, 0x46, 0x46, 0, 0   ; ALWAYS OFF
-    .dw   0x35, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0, 0   ; 5 S
-    .dw   0x31, 0x30, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 10 S
-    .dw   0x31, 0x35, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 15 S
-    .dw   0x33, 0x30, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 30 S
-    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 1 MIN
-    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 5 MIN
-    .dw   0x41, 0x4c, 0x57, 0x41, 0x59, 0x53, 0x20, 0x4f, 0x4e, 0, 0, 0   ; ALWAYS ON
-    .dw   0x5a, 0x41, 0x57, 0x53, 0x5a, 0x45, 0x20, 0x57, 0x59, 0x141, 0, 0   ; ZAWSZE WYŁ
-    .dw   0x35, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0, 0   ; 5 S
-    .dw   0x31, 0x30, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 10 S
-    .dw   0x31, 0x35, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 15 S
-    .dw   0x33, 0x30, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 30 S
-    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 1 MIN
-    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 5 MIN
-    .dw   0x5a, 0x41, 0x57, 0x53, 0x5a, 0x45, 0x20, 0x57, 0x141, 0, 0, 0   ; ZAWSZE WŁ
+bl_names:                     ; zero-terminated, English then Polish (ex_name)
+    .dw   0x41, 0x4c, 0x57, 0x41, 0x59, 0x53, 0x20, 0x4f, 0x46, 0x46, 0   ; ALWAYS OFF
+    .dw   0x35, 0x20, 0x53, 0   ; 5 S
+    .dw   0x31, 0x30, 0x20, 0x53, 0   ; 10 S
+    .dw   0x31, 0x35, 0x20, 0x53, 0   ; 15 S
+    .dw   0x33, 0x30, 0x20, 0x53, 0   ; 30 S
+    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0   ; 1 MIN
+    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 5 MIN
+    .dw   0x41, 0x4c, 0x57, 0x41, 0x59, 0x53, 0x20, 0x4f, 0x4e, 0   ; ALWAYS ON
+    .dw   0x5a, 0x41, 0x57, 0x53, 0x5a, 0x45, 0x20, 0x57, 0x59, 0x141, 0   ; ZAWSZE WYŁ
+    .dw   0x35, 0x20, 0x53, 0   ; 5 S
+    .dw   0x31, 0x30, 0x20, 0x53, 0   ; 10 S
+    .dw   0x31, 0x35, 0x20, 0x53, 0   ; 15 S
+    .dw   0x33, 0x30, 0x20, 0x53, 0   ; 30 S
+    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0   ; 1 MIN
+    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 5 MIN
+    .dw   0x5a, 0x41, 0x57, 0x53, 0x5a, 0x45, 0x20, 0x57, 0x141, 0   ; ZAWSZE WŁ
 
 bl_limits:                    ; ticks (10 ms) without the panel; 0 and 7 are not looked up
     .dw   0, 500, 1000, 1500, 3000, 6000, 30000, 0
@@ -1454,15 +1443,15 @@ bl_dial:                      ; dial: setting -1 / +1, clamp 0..7, save to flash
 ; r1 = 0x0117, as the instruction it replaces. Reads presets_header only (the menu code may be halfway
 ; through ex_norm / ex_put). Before boot_presets has read the settings the word is not ours: on.
 bl_tick:
+    call  sl_tick
+    ld    r7, [sl_on]
+    cmp   r7, #0
+    bne   .l_off
     ld    r7, [presets_header]
     mov   r6, r7
-    shr   r6, 14
-    cmp   r6, #2
+    shr   r6, 15
+    cmp   r6, #1
     bne   .l_on
-    li    r6, #0x0200
-    and   r6, r7
-    cmp   r6, #0
-    beq   .l_on
     shr   r7, 6
     and   r7, #7
     cmp   r7, #7
@@ -1490,6 +1479,8 @@ bl_tick:
 
 ; key_event and the dial's handler (0x391a), where they zero idle_ticks: the backlight comes back
 bl_wake:
+    ld    r1, [sl_on]         ; a key or the dial while asleep: wake up
+    st    [sl_wake], r1
     mov   r1, #0
     st    [bl_count], r1
     li    r1, #0x000b
@@ -1520,22 +1511,20 @@ am_screen:
     push  #118
     ccall draw_glyph
     call  ex_norm             ; (makes sure the word is ours)
+    ld    r6, [screen]
+    cmp   r6, #26
+    beq   .as_sleep
     ld    r6, [presets_header]
     shr   r6, 12
     and   r6, #3
     add   r6, #1
     and   r6, #3
-    mov   r5, r6              ; 12 words a name
-    shl   r5, 3
-    shl   r6, 2
-    add   r5, r6
-    addi  r5, #am_names
-    ld    r6, [0x0168]        ; lang_pl: Polish names, 48 words further
-    cmp   r6, #0x47
-    beq   .am_en
-    add   r5, #48
-.am_en:
-    call  ex_copy
+    mov   r7, r6
+.as_names:
+    li    r5, #am_names
+    mov   r6, #4
+.as_show:
+    call  ex_name
     mov   r7, #0
     push  r7
     push  #0x10
@@ -1552,16 +1541,28 @@ am_screen:
     push  #64
     ccall draw_text_centered
     .dw   0xd0ce, 0x061f5
+.as_sleep:                    ; screen 26 (Sleep): the same with its own first name
+    call  sl_get
+    mov   r7, r6
+    cmp   r7, #0
+    bne   .as_names
+    li    r5, #sl_off
+    mov   r6, #1
+    jmp   .as_show
 
-am_names:                     ; 12 words each, English then Polish; stored 3, 0, 1, 2
-    .dw   0x41, 0x4c, 0x57, 0x41, 0x59, 0x53, 0x20, 0x4f, 0x4e, 0, 0, 0   ; ALWAYS ON
-    .dw   0x33, 0x30, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 30 S
-    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 1 MIN
-    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 5 MIN
-    .dw   0x5a, 0x41, 0x57, 0x53, 0x5a, 0x45, 0x20, 0x57, 0x141, 0, 0, 0   ; ZAWSZE WŁ
-    .dw   0x33, 0x30, 0x20, 0x53, 0, 0, 0, 0, 0, 0, 0, 0   ; 30 S
-    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 1 MIN
-    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0, 0, 0, 0, 0, 0, 0   ; 5 MIN
+sl_off:
+    .dw   0x4f, 0x46, 0x46, 0     ; OFF
+    .dw   0x57, 0x59, 0x141, 0    ; WYŁ
+
+am_names:                     ; zero-terminated, English then Polish (ex_name)
+    .dw   0x41, 0x4c, 0x57, 0x41, 0x59, 0x53, 0x20, 0x4f, 0x4e, 0   ; ALWAYS ON
+    .dw   0x33, 0x30, 0x20, 0x53, 0   ; 30 S
+    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0   ; 1 MIN
+    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 5 MIN
+    .dw   0x5a, 0x41, 0x57, 0x53, 0x5a, 0x45, 0x20, 0x57, 0x141, 0   ; ZAWSZE WŁ
+    .dw   0x33, 0x30, 0x20, 0x53, 0   ; 30 S
+    .dw   0x31, 0x20, 0x4d, 0x49, 0x4e, 0   ; 1 MIN
+    .dw   0x35, 0x20, 0x4d, 0x49, 0x4e, 0   ; 5 MIN
 
 am_dial:                      ; dial: place in am_names -1 / +1, clamp 0..3, save to flash
     .dw   0xd2cd, 0x0002      ; r5 = dial delta, signed
@@ -1615,10 +1616,15 @@ amp_chk:
     add   r6, #1
     st    [amp_cnt], r6
 .m_test:
+    ld    r7, [sl_on]         ; asleep or just woken: off
+    ld    r6, [sl_grace]
+    or    r7, r6
+    cmp   r7, #0
+    bne   .m_off
     ld    r7, [presets_header]  ; Speaker setting -> half the ticks, so it stays positive
     mov   r6, r7
-    shr   r6, 14
-    cmp   r6, #2
+    shr   r6, 15
+    cmp   r6, #1
     beq   .m_ours
     li    r7, #0x3000         ; not ours yet: the default, always on
 .m_ours:
@@ -1647,6 +1653,7 @@ amp_chk:
     shr   r6, 1
     cmp   r6, r7
     blt   .m_stock
+.m_off:
     .dw   0x00e0, 0xd0cd, 0xefff   ; port 0xe0 &= ~0x1000 (C: not enough on its own, the speaker hissed on)
     .dw   0xd0cd, 0xfeff           ; and ~0x100 (H: speaker amplifier; on unless headphones), as power_off
     mov   r7, #1
@@ -1661,6 +1668,120 @@ amp_note:
     st    [amp_cnt], r7
     and   r4, #1
     mov   r7, #0xd
+    ret
+
+; ---- screen 27, while asleep: the message and the battery icon
+sl_zzz:
+    mov   r7, #0
+    li    r5, #sl_msg
+    mov   r6, #1
+    call  ex_name
+    mov   r7, #0
+    push  #text_buf
+    push  r7
+    push  #1
+    push  r7
+    push  #0x18
+    push  #64
+    ccall draw_text_centered
+    ccall draw_battery
+    .dw   0xd0ce, 0x061f5
+
+sl_msg:                       ; English, Polish (ex_name)
+    .dw   0x53, 0x4c, 0x45, 0x45, 0x50, 0     ; SLEEP
+    .dw   0x55, 0x15a, 0x50, 0x49, 0x45, 0x4e, 0x49, 0x45, 0     ; UŚPIENIE
+
+; r6 = the Sleep place: 0 Off, 1 30 s, 2 1 min, 3 5 min (bits 9 and 14 of presets_header). Leaf, uses r7.
+sl_get:
+    ld    r7, [presets_header]
+    mov   r6, r7
+    shr   r6, 13
+    and   r6, #2
+    shr   r7, 9
+    and   r7, #1
+    or    r6, r7
+    add   r6, #3
+    and   r6, #3
+    ret
+
+sl_dial:                      ; dial: place -1 / +1, clamp 0..3, save to flash
+    .dw   0xd2cd, 0x0002      ; r5 = dial delta, signed
+    cmp   r5, #0
+    beq   .z_out
+    shr   r5, 15              ; 1 = turned down
+    call  ex_norm
+    call  sl_get
+    cmp   r5, #0
+    bne   .z_down
+    cmp   r6, #3
+    beq   .z_out
+    add   r6, #1
+    jmp   .z_set
+.z_down:
+    cmp   r6, #0
+    beq   .z_out
+    li    r5, #0xffff
+    add   r6, r5
+.z_set:
+    add   r6, #1              ; back to the stored bits
+    and   r6, #3
+    mov   r5, r6
+    and   r5, #1
+    shl   r5, 9
+    shr   r6, 1
+    shl   r6, 14
+    or    r6, r5
+    ld    r7, [presets_header]
+    li    r5, #0xbdff
+    and   r7, r5
+    or    r7, r6
+    st    [presets_header], r7
+    push  #presets_header
+    ccall flash_write_words
+    ld    r7, [screen]
+    push  r7
+    ccall draw_screen
+.z_out:
+    .dw   0xd0ce, 0x03b5f
+
+; asleep (from sl_tick). During the armour (sl_grace > 0) nothing wakes it; at its end the clock is lowered
+; (the amplifier has been off since the first tick: switching the clock under it pops). Then wake up on a
+; MIDI byte (the MCU sends the panel keys and the dial this way too: a turn gave byte 0, C) or a key.
+sl_asleep:
+    ld    r7, [sl_grace]
+    cmp   r7, #0
+    beq   .k_chk
+    cmp   r7, #1
+    bne   .k_arm
+    .dw   0x0040, 0xd0cd, 0x7fff   ; port 0x40 &= ~0x8000 (H: system clock from the crystal)
+    .dw   0x0040, 0xd0cd, 0xbfff   ; port 0x40 &= ~0x4000 (H: PLL off)
+.k_arm:
+    mov   r7, #0
+    st    [sl_wake], r7
+    ret
+.k_chk:
+    ld    r7, [sl_wake]
+    cmp   r7, #0
+    bne   .k_wake
+    ret                       ; (the power key, read as power_key_poll does, always looked pressed: not used)
+.k_wake:
+    .dw   0x0040, 0xd0cc, 0x4000   ; PLL on, then the start-up's wait
+    li    r4, #0x2710
+    .dw   0x6cff
+    .dw   0x0040, 0xd0cc, 0x8000   ; system clock from the PLL again
+    mov   r7, #0
+    st    [sl_on], r7
+    st    [idle_ticks], r7
+    st    [idle_ticks+1], r7
+    st    [bl_count], r7
+    st    [amp_cnt], r7
+    mov   r7, #SLEEP_GRACE
+    st    [sl_grace], r7
+    ld    r7, [sl_scr]
+    st    [screen], r7
+    st    [0x0113], r7
+    push  r7
+    ccall draw_screen
     ret
 
 ; ---- images 0x100.. : draw_glyph(x, y, id, inverse) for our ids, from program memory.
@@ -1678,7 +1799,7 @@ ao_glyph:
     ld    r6, [0x0168]        ; lang_pl: the Polish table
     cmp   r6, #0x47
     beq   .q_en
-    add   r7, #17
+    add   r7, #19
 .q_en:
     mov   r1, r7
     addi  r1, #ao_images
@@ -1760,8 +1881,8 @@ ao_glyph:
     .dw   0xd0ce, 0x04971
 
 ao_images:
-    .dw   ex_g_extra, ex_g_head_extra, ex_g_head_auto, ex_g_head_patch, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt, ao_g_batt_hi, ao_g_cable, ao_g_cable_hi, st_g_icon, st_g_head, bl_g_icon, bl_g_head, am_g_icon, am_g_head
-    .dw   ex_g_extra, ex_g_head_extra_pl, ex_g_head_auto_pl, ex_g_head_patch_pl, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt_pl, ao_g_batt_hi_pl, ao_g_cable_pl, ao_g_cable_hi_pl, st_g_icon, st_g_head_pl, bl_g_icon, bl_g_head_pl, am_g_icon, am_g_head_pl
+    .dw   ex_g_extra, ex_g_head_extra, ex_g_head_auto, ex_g_head_patch, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt, ao_g_batt_hi, ao_g_cable, ao_g_cable_hi, st_g_icon, st_g_head, bl_g_icon, bl_g_head, am_g_icon, am_g_head, sl_g_icon, sl_g_head
+    .dw   ex_g_extra, ex_g_head_extra_pl, ex_g_head_auto_pl, ex_g_head_patch_pl, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt_pl, ao_g_batt_hi_pl, ao_g_cable_pl, ao_g_cable_hi_pl, st_g_icon, st_g_head_pl, bl_g_icon, bl_g_head_pl, am_g_icon, am_g_head_pl, sl_g_icon, sl_g_head_pl
 ex_g_extra:
     .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x000f, 0xfff0, 0x1fff, 0xf818, 0x0018, 0x1800
     .dw   0x1818, 0x1818, 0x1818, 0x1818, 0x1818, 0x1818, 0x1819, 0xff98, 0x19ff, 0x9818, 0x1818, 0x1818
@@ -1878,4 +1999,98 @@ am_g_head_pl:
     .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xe3dd, 0xd5d1, 0xffc1, 0xf5ed
     .dw   0xfdff, 0xe3dd, 0xdde3, 0xffed, 0xd595, 0xdbff, 0xc1ef, 0xf7c1, 0xffdd, 0xc1dd, 0xffc1, 0xf7eb
     .dw   0xddff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
+sl_g_icon:
+    .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x7f80, 0x01ff, 0xe003, 0xfff0, 0x07ff, 0xf80f, 0xfffc, 0x0fff
+    .dw   0xfc1f, 0xfffe, 0x1c07, 0xfe10, 0x01fe, 0x0000, 0xfe00, 0x007e, 0x0000, 0x7e00, 0x003e, 0x0000
+    .dw   0x3e04, 0x803c, 0x0580, 0x3c06, 0x8038, 0x0480, 0x3000, 0x0020, 0x9000, 0x00b0, 0x0000, 0xd000
+    .dw   0x0000, 0x0000
+sl_g_head:
+    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffed, 0xd5d5
+    .dw   0xdbff, 0xc1fd, 0xfdfd, 0xffc1, 0xd5d5, 0xddff, 0xc1d5, 0xd5dd, 0xffc1, 0xd7d7, 0xefff, 0xffff
+    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
+sl_g_head_pl:
+    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xc3fd, 0xfdc3, 0xffed, 0xd595, 0xdbff
+    .dw   0xc1d7, 0xd7ef, 0xffdd, 0xc1dd, 0xffc1, 0xd5d5, 0xddff, 0xc1ef, 0xf7c1, 0xffdd, 0xc1dd, 0xffc1
+    .dw   0xd5d5, 0xddff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
 .end
+
+; second block: may land in another pool
+.code
+; midi_parse_byte (0x1349, every MIDI input): while asleep and for a while after, the byte becomes 0xf8 and
+; asks for a wake-up. Ends as the instructions it replaces: r7 = byte & 0xf0.
+sl_byte:
+    ld    r7, [sl_on]
+    ld    r6, [sl_grace]
+    or    r7, r6
+    cmp   r7, #0
+    beq   .y_go
+    mov   r7, #1
+    st    [sl_wake], r7
+    mov   r7, #0xf8
+    st    [fp+7], r7
+.y_go:
+    ld    r7, [fp+7]
+    and   r7, #0xf0
+    ret
+
+; tick_10ms (from bl_tick): fall asleep, wake up
+sl_tick:
+    ld    r7, [sl_magic]
+    li    r6, #0xa55a
+    cmp   r7, r6
+    bne   .q_out
+    ld    r7, [sl_grace]
+    cmp   r7, #0
+    beq   .q_nograce
+    li    r6, #0xffff
+    add   r7, r6
+    st    [sl_grace], r7
+.q_nograce:
+    ld    r7, [sl_on]
+    cmp   r7, #0
+    beq   .q_awake
+    call  sl_asleep           ; in the first block
+    ret
+.q_awake:
+    call  sl_get
+    cmp   r6, #0
+    bne   .q_lim
+.q_out:
+    ret
+.q_lim:
+    mov   r1, r6
+    addi  r1, #(sl_lim - 1)
+    ldc   r7, [r1+0]          ; half the ticks, as amp_chk
+    ld    r6, [idle_ticks]
+    cmp   r6, #0
+    bne   .q_cnt
+    ld    r6, [idle_ticks+1]
+    shr   r6, 1
+    cmp   r6, r7
+    blt   .q_out
+.q_cnt:
+    ld    r6, [amp_cnt]
+    shr   r6, 1
+    cmp   r6, r7
+    blt   .q_out
+.q_sleep:
+    mov   r7, #0
+    st    [sl_wake], r7
+    mov   r7, #100            ; 1 s armour: nothing wakes it (sl_grace counts down)
+    st    [sl_grace], r7
+    mov   r7, #1
+    st    [sl_on], r7
+    ld    r7, [screen]
+    st    [sl_scr], r7
+    mov   r7, #27
+    st    [screen], r7
+    st    [0x0113], r7
+    push  r7
+    ccall draw_screen         ; the outputs go off with this tick; the clock at the armour's end (sl_asleep)
+    ret
+
+
+sl_lim:                       ; Sleep times in half ticks: 30 s, 1 min, 5 min (amp_cnt stops at 5 min)
+    .dw   1500, 3000, 15000
+.end
+

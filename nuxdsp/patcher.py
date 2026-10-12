@@ -11,7 +11,8 @@ Patch file syntax (see docs/PATCHING.md):
     .code                                          new code, placed automatically in a free pool
         label:
         instructions                               labels starting with '.' are local to the patch
-    .end
+    .end                                           (several .code blocks may each go to another pool;
+                                                   labels are shared between them)
     .string "OLD" "NEW"                            replace a UI string (1 char per word); NEW may be
                                                    shorter, any Unicode character is one word
     .bitmap GLYPH                                  redraw a glyph/image of the glyph table:
@@ -63,7 +64,8 @@ class Patch:
     title: str = ""
     params: list = field(default_factory=list)
     hooks: list = field(default_factory=list)
-    code: list = field(default_factory=list)
+    code: list = field(default_factory=list)      # all code lines (every block, in order)
+    blocks: list = field(default_factory=list)    # the lines of each .code block, placed separately
     strings: list = field(default_factory=list)
     bitmaps: list = field(default_factory=list)
     tables: list = field(default_factory=list)
@@ -85,7 +87,9 @@ def parse(text, path="<patch>"):
         where = "%s:%d" % (path, n)
         if art is not None:
             if stripped == ".endart":
-                p.code.append("    .dw " + ", ".join("%#06x" % v for v in art_words(art, where)))
+                line = "    .dw " + ", ".join("%#06x" % v for v in art_words(art, where))
+                p.code.append(line)
+                p.blocks[-1].append(line)
                 art = None
             elif stripped:
                 if set(stripped) - set("#."):
@@ -112,7 +116,11 @@ def parse(text, path="<patch>"):
                         raise PatchError("%s: bitmap rows use only '#' and '.'" % where)
                     cur[1].append(stripped)
                 continue
-            (cur.lines if block == "hook" else p.code).append(raw)
+            if block == "hook":
+                cur.lines.append(raw)
+            else:
+                p.code.append(raw)
+                p.blocks[-1].append(raw)
             continue
         if not stripped:
             continue
@@ -137,6 +145,7 @@ def parse(text, path="<patch>"):
             block = "hook"
         elif d == ".code":
             block = "code"
+            p.blocks.append([])
         elif d == ".string":
             if len(t[2]) > len(t[1]):
                 raise PatchError("%s: .string NEW must not be longer than OLD" % where)
@@ -205,17 +214,31 @@ def defaults(m=None):
 
 
 def code_size(p):
-    return asm.block_size(p.code)
+    return sum(n for _, _, n in code_blocks(p))
+
+
+def code_blocks(p):
+    """[(layout key, lines, size)]: the first block is keyed by the patch name, the others NAME#2, NAME#3, ...
+    Each block also gets the other blocks' .equ lines (they take no space), so the constants are shared."""
+    equs = [[l for l in b if (asm.parse_statement(l) or ("",))[0] == "equ"] for b in p.blocks]
+    out = []
+    for i, b in enumerate(p.blocks):
+        lines = [l for j in range(i) for l in equs[j]] + b + [l for j in range(i + 1, len(equs)) for l in equs[j]]
+        out.append((p.name if i == 0 else "%s#%d" % (p.name, i + 1), lines, asm.block_size(b)))
+    return out
 
 
 def allocate(patches, fwmap, layout=None):
-    """Place each patch's code block in a pool. layout {name: addr} forces positions."""
+    """Place each patch's code blocks in pools. layout {key: addr} forces positions (keys: code_blocks)."""
     layout = dict(layout or {})
-    used = [(a, a + code_size(p)) for p in patches if p.name in layout for a in [layout[p.name]]]
+    blocks = [(k, n, p.name) for p in patches for k, _, n in code_blocks(p)]
+    used = [(layout[k], layout[k] + n) for k, n, _ in blocks if layout.get(k) is not None]
     for p in patches:
-        n = code_size(p)
-        if p.name in layout or n == 0:
+        if not p.blocks:
             layout.setdefault(p.name, None)
+    for k, n, name in blocks:
+        if k in layout or n == 0:
+            layout.setdefault(k, None)
             continue
         for s, e in fwmap.pools:
             a = s
@@ -223,15 +246,15 @@ def allocate(patches, fwmap, layout=None):
                 if us < a + n and a < ue:
                     a = max(a, ue)
             if a + n <= e:
-                layout[p.name] = a
+                layout[k] = a
                 used.append((a, a + n))
                 break
         else:
-            raise PatchError("no free pool space for %s (%d words)" % (p.name, n))
-    for p in patches:
-        a, n = layout[p.name], code_size(p)
+            raise PatchError("no free pool space for %s (%d words)" % (k, n))
+    for k, n, name in blocks:
+        a = layout[k]
         if n and not any(s <= a and a + n <= e for s, e in fwmap.pools):
-            raise PatchError("%s: code at %#x..%#x is outside the pools" % (p.name, a, a + n))
+            raise PatchError("%s: code at %#x..%#x is outside the pools" % (k, a, a + n))
     return layout
 
 
@@ -290,14 +313,15 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
 
     if layout is None:
         bundled = canonical_layout(fwmap)
-        layout = {p.name: bundled[p.name] for p in patches
-                  if p.name in bundled and os.path.dirname(os.path.abspath(p.path)) == os.path.abspath(fwmap.patch_dir)}
+        layout = {k: bundled[k] for p in patches for k, _, _ in code_blocks(p)
+                  if k in bundled and os.path.dirname(os.path.abspath(p.path)) == os.path.abspath(fwmap.patch_dir)}
     place = allocate(patches, fwmap, layout)
     # pass 1 over all code blocks: global labels (so patches can call each other)
     for p in patches:
-        if place[p.name] is not None:
-            _, labels = asm.assemble(p.code, syms, origin=place[p.name], label_prefix=p.name,
-                                     labels_only=True)
+        for key, lines, _ in code_blocks(p):
+            if place.get(key) is None:
+                continue
+            _, labels = asm.assemble(lines, syms, origin=place[key], label_prefix=p.name, labels_only=True)
             for k, v in labels.items():
                 if k in syms:
                     raise PatchError("%s: label %r collides with an existing symbol" % (p.name, k))
@@ -316,13 +340,15 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
 
     for p in patches:
         try:
-            if place[p.name] is not None:
-                words, _ = asm.assemble(p.code, syms, origin=place[p.name], label_prefix=p.name,
+            for key, lines, _ in code_blocks(p):
+                if place.get(key) is None:
+                    continue
+                words, _ = asm.assemble(lines, syms, origin=place[key], label_prefix=p.name,
                                         predefined_labels=True)
                 for a, v in words.items():
                     put(a, v, p.name)
-                report.append("%-18s code  %#07x..%#07x (%d words)" % (p.name, place[p.name],
-                                                                      place[p.name] + len(words), len(words)))
+                report.append("%-18s code  %#07x..%#07x (%d words)" % (key, place[key],
+                                                                      place[key] + len(words), len(words)))
             for h in p.hooks:
                 cur = orig[h.addr:h.addr + len(h.expect)]
                 if cur != h.expect:
