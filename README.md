@@ -117,6 +117,19 @@ Both detect the target from the file's SHA-256 and refuse anything else.
 file instead of the original. Make sure the tool reports a non-zero amount programmed. Afterwards check
 *version* on the instrument: it should say `DSP:1.0.7B`. To go back, flash the official file the same way.
 
+**Usage log (`extra_menu`):** the instrument keeps a log in flash pages the stock firmware does not use: 5-minute
+windows with time played, average volume, silence with the speaker on and off, time asleep and the battery
+reading at the window's end (about 17 days, the oldest overwritten). Read it with the instrument connected over
+USB (Linux, find the port with `amidi -l`):
+
+```sh
+amidi -p hw:2,0,0 -S 'AF 7D 4E' -r log.syx -t 30     # the request, then 30 s of the dump
+python3 -m nuxdsp telemetry log.syx                  # summary; --csv log.csv for every window
+```
+
+The request is a poly pressure on channel 16, the dump comes as channel 16 messages (one packet per 10 ms tick,
+so about 1 s per written page and up to ~16 min for a full ring; `-t` is how long amidi listens).
+
 ## Make your own patches
 
 `disasm` produces an annotated listing of *your* firmware that assembles back byte for byte. Keep it
@@ -203,3 +216,8 @@ strona rozpozna model i wersję, pokaże dostępne poprawki i da gotowy plik.
 są opisane wyżej.
 **Wgrywanie:** oficjalnym narzędziem NUX, tak samo jak zwykłą aktualizację DSP. Narzędzie musi pokazać
 niezerową ilość zaprogramowanych danych. Na ekranie wersji powinno być `DSP:1.0.7B`.
+**Dziennik użycia (`extra_menu`):** instrument zapisuje we flashu, w stronach nieużywanych przez fabryczny firmware,
+okna po 5 minut: czas grania, średnią głośność, ciszę z włączonym i wyłączonym głośnikiem, czas uśpienia i odczyt
+baterii (około 17 dni, najstarsze są nadpisywane). Odczyt przez USB: `amidi -p hw:2,0,0 -S 'AF 7D 4E' -r log.syx -t 30`
+(port z `amidi -l`), potem `python3 -m nuxdsp telemetry log.syx`. Każda zapisana strona to około 1 s
+transmisji, pełny ring do ~16 min (`-t` = ile sekund słucha amidi).

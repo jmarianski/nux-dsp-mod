@@ -71,3 +71,8 @@ Because `call` keeps `fp`, your code sees the same `[fp+k]` as the hooked functi
 2. leave registers and flags the way the following original code needs them.
 
 Look at the generated listing around the hook site (`nuxdsp disasm`) before choosing which words to replace.
+
+Inside a replaced C-style function (reached by `ccall`, such as `draw_glyph`) it is safest to use only the
+registers and the instruction forms the stock function uses, and keep any extra state in spare RAM. A blitter
+helper that used `r0`, `r2`…`r5` (even saved and restored) crashed the device, one that keeps its state in RAM and
+uses only `r1`, `r6`, `r7` did not (checked on the device); which instruction caused it is not known.

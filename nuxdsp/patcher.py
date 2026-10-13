@@ -13,6 +13,8 @@ Patch file syntax (see docs/PATCHING.md):
         instructions                               labels starting with '.' are local to the patch
     .end                                           (several .code blocks may each go to another pool;
                                                    labels are shared between them)
+    .code POOL                                     ... in the pool of the map that starts at POOL, placed
+                                                   after all blocks without one (so they stay where they are)
     .string "OLD" "NEW"                            replace a UI string (1 char per word); NEW may be
                                                    shorter, any Unicode character is one word
     .bitmap GLYPH                                  redraw a glyph/image of the glyph table:
@@ -66,6 +68,7 @@ class Patch:
     hooks: list = field(default_factory=list)
     code: list = field(default_factory=list)      # all code lines (every block, in order)
     blocks: list = field(default_factory=list)    # the lines of each .code block, placed separately
+    block_pools: list = field(default_factory=list)  # per block: start of the pool it must go to, or None
     strings: list = field(default_factory=list)
     bitmaps: list = field(default_factory=list)
     tables: list = field(default_factory=list)
@@ -146,6 +149,7 @@ def parse(text, path="<patch>"):
         elif d == ".code":
             block = "code"
             p.blocks.append([])
+            p.block_pools.append(int(t[1], 0) if len(t) > 1 else None)
         elif d == ".string":
             if len(t[2]) > len(t[1]):
                 raise PatchError("%s: .string NEW must not be longer than OLD" % where)
@@ -231,16 +235,20 @@ def code_blocks(p):
 def allocate(patches, fwmap, layout=None):
     """Place each patch's code blocks in pools. layout {key: addr} forces positions (keys: code_blocks)."""
     layout = dict(layout or {})
-    blocks = [(k, n, p.name) for p in patches for k, _, n in code_blocks(p)]
-    used = [(layout[k], layout[k] + n) for k, n, _ in blocks if layout.get(k) is not None]
+    blocks = [(k, n, p.name, pool) for p in patches for (k, _, n), pool in zip(code_blocks(p), p.block_pools)]
+    blocks = [b for b in blocks if b[3] is None] + [b for b in blocks if b[3] is not None]
+    used = [(layout[k], layout[k] + n) for k, n, _, _ in blocks if layout.get(k) is not None]
     for p in patches:
         if not p.blocks:
             layout.setdefault(p.name, None)
-    for k, n, name in blocks:
+    for k, n, name, pool in blocks:
         if k in layout or n == 0:
             layout.setdefault(k, None)
             continue
-        for s, e in fwmap.pools:
+        pools = [(s, e) for s, e in fwmap.pools if pool is None or s == pool]
+        if not pools:
+            raise PatchError("%s: no pool starts at %#x" % (k, pool))
+        for s, e in pools:
             a = s
             for us, ue in sorted(used):
                 if us < a + n and a < ue:
@@ -251,7 +259,7 @@ def allocate(patches, fwmap, layout=None):
                 break
         else:
             raise PatchError("no free pool space for %s (%d words)" % (k, n))
-    for k, n, name in blocks:
+    for k, n, name, _ in blocks:
         a = layout[k]
         if n and not any(s <= a and a + n <= e for s, e in fwmap.pools):
             raise PatchError("%s: code at %#x..%#x is outside the pools" % (k, a, a + n))

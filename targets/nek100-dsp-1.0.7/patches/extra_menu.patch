@@ -67,7 +67,8 @@
 
 ; With lang_pl (found by its first changed word, RAM 0x168 'G' -> 'F') headers, keys and texts are Polish.
 ;
-; Images (the Polish ones are drawn with nuxdsp/pixfont.py, as lang_pl's):
+; Images. Headers and key labels are text images (pt_col): a frame, then nuxdsp/pixfont.py's letters
+; drawn over it in the blitter, in both languages; the rest are bitmaps:
 ; 0x100 ex_g_extra
 ; 0x101 ex_g_head_extra
 ; 0x102 ex_g_head_auto
@@ -133,6 +134,9 @@
     call  amp_note
 .end
 
+.hook 0x00c1c expect 0xd7c8 0x0948     ; battery_tick: low battery, power_off
+    .dw   0xd0ce, tl_lowoff
+.end
 .hook 0x00b15 expect 0xfb63 0xd148 0x000b 0xce91 0xcf90   ; battery_tick on cable: idle_ticks = 0
     .dw   0x7800, 0x7800, 0x7800, 0x7800, 0x7800
 .end
@@ -195,6 +199,12 @@
 .equ sl_on, 0x6a41
 .equ sl_wake, 0x6a42
 .equ sl_scr, 0x6a44
+.equ pt_rec, 0x6a43         ; text image being drawn (ao_glyph), 0 for a bitmap
+.equ pt_x, 0x632a           ; pt_col state (RAM 0x632a..0x6629 is unused after init_all): columns before the text,
+.equ pt_s, 0x632b           ; next word of glyph numbers,
+.equ pt_w, 0x632c           ; the current one (1 = take the next),
+.equ pt_g, 0x632d           ; the glyph being drawn (0 = between glyphs),
+.equ pt_c, 0x632e           ; its column
 .equ sl_grace, 0x6a4a
 .equ amp_cnt, 0x6a45
 .equ ex_ui, 0x6a46
@@ -1024,6 +1034,7 @@ st_off:
     push  #user_presets+124
     ccall preset_write_flash
 .o_off:
+    call  tl_close
     ccall power_off
     ld    r7, [text_buf+13]
     cmp   r7, #0
@@ -1035,6 +1046,7 @@ st_off:
 ; end of boot_presets: Factory loads the factory default, Autosave the hidden page (when it holds a preset;
 ; otherwise what boot_preset loaded stays). User5's RAM copy is the buffer and is read back after.
 st_boot:
+    call  tl_boot
     mov   r7, #0              ; menu state, backlight counter (RAM is not cleared at power-on)
     st    [ex_ui], r7
     st    [ex_pg], r7
@@ -1443,7 +1455,7 @@ bl_dial:                      ; dial: setting -1 / +1, clamp 0..7, save to flash
 ; r1 = 0x0117, as the instruction it replaces. Reads presets_header only (the menu code may be halfway
 ; through ex_norm / ex_put). Before boot_presets has read the settings the word is not ours: on.
 bl_tick:
-    call  sl_tick
+    call  tl_tick             ; then sl_tick
     ld    r7, [sl_on]
     cmp   r7, #0
     bne   .l_off
@@ -1483,6 +1495,7 @@ bl_wake:
     st    [sl_wake], r1
     mov   r1, #0
     st    [bl_count], r1
+    st    [tl_quiet], r1
     li    r1, #0x000b
     ret
 
@@ -1657,9 +1670,11 @@ amp_chk:
     .dw   0x00e0, 0xd0cd, 0xefff   ; port 0xe0 &= ~0x1000 (C: not enough on its own, the speaker hissed on)
     .dw   0xd0cd, 0xfeff           ; and ~0x100 (H: speaker amplifier; on unless headphones), as power_off
     mov   r7, #1
+    st    [tl_ampoff], r7
     ret
 .m_stock:
     ld    r7, [0x0011]
+    st    [tl_ampoff], r7     ; the welcome counter: 0 = on
     ret
 
 ; the synthesizer's MIDI input (0x0d6d0, the library's; synth_send and many others call it): a message
@@ -1805,6 +1820,24 @@ ao_glyph:
     addi  r1, #ao_images
     ldc   r7, [r1+0]
     mov   r1, r7
+    mov   r6, #0
+    st    [pt_rec], r6
+    ldc   r6, [r1+0]
+    shr   r6, 15
+    cmp   r6, #0
+    beq   .q_bmp
+    st    [pt_rec], r7        ; text image: its frame is the bitmap
+    ldc   r6, [r1+2]
+    st    [pt_x], r6
+    add   r7, #3
+    st    [pt_s], r7
+    mov   r6, #1
+    st    [pt_w], r6
+    mov   r6, #0
+    st    [pt_g], r6
+    ldc   r7, [r1+1]
+    mov   r1, r7
+.q_bmp:
     ldc   r6, [r1+0]
     st    [fp+2], r6
     ldc   r6, [r1+1]
@@ -1821,6 +1854,7 @@ ao_glyph:
     blt   .q_col_go
     .dw   0xd0ce, 0x04a3b     ; draw_glyph's epilogue
 .q_col_go:
+    call  pt_col
     mov   r7, #0
     st    [fp+5], r7
 .q_row:
@@ -1853,6 +1887,11 @@ ao_glyph:
     shl   r6, 1
     st    [fp+3], r6
     shr   r7, 15
+    ld    r6, [fp+11]         ; text pixel flips the frame's
+    add   r7, r6
+    and   r7, #1
+    shr   r6, 1
+    st    [fp+11], r6
     ld    r6, [fp+12]
     cmp   r6, #0
     beq   .q_put
@@ -1880,26 +1919,151 @@ ao_glyph:
     st    [fp+6], r7
     .dw   0xd0ce, 0x04971
 
+; [fp+11] (draw_glyph's id, no longer needed) = the text pixels of the next column of the text image pt_rec,
+; bit 0 = row 0 (0 for a bitmap or outside the text). Called once per column, left to right; ao_glyph sets the
+; state up. Text image: 0x8000, frame, -x of the text, then glyph numbers 6 bits each, 2 per word with 0x1000 as
+; end-of-word mark, 0 = end. Glyph n: 3 words of pt_font from 3n-3, columns 0x80 | rows in bytes, 0 = gap.
+; Leaf (call); uses only r1, r6, r7 like stock draw_glyph (its callers keep values in the others).
+pt_col:
+    mov   r7, #0
+    st    [fp+11], r7
+    ld    r6, [pt_rec]
+    cmp   r6, #0
+    beq   .ptc_ret
+    ld    r6, [pt_x]
+    cmp   r6, #0
+    beq   .ptc_text
+    add   r6, #1              ; left of the text (pt_x counts up from -x)
+    st    [pt_x], r6
+    ret
+.ptc_text:
+    ld    r6, [pt_g]
+    cmp   r6, #0
+    bne   .ptc_col
+    ld    r7, [pt_w]          ; next glyph
+    cmp   r7, #1
+    bne   .ptc_have
+    ld    r1, [pt_s]
+    ldc   r7, [r1+0]
+    add   r1, #1
+    st    [pt_s], r1
+.ptc_have:
+    mov   r6, r7
+    shr   r7, 6
+    st    [pt_w], r7
+    and   r6, #63
+    cmp   r6, #0
+    bne   .ptc_glyph
+    st    [pt_rec], r6        ; end of the text
+    ret
+.ptc_glyph:
+    mov   r7, r6
+    shl   r6, 1
+    add   r6, r7
+    addi  r6, #(pt_font - 3)
+    st    [pt_g], r6
+    mov   r7, #0
+    st    [pt_c], r7
+.ptc_col:
+    ld    r7, [pt_c]
+    mov   r6, r7
+    shr   r6, 1
+    ld    r1, [pt_g]
+    add   r1, r6
+    ldc   r6, [r1+0]
+    add   r7, #1
+    st    [pt_c], r7
+    and   r7, #1
+    cmp   r7, #0
+    bne   .ptc_lo             ; column c even: low byte
+    shr   r6, 8
+.ptc_lo:
+    and   r6, #0xff
+    mov   r7, r6
+    shr   r7, 7
+    cmp   r7, #0
+    bne   .ptc_on
+    st    [pt_g], r7          ; the gap after the glyph
+    ret
+.ptc_on:
+    and   r6, #0x7f
+    shl   r6, 1               ; the accent row is image row 1
+    st    [fp+11], r6
+.ptc_ret:
+    ret
+
 ao_images:
     .dw   ex_g_extra, ex_g_head_extra, ex_g_head_auto, ex_g_head_patch, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt, ao_g_batt_hi, ao_g_cable, ao_g_cable_hi, st_g_icon, st_g_head, bl_g_icon, bl_g_head, am_g_icon, am_g_head, sl_g_icon, sl_g_head
     .dw   ex_g_extra, ex_g_head_extra_pl, ex_g_head_auto_pl, ex_g_head_patch_pl, ao_g_icon, ex_g_piece, ao_g_big, ao_g_batt_pl, ao_g_batt_hi_pl, ao_g_cable_pl, ao_g_cable_hi_pl, st_g_icon, st_g_head_pl, bl_g_icon, bl_g_head_pl, am_g_icon, am_g_head_pl, sl_g_icon, sl_g_head_pl
+pt_font:                ; 3 words per glyph: 2 columns each (low byte first), 0x80 | rows, bit 0 = accent row
+    .dw   0xaabe, 0xa2aa, 0x0000, 0x88b6, 0xb688, 0x0000, 0xbe82, 0x0082, 0x0000, 0x8abe, 0xa49a, 0x0000
+    .dw   0x8abc, 0xbc8a, 0x0000, 0xa09e, 0x9ea0, 0x0000, 0xa29c, 0x9ca2, 0x0000, 0x8080, 0x0000, 0x0000
+    .dw   0x8abe, 0x828a, 0x0000, 0x8abe, 0x848a, 0x0000, 0xa29c, 0xa2a2, 0x0000, 0x88be, 0xbe88, 0x0000
+    .dw   0xaaa4, 0x92aa, 0x0000, 0xaabe, 0x94aa, 0x0000, 0x88be, 0xa294, 0x0000, 0xa0be, 0xa0a0, 0x0000
+    .dw   0xbea2, 0x00a2, 0x0000, 0xa29c, 0xbaaa, 0x0000, 0xa2be, 0x9ca2, 0x0000, 0x90be, 0x9088, 0x00be
+    .dw   0xb886, 0x0086, 0x0000, 0xa8be, 0xa0a4, 0x0000, 0x00a0, 0x0000, 0x0000, 0x8abe, 0x0084, 0x0000
+    .dw   0xa29c, 0x009c, 0x0000, 0xa2be, 0x009c, 0x0000, 0xaaa4, 0x0093, 0x0000, 0x98be, 0x00be, 0x0000
+    .dw   0xaabe, 0x00a2, 0x0000, 0xa0be, 0x00a0, 0x0000, 0x82be, 0x00bc, 0x0000, 0xaaa4, 0x92ab, 0x0000
+    .dw   0x84be, 0xbe88, 0x0000, 0xaabe, 0x0094, 0x0000, 0x8abc, 0x00bc, 0x0000, 0x8abe, 0x00b4, 0x0000
+pt_f_head:
+    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff
+    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff
+    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
+pt_f_key:
+    .dw   0x0022, 0x0009, 0x7fc0, 0x6030, 0x180c, 0x0603, 0x0180, 0xc060, 0x3018, 0x0c06, 0x0301, 0x80c0
+    .dw   0x6030, 0x180c, 0x0603, 0x0180, 0xc060, 0x3018, 0x0c06, 0x0301, 0x80bf, 0xc000
+pt_f_key_hi:
+    .dw   0x0022, 0x0009, 0x7fff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff
+    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffbf, 0xc000
+ex_g_head_extra:                ; EXTRA
+    .dw   0x8000, pt_f_head, 0xffef, 0x1081, 0x1103, 0x1005
+ex_g_head_auto:                ; AUTO OFF
+    .dw   0x8000, pt_f_head, 0xfff5, 0x1185, 0x11c3, 0x11c8, 0x1249, 0x1000
+ex_g_head_patch:                ; PATCHES
+    .dw   0x8000, pt_f_head, 0xfff4, 0x114a, 0x12c3, 0x104c, 0x100d
+st_g_head:                ; STARTUP
+    .dw   0x8000, pt_f_head, 0xfff3, 0x10cd, 0x1105, 0x1183, 0x100a
+bl_g_head:                ; BACKLIGHT
+    .dw   0x8000, pt_f_head, 0xfff8, 0x114e, 0x13cb, 0x1450, 0x1312, 0x1003
+am_g_head:                ; SPEAKER
+    .dw   0x8000, pt_f_head, 0xfff4, 0x128d, 0x1141, 0x104f, 0x1004
+sl_g_head:                ; SLEEP
+    .dw   0x8000, pt_f_head, 0xffef, 0x140d, 0x1041, 0x100a
+ex_g_head_extra_pl:                ; DODATKI
+    .dw   0x8000, pt_f_head, 0xfff3, 0x11d3, 0x1153, 0x13c3, 0x1011
+ex_g_head_auto_pl:                ; AUTO WYŁ.
+    .dw   0x8000, pt_f_head, 0xfff6, 0x1185, 0x11c3, 0x1508, 0x1595, 0x1017
+ex_g_head_patch_pl:                ; PATCHE
+    .dw   0x8000, pt_f_head, 0xfff1, 0x114a, 0x12c3, 0x104c, 0x1000
+st_g_head_pl:                ; START
+    .dw   0x8000, pt_f_head, 0xffee, 0x10cd, 0x1105, 0x1003
+bl_g_head_pl:                ; PODŚWIETLENIE
+    .dw   0x8000, pt_f_head, 0xfffd, 0x1658, 0x16da, 0x145c, 0x10dd, 0x175e, 0x145f, 0x101d
+am_g_head_pl:                ; GŁOŚNIK
+    .dw   0x8000, pt_f_head, 0xfff4, 0x1592, 0x1807, 0x1461, 0x100f
+sl_g_head_pl:                ; UŚPIENIE
+    .dw   0x8000, pt_f_head, 0xfff6, 0x1806, 0x144a, 0x1841, 0x1051, 0x1000
+ao_g_batt:                ; BATT
+    .dw   0x8000, pt_f_key, 0xfff7, 0x114e, 0x10c3, 0x1000
+ao_g_batt_hi:                ; BATT
+    .dw   0x8000, pt_f_key_hi, 0xfff7, 0x114e, 0x10c3, 0x1000
+ao_g_cable:                ; CABLE
+    .dw   0x8000, pt_f_key, 0xfffb, 0x114b, 0x140e, 0x1001
+ao_g_cable_hi:                ; CABLE
+    .dw   0x8000, pt_f_key_hi, 0xfffb, 0x114b, 0x140e, 0x1001
+ao_g_batt_pl:                ; BATERIA
+    .dw   0x8000, pt_f_key, 0xfffc, 0x18e2, 0x1743, 0x1464, 0x1023
+ao_g_batt_hi_pl:                ; BATERIA
+    .dw   0x8000, pt_f_key_hi, 0xfffc, 0x18e2, 0x1743, 0x1464, 0x1023
+ao_g_cable_pl:                ; KABEL
+    .dw   0x8000, pt_f_key, 0xfffb, 0x114f, 0x104e, 0x1010
+ao_g_cable_hi_pl:                ; KABEL
+    .dw   0x8000, pt_f_key_hi, 0xfffb, 0x114f, 0x104e, 0x1010
 ex_g_extra:
     .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x000f, 0xfff0, 0x1fff, 0xf818, 0x0018, 0x1800
     .dw   0x1818, 0x1818, 0x1818, 0x1818, 0x1818, 0x1818, 0x1819, 0xff98, 0x19ff, 0x9818, 0x1818, 0x1818
     .dw   0x1818, 0x1818, 0x1818, 0x1818, 0x0018, 0x1800, 0x181f, 0xfff8, 0x0fff, 0xf000, 0x0000, 0x0000
     .dw   0x0000, 0x0000
-ex_g_head_extra:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffc1, 0xd5d5
-    .dw   0xddff, 0xc9f7, 0xf7c9, 0xffdf, 0xc1df, 0xffc1, 0xd7d3, 0xedff, 0xe1db, 0xdbe1, 0xffff, 0xffff
-    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-ex_g_head_auto:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xe1db, 0xdbe1, 0xffc3, 0xfdfd
-    .dw   0xc3ff, 0xdfc1, 0xdfff, 0xe3dd, 0xdde3, 0xffff, 0xffff, 0xe3dd, 0xdde3, 0xffc1, 0xd7df, 0xffc1
-    .dw   0xd7df, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-ex_g_head_patch:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xc1d7, 0xd7ef, 0xffe1, 0xdbdb
-    .dw   0xe1ff, 0xdfc1, 0xdfff, 0xe3dd, 0xdddd, 0xffc1, 0xf7f7, 0xc1ff, 0xc1d5, 0xd5dd, 0xffed, 0xd5d5
-    .dw   0xdbff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
 ao_g_icon:
     .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x00ff, 0x0003, 0xffc0, 0x0700, 0xe00e, 0x0070, 0x1c00
     .dw   0x3818, 0x0018, 0x3000, 0x0c30, 0x000c, 0x3000, 0x0c33, 0xf80c, 0x33f8, 0x0c30, 0x180c, 0x3018
@@ -1924,94 +2088,26 @@ ao_g_big:
     .dw   0x0000, 0x0000, 0x0000, 0x0440, 0x0000, 0x0000, 0x4c00, 0x0000, 0x0005, 0x4000, 0x0000, 0x0064
     .dw   0x0000, 0x0000, 0x0440, 0x0000, 0x0000, 0x0000, 0x0000, 0x0090, 0x0000, 0x0000, 0x0b00, 0x0000
     .dw   0x0000, 0xd000, 0x0000, 0x0009, 0x0000, 0x0000, 0x0000
-ao_g_batt:
-    .dw   0x0022, 0x0009, 0x7fc0, 0x6030, 0x180c, 0x0603, 0x01be, 0xd56a, 0xb298, 0x0cf6, 0x9349, 0x9ec0
-    .dw   0x6837, 0xda0c, 0x0683, 0x7da0, 0xc060, 0x3018, 0x0c06, 0x0301, 0x80bf, 0xc000
-ao_g_batt_hi:
-    .dw   0x0022, 0x0009, 0x7fff, 0xffff, 0xffff, 0xffff, 0xffc1, 0xeaf5, 0x7d7f, 0xff0f, 0x6fb7, 0xe1ff
-    .dw   0xf7f8, 0x3dff, 0xff7f, 0x83df, 0xffff, 0xffff, 0xffff, 0xffff, 0xffbf, 0xc000
-ao_g_cable:
-    .dw   0x0022, 0x0009, 0x7fc0, 0x6030, 0x180c, 0xe68b, 0x45a2, 0xc067, 0xb49a, 0x4cf6, 0x037d, 0xaad5
-    .dw   0x6530, 0x1bec, 0x160b, 0x0580, 0xdf6a, 0xb55a, 0x2c06, 0x0301, 0x80bf, 0xc000
-ao_g_cable_hi:
-    .dw   0x0022, 0x0009, 0x7fff, 0xffff, 0xffff, 0x1f77, 0xbbdd, 0xfff8, 0x7b7d, 0xbf0f, 0xff83, 0xd5ea
-    .dw   0xfaff, 0xfc1f, 0xeff7, 0xfbff, 0xe0f5, 0x7abd, 0xdfff, 0xffff, 0xffbf, 0xc000
 st_g_icon:
     .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x003e, 0x0001, 0xffc0, 0x03e3, 0xe007, 0x0070, 0x0600
     .dw   0x3800, 0x0018, 0x0000, 0x1c00, 0x000c, 0x0000, 0x0c3f, 0xf80c, 0x3ff8, 0x0c00, 0x000c, 0x0000
     .dw   0x0c00, 0x001c, 0x0000, 0x1806, 0x0038, 0x0700, 0x7003, 0xe3e0, 0x01ff, 0xc000, 0x3e00, 0x0000
     .dw   0x0000, 0x0000
-st_g_head:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffed, 0xd5d5, 0xdbff, 0xdfc1
-    .dw   0xdfff, 0xe1db, 0xdbe1, 0xffc1, 0xd7d3, 0xedff, 0xdfc1, 0xdfff, 0xc3fd, 0xfdc3, 0xffc1, 0xd7d7
-    .dw   0xefff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-ex_g_head_extra_pl:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xc1dd, 0xdde3, 0xffe3, 0xdddd
-    .dw   0xe3ff, 0xc1dd, 0xdde3, 0xffe1, 0xd7d7, 0xe1ff, 0xdfc1, 0xdfff, 0xc1f7, 0xebdd, 0xffdd, 0xc1dd
-    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-ex_g_head_auto_pl:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffe1, 0xd7d7, 0xe1ff, 0xc3fd, 0xfdc3, 0xffdf
-    .dw   0xc1df, 0xffe3, 0xdddd, 0xe3ff, 0xffff, 0xffc1, 0xfbf7, 0xfbc1, 0xffcf, 0xf1cf, 0xffc1, 0xf5ed
-    .dw   0xfdff, 0xfdff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-ex_g_head_patch_pl:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xc1d7, 0xd7ef, 0xffe1
-    .dw   0xd7d7, 0xe1ff, 0xdfc1, 0xdfff, 0xe3dd, 0xdddd, 0xffc1, 0xf7f7, 0xc1ff, 0xc1d5, 0xd5dd, 0xffff
-    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-ao_g_batt_pl:
-    .dw   0x0022, 0x0009, 0x7fc0, 0x6030, 0x1bed, 0x5653, 0x019e, 0xd467, 0xb01a, 0x0df6, 0x8301, 0xbed5
-    .dw   0x68b0, 0x1bed, 0x465b, 0x01a2, 0xdf68, 0xb019, 0xed46, 0x7b01, 0x80bf, 0xc000
-ao_g_batt_hi_pl:
-    .dw   0x0022, 0x0009, 0x7fff, 0xffff, 0xfc1e, 0xafaf, 0xffe1, 0xebf8, 0x7ffd, 0xfe0f, 0x7fff, 0xc1ea
-    .dw   0xf77f, 0xfc1e, 0xbfa7, 0xffdd, 0xe0f7, 0x7ffe, 0x1ebf, 0x87ff, 0xffbf, 0xc000
-ao_g_cable_pl:
-    .dw   0x0022, 0x0009, 0x7fc0, 0x6030, 0x180d, 0xf623, 0x29a2, 0xc067, 0xb51a, 0x8cf6, 0x037d, 0xaad5
-    .dw   0x6530, 0x1bed, 0x56ab, 0x4580, 0xdf60, 0xb058, 0x2c06, 0x0301, 0x80bf, 0xc000
-ao_g_cable_hi_pl:
-    .dw   0x0022, 0x0009, 0x7fff, 0xffff, 0xfffe, 0x0fdf, 0xd7dd, 0xfff8, 0x7afd, 0x7f0f, 0xff83, 0xd5ea
-    .dw   0xfaff, 0xfc1e, 0xaf57, 0xbbff, 0xe0ff, 0x7fbf, 0xdfff, 0xffff, 0xffbf, 0xc000
-st_g_head_pl:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffed, 0xd5d5
-    .dw   0xdbff, 0xdfc1, 0xdfff, 0xe1d7, 0xd7e1, 0xffc1, 0xd7d3, 0xedff, 0xdfc1, 0xdfff, 0xffff, 0xffff
-    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
 bl_g_icon:
     .dw   0x0018, 0x0018, 0x0018, 0x0000, 0x1800, 0x0000, 0x0008, 0x0000, 0x0c00, 0x0004, 0x7c00, 0x00fe
     .dw   0x0001, 0x8300, 0x0181, 0xe003, 0x00f0, 0x0300, 0x7833, 0x0078, 0x3300, 0x7803, 0x0078, 0x0300
     .dw   0xf001, 0x81e0, 0x0183, 0x0000, 0xfe00, 0x047c, 0x000c, 0x0000, 0x0800, 0x0000, 0x0000, 0x0018
     .dw   0x0000, 0x1800
-bl_g_head:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xc1d5, 0xd5eb, 0xffe1, 0xd7d7, 0xe1ff, 0xe3dd
-    .dw   0xdddd, 0xffc1, 0xf7eb, 0xddff, 0xc1fd, 0xfdfd, 0xffdd, 0xc1dd, 0xffe3, 0xddd5, 0xd1ff, 0xc1f7
-    .dw   0xf7c1, 0xffdf, 0xc1df, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-bl_g_head_pl:
-    .dw   0x0040, 0x0008, 0xffff, 0xffc1, 0xd7ef, 0xffe3, 0xdde3, 0xffc1, 0xdde3, 0xffed, 0xd59b, 0xffc1
-    .dw   0xf3c1, 0xffdd, 0xc1dd, 0xffc1, 0xd5dd, 0xffdf, 0xc1df, 0xffc1, 0xfdfd, 0xffc1, 0xd5dd, 0xffc1
-    .dw   0xdfe1, 0xffdd, 0xc1dd, 0xffc1, 0xd5dd, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
 am_g_icon:
     .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x00ff, 0x0000, 0xff00, 0x00c3, 0x0000, 0xc300, 0x00c3
     .dw   0x0001, 0x8180, 0x0300, 0xc006, 0x0060, 0x0c00, 0x3018, 0x0018, 0x3fff, 0xfc3f, 0xfffc, 0x0000
     .dw   0x0000, 0x0000, 0x00c6, 0x0000, 0xfe00, 0x047c, 0x4006, 0x00c0, 0x0783, 0xc001, 0xff00, 0x00fe
     .dw   0x0000, 0x0000
-am_g_head:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xedd5, 0xd5db, 0xffc1, 0xd7d7
-    .dw   0xefff, 0xc1d5, 0xd5dd, 0xffe1, 0xd7d7, 0xe1ff, 0xc1f7, 0xebdd, 0xffc1, 0xd5d5, 0xddff, 0xc1d7
-    .dw   0xd3ed, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-am_g_head_pl:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xe3dd, 0xd5d1, 0xffc1, 0xf5ed
-    .dw   0xfdff, 0xe3dd, 0xdde3, 0xffed, 0xd595, 0xdbff, 0xc1ef, 0xf7c1, 0xffdd, 0xc1dd, 0xffc1, 0xf7eb
-    .dw   0xddff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
 sl_g_icon:
     .dw   0x0018, 0x0018, 0x0000, 0x0000, 0x7f80, 0x01ff, 0xe003, 0xfff0, 0x07ff, 0xf80f, 0xfffc, 0x0fff
     .dw   0xfc1f, 0xfffe, 0x1c07, 0xfe10, 0x01fe, 0x0000, 0xfe00, 0x007e, 0x0000, 0x7e00, 0x003e, 0x0000
     .dw   0x3e04, 0x803c, 0x0580, 0x3c06, 0x8038, 0x0480, 0x3000, 0x0020, 0x9000, 0x00b0, 0x0000, 0xd000
     .dw   0x0000, 0x0000
-sl_g_head:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffed, 0xd5d5
-    .dw   0xdbff, 0xc1fd, 0xfdfd, 0xffc1, 0xd5d5, 0xddff, 0xc1d5, 0xd5dd, 0xffc1, 0xd7d7, 0xefff, 0xffff
-    .dw   0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
-sl_g_head_pl:
-    .dw   0x0040, 0x0008, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xc3fd, 0xfdc3, 0xffed, 0xd595, 0xdbff
-    .dw   0xc1d7, 0xd7ef, 0xffdd, 0xc1dd, 0xffc1, 0xd5d5, 0xddff, 0xc1ef, 0xf7c1, 0xffdd, 0xc1dd, 0xffc1
-    .dw   0xd5d5, 0xddff, 0xffff, 0xffff, 0xffff, 0xffff, 0xff7f, 0x3f1f, 0x0f07, 0x0301
 .end
 
 ; second block: may land in another pool
@@ -2090,7 +2186,495 @@ sl_tick:
     ret
 
 
+; r1 = the open entry (tl_n kept in 0..4). Leaf, uses r7 (telemetry).
+tl_slot:
+    ld    r7, [tl_n]
+    cmp   r7, #5
+    blt   .ts_ok
+    mov   r7, #4
+    st    [tl_n], r7
+.ts_ok:
+    shl   r7, 1
+    mov   r1, r7
+    shl   r7, 1
+    add   r1, r7
+    addi  r1, #(tl_buf + 1)
+    ret
+
 sl_lim:                       ; Sleep times in half ticks: 30 s, 1 min, 5 min (amp_cnt stops at 5 min)
     .dw   1500, 3000, 15000
 .end
 
+
+; ---- Telemetry: a log of 5-minute windows in DataFlash pages 0x200..0x5ff (a ring of 1024 pages, ~17 days;
+; nothing in the firmware touches them, the presets are at 0x700..0x706). A page is written with
+; preset_write_flash (31 words, the page erased first): word 0 = 0x8000 on the first page after power-on |
+; sequence number (14 bits), then 5 entries of 6 words:
+;   0 status at the window's end: batt_adc | power_src << 10 (1 = battery, checked) | charge_full << 12 | [0x0005] << 13 (H: 0 with
+;     headphones) | batt_low << 14; 0xffff while the window is open
+;   1 ticks with sound (amp_cnt < 4 * PLAY_TIME: something went to the synthesizer: keys, demo, metronome...)
+;   2 sum of volume (0..10) over every 16th of those ticks
+;   3 ticks of silence with the speaker on, 4 with the speaker off (Speaker), 5 ticks asleep (slow ticks)
+; A window is 30000 awake ticks, a sleeping tick counts SLEEP_W. The page goes to flash when full, but only
+; after 2 s without a panel key or the dial (tl_quiet: the stock code writes presets from those), and at
+; power-off (power key, Auto Off, low battery). The USB MIDI packet AF 7D 4E (poly pressure, channel 16) sends the
+; log, page by page, oldest first, then the page in RAM, over USB MIDI (sub_062cc, one packet per tick: more at
+; once jams the USB output). A page goes as channel 16 messages (USB-MIDI SysEx packets not tried): pitch bend =
+; page (0x7ff = RAM), then 93 x poly pressure, key k = 0..92, value = 7 bits of word k / 3, high first. Erased
+; pages are skipped.
+.param PLAY_TIME 75 1 250 "Telemetry: how long after the last message to the synthesizer it still counts as playing, in 40 ms (4 ticks)"
+.param SLEEP_W 60 1 255 "Telemetry: 10 ms ticks per tick while asleep (the clock is slower)"
+.param DUMP_EVERY 1 1 100 "Telemetry: ticks between two pages sent over USB (after the 94 a page takes)"
+.code 0x0f0b0
+.equ tl_magic, 0x6330         ; 0x4c47 while the log is running (0 after init_all's copy, cleared at power-off)
+.equ tl_quiet, 0x6331         ; ticks since a panel key or the dial (15 bits, wraps)
+.equ tl_req, 0x6332           ; the USB input packet last looked at ([0x2900])
+.equ tl_dump, 0x6333          ; 0 idle, 1 + k: flash page k of the ring next, 1025: the RAM page
+.equ tl_clk, 0x6334           ; window clock
+.equ tl_ampoff, 0x6335        ; amp_chk: 1 = speaker off
+.equ tl_page, 0x6336          ; next page to write (0..1023)
+.equ tl_seq, 0x6337
+.equ tl_n, 0x6338             ; open entry (0..4)
+.equ tl_full, 0x6339          ; page full, to be written
+.equ tl_dcnt, 0x633a
+.equ tl_i, 0x633b
+.equ tl_tmp, 0x633c
+.equ tl_rp, 0x633d
+.equ tl_cnt, 0x633e
+.equ tl_src, 0x633f
+.equ tl_idx, 0x6340
+.equ tl_k, 0x6342
+.equ tl_v, 0x6343
+.equ tl_snd, 0x6349            ; page being sent: 0 no, 1 its pitch bend next, 2 its words
+.equ tl_part, 0x634a
+.equ tl_skip, 0x634b
+.equ tl_buf, 0x6350           ; the page being filled, 31 words
+.equ tl_rd, 0x6370            ; a page read from flash, 31 words
+
+; tick_10ms (from bl_tick, in place of its call sl_tick): count, close windows, write pages, send the log
+tl_tick:
+    call  tl_rx               ; a request from the host
+    call  tl_step             ; one USB packet of the page being sent
+    ld    r7, [tl_magic]
+    li    r6, #0x4c47
+    cmp   r7, r6
+    bne   .tt_out
+    ld    r7, [tl_quiet]
+    add   r7, #1
+    shl   r7, 1
+    shr   r7, 1
+    st    [tl_quiet], r7
+    call  tl_slot
+    mov   r6, #5              ; entry word: 5 asleep, 1 sound, 3 speaker on, 4 off
+    ld    r7, [sl_on]
+    cmp   r7, #0
+    bne   .tt_cat
+    mov   r6, #1
+    ld    r7, [amp_cnt]
+    shr   r7, 2
+    cmp   r7, #PLAY_TIME
+    blt   .tt_cat
+    mov   r6, #3
+    ld    r7, [tl_ampoff]
+    cmp   r7, #0
+    beq   .tt_cat
+    mov   r6, #4
+.tt_cat:
+    add   r1, r6
+    ld    r7, [r1+0]
+    add   r7, #1
+    st    [r1+0], r7
+    cmp   r6, #1
+    bne   .tt_clk
+    and   r7, #15             ; every 16th tick of sound: + volume
+    cmp   r7, #0
+    bne   .tt_clk
+    ld    r7, [r1+1]
+    ld    r6, [volume]
+    add   r7, r6
+    st    [r1+1], r7
+    mov   r6, #1
+.tt_clk:
+    mov   r7, #1
+    cmp   r6, #5
+    bne   .tt_add
+    mov   r7, #SLEEP_W
+.tt_add:
+    ld    r6, [tl_clk]
+    add   r7, r6
+    st    [tl_clk], r7
+    li    r6, #30000
+    cmp   r7, r6
+    blt   .tt_job
+    mov   r7, #0
+    st    [tl_clk], r7
+    call  tl_end
+.tt_job:
+    ld    r7, [tl_quiet]
+    cmp   r7, #200
+    blt   .tt_out
+    ld    r7, [tl_full]
+    cmp   r7, #0
+    beq   .tt_send
+    call  tl_flush
+    jmp   .tt_out
+.tt_send:
+    call  tl_send
+.tt_out:
+    .dw   0xd0ce, sl_tick
+
+; close the open entry: its status word, then the next entry, or the page is full
+tl_end:
+    call  tl_slot
+    ld    r7, [batt_low]
+    and   r7, #1
+    ld    r6, [0x0005]
+    and   r6, #1
+    shl   r7, 1
+    or    r7, r6
+    ld    r6, [charge_full]
+    and   r6, #1
+    shl   r7, 1
+    or    r7, r6
+    ld    r6, [power_src]
+    and   r6, #3
+    shl   r7, 2
+    or    r7, r6
+    shl   r7, 10
+    ld    r6, [batt_adc]
+    or    r7, r6
+    st    [r1+0], r7
+    ld    r7, [tl_n]
+    cmp   r7, #4
+    blt   .te_next
+    mov   r7, #1
+    st    [tl_full], r7
+    ret
+.te_next:
+    add   r7, #1
+    st    [tl_n], r7
+; a new open entry at tl_n
+tl_zero:
+    call  tl_slot
+    li    r7, #0xffff
+    st    [r1+0], r7
+    mov   r7, #0
+    st    [r1+1], r7
+    st    [r1+2], r7
+    st    [r1+3], r7
+    st    [r1+4], r7
+    st    [r1+5], r7
+    ret
+
+; write the page, start the next one
+tl_flush:
+    ld    r7, [tl_page]
+    addi  r7, #(0x200 - 0x701)  ; preset_write_flash writes page 0x701 + n
+    push  r7
+    push  #tl_buf
+    ccall preset_write_flash
+    ld    r7, [tl_page]
+    add   r7, #1
+    shl   r7, 6
+    shr   r7, 6
+    st    [tl_page], r7
+    ld    r7, [tl_seq]
+    add   r7, #1
+    shl   r7, 2
+    shr   r7, 2
+    st    [tl_seq], r7
+; empty page with header r7
+tl_new:
+    li    r1, #tl_buf
+    st    [r1+0], r7
+    li    r7, #0xffff
+    mov   r6, #1
+.tn_fill:
+    add   r1, #1
+    st    [r1+0], r7
+    add   r6, #1
+    cmp   r6, #31
+    blt   .tn_fill
+    mov   r7, #0
+    st    [tl_n], r7
+    st    [tl_full], r7
+    jmp   tl_zero
+
+; tick (from tl_tick): the USB input does not go through midi_parse_byte: sub_06273 keeps the last 100 packets
+; it gets (2 words each, at 0x6a58, the newest at index [0x2900]) and gives them to the synthesizer. A new
+; packet AF 7D 4E (poly pressure, channel 16) starts sending the log. Only the newest packet is looked at, and
+; its words in either order (which one is first is not checked on the device).
+tl_rx:
+    ld    r7, [0x2900]
+    ld    r6, [tl_req]
+    cmp   r7, r6
+    beq   .rx_out
+    st    [tl_req], r7
+    mov   r1, r7
+    shl   r1, 1
+    addi  r1, #0x6a58
+    ld    r7, [r1+0]
+    ld    r6, [r1+1]
+    li    r1, #0x0aaf
+    cmp   r7, r1
+    bne   .rx_b
+    li    r1, #0x7d4e
+    cmp   r6, r1
+    beq   .rx_go
+.rx_out:
+    ret
+.rx_b:
+    li    r1, #0x7d4e
+    cmp   r7, r1
+    bne   .rx_out
+    li    r1, #0x0aaf
+    cmp   r6, r1
+    bne   .rx_out
+.rx_go:
+    mov   r7, #1
+    st    [tl_dump], r7
+    ret
+
+tl_pp:                        ; tl_step: AF, tl_k++, r7 & 0x7f
+    and   r7, #0x7f
+    st    [tl_v], r7
+    ld    r7, [tl_k]
+    shl   r7, 8
+    ld    r6, [tl_v]
+    add   r7, r6
+    st    [tl_v], r7
+    ld    r7, [tl_k]
+    add   r7, #1
+    st    [tl_k], r7
+    ld    r7, [tl_v]
+    li    r6, #0x0aaf         ; cable 0, CIN A, AF
+; USB-MIDI packet r6 (cable << 12 | CIN << 8 | status) : r7 (data 1 << 8 | data 2) to the host, as route_note_on
+; does it (sub_062cc, the USB stack: the low word is pushed first)
+tl_pk:
+    push  r7
+    push  r6
+    ccall 0x062cc
+    ret
+
+.end
+.code 0x08e5a
+; read tl_cnt words of flash page tl_page + r7 (mod 1024) into tl_rd, as st_read (the flash routines keep no
+; registers); tl_idx = the ring index; r7 = the first word
+tl_rdp:
+    ld    r6, [tl_page]
+    add   r7, r6
+    shl   r7, 6
+    shr   r7, 6
+    st    [tl_idx], r7
+    addi  r7, #0x200
+    st    [tl_rp], r7
+    call  0x07b2d
+    mov   r7, #0
+    ld    r6, [tl_rp]
+    call  0x07bf1
+    mov   r7, #0
+    st    [tl_i], r7
+.tr_loop:
+    call  flash_get_word
+    ld    r7, [tl_i]
+    mov   r1, r7
+    addi  r1, #tl_rd
+    st    [r1+0], r0
+    add   r7, #1
+    st    [tl_i], r7
+    ld    r6, [tl_cnt]
+    cmp   r7, r6
+    blt   .tr_loop
+    call  0x07b2d
+    ld    r7, [tl_rd]
+    ret
+
+; power-on (st_boot): find where the ring goes on (the first page that does not follow its predecessor)
+tl_boot:
+    li    r1, #tl_magic
+    mov   r7, #0
+    st    [r1+0], r7          ; tl_magic
+    st    [r1+1], r7          ; tl_quiet
+    st    [r1+2], r7          ; tl_req
+    st    [r1+3], r7          ; tl_dump
+    st    [r1+4], r7          ; tl_clk
+    st    [r1+5], r7          ; tl_ampoff
+    st    [r1+6], r7          ; tl_page
+    mov   r7, #1
+    st    [tl_cnt], r7
+    mov   r7, #0
+    call  tl_rdp              ; page 0: erased (bit 14) -> start there with 0
+    shl   r7, 1
+    shr   r7, 1
+    st    [tl_tmp], r7
+    shr   r7, 14
+    cmp   r7, #0
+    beq   .tb_next
+    li    r7, #0xffff
+    st    [tl_tmp], r7
+    jmp   .tb_found
+.tb_next:
+    ld    r7, [tl_page]
+    add   r7, #1
+    st    [tl_page], r7
+    li    r6, #1024
+    cmp   r7, r6
+    blt   .tb_rd
+    mov   r7, #0
+    st    [tl_page], r7
+    jmp   .tb_found
+.tb_rd:
+    mov   r7, #0
+    call  tl_rdp
+    shl   r7, 1
+    shr   r7, 1
+    ld    r6, [tl_tmp]
+    add   r6, #1
+    shl   r6, 2
+    shr   r6, 2
+    cmp   r7, r6
+    bne   .tb_found
+    st    [tl_tmp], r7
+    jmp   .tb_next
+.tb_found:
+    ld    r7, [tl_tmp]
+    add   r7, #1
+    shl   r7, 2
+    shr   r7, 2
+    st    [tl_seq], r7
+    li    r6, #0x8000
+    or    r7, r6
+    call  tl_new
+    li    r7, #0x4c47
+    st    [tl_magic], r7
+    ret
+
+; power-off: close the entry, write the page, stop
+tl_close:
+    ld    r7, [tl_magic]
+    li    r6, #0x4c47
+    cmp   r7, r6
+    bne   .tc_out
+    call  tl_end
+    call  tl_flush
+    mov   r7, #0
+    st    [tl_magic], r7
+.tc_out:
+    ret
+
+tl_lowoff:                    ; battery_tick, low battery (0x0c1c)
+    call  tl_close
+    ccall power_off
+
+.end
+.code 0x09169
+; one page of the log every DUMP_EVERY ticks (from tl_tick, quiet)
+tl_send:
+    ld    r7, [tl_snd]
+    cmp   r7, #0
+    bne   .tls_out
+    ld    r7, [tl_dump]
+    cmp   r7, #0
+    beq   .tls_out
+    ld    r6, [tl_dcnt]
+    add   r6, #1
+    st    [tl_dcnt], r6
+    cmp   r6, #DUMP_EVERY
+    blt   .tls_out
+    mov   r6, #0
+    st    [tl_dcnt], r6
+    mov   r7, #31
+    st    [tl_cnt], r7
+    mov   r7, #16             ; erased pages skipped per tick: each is a flash read
+    st    [tl_skip], r7
+.tls_next:
+    ld    r7, [tl_dump]
+    li    r6, #1025
+    cmp   r7, r6
+    blt   .tls_flash
+    mov   r7, #0
+    st    [tl_dump], r7
+    li    r7, #0x7ff
+    st    [tl_idx], r7
+    li    r7, #tl_buf
+    jmp   .tls_send
+.tls_flash:
+    add   r7, #1
+    st    [tl_dump], r7
+    addi  r7, #0xfffe         ; page tl_page + k
+    call  tl_rdp
+    li    r6, #0xffff
+    cmp   r7, r6
+    beq   .tls_skip           ; erased
+    li    r7, #tl_rd
+    jmp   .tls_send
+.tls_skip:                    ; the next one now, or in the next tick
+    ld    r7, [tl_skip]
+    li    r6, #0xffff
+    add   r7, r6
+    st    [tl_skip], r7
+    cmp   r7, #0
+    bne   .tls_next
+    ret
+.tls_send:                    ; start sending the 31 words at r7 (page tl_idx), one packet per tick (tl_step)
+    st    [tl_src], r7
+    mov   r7, #1
+    st    [tl_snd], r7
+.tls_out:
+    ret
+
+; tick: the next packet of the page: channel 16, pitch bend = the ring index, then 93 x poly pressure, key
+; k = 0..92, value = 7 bits of word k/3 (high first). One per tick: more at once jams the USB output.
+tl_step:
+    ld    r7, [tl_snd]
+    cmp   r7, #0
+    beq   .tls_out
+    cmp   r7, #1
+    bne   .tp_word
+    mov   r7, #2
+    st    [tl_snd], r7
+    mov   r7, #0
+    st    [tl_i], r7
+    st    [tl_k], r7
+    st    [tl_part], r7
+    ld    r7, [tl_idx]
+    shr   r7, 7
+    st    [tl_v], r7
+    ld    r7, [tl_idx]
+    and   r7, #0x7f
+    shl   r7, 8
+    ld    r6, [tl_v]
+    add   r7, r6
+    li    r6, #0x0eef         ; USB-MIDI: cable 0, CIN E, EF
+    call  tl_pk
+    ret
+.tp_word:
+    ld    r7, [tl_i]
+    ld    r1, [tl_src]
+    add   r1, r7
+    ld    r7, [r1+0]
+    ld    r6, [tl_part]
+    cmp   r6, #0
+    bne   .tp_p1
+    shr   r7, 14
+.tp_p1:
+    cmp   r6, #1
+    bne   .tp_go
+    shr   r7, 7
+.tp_go:
+    add   r6, #1
+    cmp   r6, #3
+    blt   .tp_st
+    mov   r6, #0
+    ld    r1, [tl_i]
+    add   r1, #1
+    st    [tl_i], r1
+    cmp   r1, #31
+    blt   .tp_st
+    st    [tl_snd], r6
+.tp_st:
+    st    [tl_part], r6
+    call  tl_pp
+    ret
+
+.end
