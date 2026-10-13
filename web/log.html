@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NUX Usage Log</title>
+<style>
+:root {
+  --bg: #f6f5f2; --card: #ffffff; --fg: #1d1d1b; --muted: #6b6a66; --line: #dddbd5;
+  --accent: #2f5fd0; --ok: #1f7a3a; --bad: #b3261e; --warn-bg: #fff4d6; --warn-fg: #6a4b00;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --card: #20201e; --fg: #ecebe7; --muted: #a09f99; --line: #3a3936;
+    --accent: #7ea2ff; --ok: #6fd08c; --bad: #ff8a80; --warn-bg: #3a3112; --warn-fg: #f2d98a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --card: #20201e; --fg: #ecebe7; --muted: #a09f99; --line: #3a3936;
+  --accent: #7ea2ff; --ok: #6fd08c; --bad: #ff8a80; --warn-bg: #3a3112; --warn-fg: #f2d98a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 0 0 14px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+.desc { color: var(--muted); font-size: 13px; }
+button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button.small { padding: 4px 10px; font-size: 13px; background: transparent; color: var(--accent); border: 1px solid var(--line); }
+select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); max-width: 100%; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; font-size: 14px; }
+.status { margin-top: 10px; font-size: 14px; }
+.ok { color: var(--ok); } .bad { color: var(--bad); }
+progress { width: 100%; height: 8px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 12px; }
+.stat { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.stat b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12.5px; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+tr.on td { border-top: 2px solid var(--accent); }
+footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>NUX Usage Log</h1>
+  <p class="sub">Reads the usage log of the <code>extra_menu</code> patch from a NEK-100 connected over USB, in this
+  browser (Web MIDI: Chrome, Edge, Firefox). Nothing is sent anywhere else.<br>
+  Odczyt dziennika użycia z poprawki <code>extra_menu</code> z NEK-100 podłączonego przez USB, w przeglądarce.
+  Dane nigdzie nie wychodzą.</p>
+
+  <div class="card">
+    <h2>1. Connect / Połącz</h2>
+    <button id="connect">Allow MIDI / Zezwól na MIDI</button>
+    <div class="row" id="ports" hidden>
+      <label>In / Wejście <select id="pin"></select></label>
+      <label>Out / Wyjście <select id="pout"></select></label>
+    </div>
+    <div class="status" id="cstatus"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Read / Odczytaj</h2>
+    <p class="desc" style="margin-top:0">Every page written so far takes about 1 s, a full log (17 days) up to ~16 min.
+    Keep the keyboard on and do not play meanwhile. / Każda zapisana strona to około 1 s, pełny dziennik (17 dni)
+    do ~16 min. Nie wyłączaj i nie graj w trakcie.</p>
+    <button id="read" disabled>Read the log / Odczytaj dziennik</button>
+    <button class="small" id="stop" hidden>Stop</button>
+    <div class="status" id="rstatus"></div>
+    <progress id="prog" hidden></progress>
+  </div>
+
+  <div class="card" id="out" hidden>
+    <h2>3. Log / Dziennik</h2>
+    <div class="stats" id="stats"></div>
+    <div class="row">
+      <button class="small" id="csv">CSV</button>
+      <button class="small" id="raw">Raw dump (.syx) / Surowy zrzut</button>
+    </div>
+    <div class="tbl"><table id="tbl"></table></div>
+  </div>
+
+  <footer>The same decoder as <code>python3 -m nuxdsp telemetry</code>. Times are approximate: a window is 30000
+  ticks of 10 ms, asleep counts SLEEP_W ticks per slow tick. ·
+  <a href="index.html">Patcher</a></footer>
+</main>
+<script>
+"use strict";
+// Dump format (extra_menu.patch, Telemetry): a page = pitch bend on channel 16 (the ring index, 0x7ff = the
+// page in RAM, sent last) + 93 poly pressures on channel 16, key k = 0..92, value = 7 bits of word k / 3,
+// high first. Request: poly pressure AF 7D 4E.
+const RAM_PAGE = 0x7ff, DIAG_PAGE = 0x7fe, KEYS = 93, TICK = 0.01, SLEEP_W = 60;
+const REQUEST = [0xAF, 0x7D, 0x4E];
+const $ = id => document.getElementById(id);
+let access = null, raw = [], pages = [], bad = 0, cur = null, lastData = 0, timer = null, reading = false, es = [];
+
+$("connect").onclick = async () => {
+  if (!navigator.requestMIDIAccess) {
+    $("cstatus").innerHTML = '<span class="bad">This browser has no Web MIDI. / Ta przeglądarka nie obsługuje Web MIDI.</span>';
+    return;
+  }
+  try { access = await navigator.requestMIDIAccess({ sysex: false }); }
+  catch (e) { $("cstatus").innerHTML = '<span class="bad">MIDI access refused / odmowa dostępu: ' + e.message + '</span>'; return; }
+  access.onstatechange = fillPorts;
+  fillPorts();
+};
+
+function fillPorts() {
+  for (const [sel, list] of [[$("pin"), access.inputs], [$("pout"), access.outputs]]) {
+    const was = sel.value;
+    sel.innerHTML = "";
+    for (const p of list.values()) {
+      const o = document.createElement("option");
+      o.value = p.id; o.textContent = p.name;
+      if (p.id === was || (!was && /NEK/i.test(p.name))) o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+  $("ports").hidden = false;
+  const ok = $("pin").value && $("pout").value;
+  $("read").disabled = !ok || reading;
+  $("cstatus").innerHTML = ok ? '<span class="ok">Ready / Gotowe</span>'
+    : '<span class="bad">No MIDI device — connect the keyboard by USB / Brak urządzenia MIDI — podłącz pianino przez USB</span>';
+}
+
+function onMsg(ev) {
+  const d = ev.data;
+  if (!d.length || d[0] >= 0xF0) return;
+  raw.push(...d);
+  if (d[0] === 0xEF && d.length >= 3) {
+    if (cur) bad++;
+    cur = { idx: d[1] | d[2] << 7, v: [] };
+  } else if (d[0] === 0xAF && d.length >= 3 && cur) {
+    if (d[1] !== cur.v.length) { bad++; cur = null; return; }
+    cur.v.push(d[2]);
+    if (cur.v.length === KEYS) {
+      const v = cur.v, ws = [];
+      for (let i = 0; i < 31; i++) ws.push((v[3 * i] << 14 | v[3 * i + 1] << 7 | v[3 * i + 2]) & 0xFFFF);
+      pages.push({ idx: cur.idx, ws });
+      const done = cur.idx === RAM_PAGE;
+      cur = null;
+      if (done) return finish();
+    }
+  } else return;
+  lastData = Date.now();
+  progress();
+}
+
+function progress() {
+  const n = pages.filter(p => p.idx !== DIAG_PAGE).length;
+  $("rstatus").textContent = "Pages / Strony: " + n + (cur ? " (+" + cur.v.length + "/" + KEYS + ")" : "") +
+    (bad ? " · damaged / uszkodzone: " + bad : "");
+}
+
+$("read").onclick = () => {
+  const inp = access.inputs.get($("pin").value), out = access.outputs.get($("pout").value);
+  raw = []; pages = []; bad = 0; cur = null; reading = true;
+  inp.onmidimessage = onMsg;
+  out.send(REQUEST);
+  lastData = Date.now();
+  $("read").disabled = true; $("stop").hidden = false; $("prog").hidden = false; $("out").hidden = true;
+  $("rstatus").textContent = "Request sent, waiting… / Wysłano żądanie, czekam…";
+  timer = setInterval(() => {
+    // erased pages are skipped 16 per tick, so a gap of a few seconds is normal at most
+    if (Date.now() - lastData > 15000) finish("No data for 15 s / Brak danych od 15 s");
+  }, 1000);
+};
+$("stop").onclick = () => finish("Stopped / Przerwano");
+
+function finish(why) {
+  clearInterval(timer);
+  const inp = access.inputs.get($("pin").value);
+  if (inp) inp.onmidimessage = null;
+  reading = false;
+  $("stop").hidden = true; $("prog").hidden = true; $("read").disabled = false;
+  if (cur) { bad++; cur = null; }
+  const flash = pages.filter(p => p.idx !== RAM_PAGE && p.idx !== DIAG_PAGE).length;
+  const ram = pages.some(p => p.idx === RAM_PAGE);
+  if (!pages.length) {
+    $("rstatus").innerHTML = '<span class="bad">' + (why || "") + ' — nothing received. Is the patched firmware with ' +
+      'extra_menu installed? If even played notes do not arrive, switch the keyboard off and on. / nic nie dotarło. ' +
+      'Czy jest wgrany firmware z extra_menu? Jeśli nie dochodzą nawet grane nuty, wyłącz i włącz pianino.</span>';
+    return;
+  }
+  $("rstatus").innerHTML = '<span class="' + (ram ? "ok" : "bad") + '">' + (why ? why + " · " : "") +
+    flash + " flash pages" + (ram ? " + RAM" : "") + (bad ? " · damaged / uszkodzone: " + bad : "") + "</span>";
+  es = entries(pages);
+  show(es);
+}
+
+// the same as nuxdsp/telemetry.py entries()
+function entries(pgs) {
+  let flash = pgs.filter(p => p.idx !== RAM_PAGE && p.idx !== DIAG_PAGE && p.ws[0] !== 0xFFFF);
+  const ram = pgs.filter(p => p.idx === RAM_PAGE);
+  if (flash.length) {
+    const seqs = flash.map(p => p.ws[0] & 0x3FFF);
+    const order = seqs.map((_, i) => i).sort((a, b) => seqs[a] - seqs[b]);
+    let best = -1, bk = 0;   // the biggest gap, the last one of equals (as max() in telemetry.py)
+    for (let k = 0; k < order.length; k++) {
+      const g = (seqs[order[(k + 1) % order.length]] - seqs[order[k]]) & 0x3FFF;
+      if (g >= best) { best = g; bk = k; }
+    }
+    const start = (bk + 1) % order.length;
+    const seen = new Set(), uniq = [];
+    for (let k = 0; k < order.length; k++) {
+      const p = flash[order[(start + k) % order.length]], s = p.ws[0] & 0x3FFF;
+      if (!seen.has(s)) { seen.add(s); uniq.push(p); }
+    }
+    flash = uniq;
+  }
+  const out = [];
+  for (const p of flash.concat(ram.slice(-1))) {
+    const ws = p.ws;
+    for (let k = 0; k < 5; k++) {
+      const e = ws.slice(1 + 6 * k, 7 + 6 * k), [st, play, vol, on, off, slp] = e;
+      const rest = e.slice(1);
+      if (rest.every(x => x === 0xFFFF) || (st === 0xFFFF && rest.every(x => x === 0))) continue;
+      const closed = st !== 0xFFFF;
+      out.push({
+        page: p.idx, seq: ws[0] & 0x3FFF, power_on: !!(ws[0] & 0x8000) && k === 0, closed,
+        batt_adc: closed ? st & 0x3FF : null, power_src: closed ? (st >> 10) & 3 : null,
+        charge_full: closed ? (st >> 12) & 1 : null, out5: closed ? (st >> 13) & 1 : null,
+        batt_low: closed ? (st >> 14) & 1 : null,
+        play_s: play * TICK, vol_avg: play >= 16 ? vol * 16 / play : null,
+        silent_speaker_on_s: on * TICK, silent_speaker_off_s: off * TICK,
+        asleep_s: slp * SLEEP_W * TICK, asleep_ticks: slp,
+      });
+    }
+  }
+  return out;
+}
+
+const hm = s => Math.floor(s / 3600) + " h " + String(Math.floor(s % 3600 / 60)).padStart(2, "0") + " min";
+const ms = s => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+const sum = (es, k) => es.reduce((a, e) => a + e[k], 0);
+
+function show(es) {
+  const play = sum(es, "play_s"), on = sum(es, "silent_speaker_on_s"), off = sum(es, "silent_speaker_off_s"),
+    slp = sum(es, "asleep_s"), batt = es.filter(e => e.closed && e.power_src === 1);
+  let vw = 0, vs = 0;
+  for (const e of es) if (e.vol_avg !== null) { vw += e.vol_avg * e.play_s; vs += e.play_s; }
+  const st = [
+    [hm(play + on + off + slp), "total (approx.) / razem (ok.)"],
+    [hm(play), "playing / granie"],
+    [hm(on), "silence, speaker on / cisza, głośnik wł."],
+    [hm(off), "silence, speaker off / cisza, głośnik wył."],
+    [hm(slp), "asleep / uśpienie"],
+    [es.filter(e => e.power_on).length + " · " + es.length, "power-ons · windows / włączenia · okna"],
+    [vs ? (vw / vs).toFixed(1) : "—", "average volume while playing / średnia głośność"],
+    [batt.length ? batt[0].batt_adc + " → " + batt[batt.length - 1].batt_adc : "—", "battery ADC / bateria (ADC)"],
+  ];
+  $("stats").innerHTML = st.map(([b, s]) => "<div class=stat><b>" + b + "</b><span>" + s + "</span></div>").join("");
+  const src = { 0: "?", 1: "battery", 2: "?", 3: "?" };
+  let h = "<tr><th>#</th><th>play</th><th>vol</th><th>speaker on</th><th>speaker off</th><th>asleep</th><th>power</th><th>batt ADC</th></tr>";
+  for (const e of es) {
+    h += "<tr" + (e.power_on ? " class=on" : "") + "><td>" + e.seq + (e.power_on ? " ⏻" : "") + (e.closed ? "" : " …") +
+      "</td><td>" + ms(e.play_s) + "</td><td>" + (e.vol_avg === null ? "" : e.vol_avg.toFixed(1)) +
+      "</td><td>" + ms(e.silent_speaker_on_s) + "</td><td>" + ms(e.silent_speaker_off_s) + "</td><td>" + ms(e.asleep_s) +
+      "</td><td>" + (e.closed ? src[e.power_src] + (e.charge_full ? ", full" : "") + (e.batt_low ? ", low" : "") : "") +
+      "</td><td>" + (e.closed ? e.batt_adc : "") + "</td></tr>";
+  }
+  $("tbl").innerHTML = h;
+  $("out").hidden = false;
+}
+
+function save(name, data, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], { type }));
+  a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$("csv").onclick = () => {
+  if (!es.length) return;
+  const keys = Object.keys(es[0]);
+  const rows = [keys.join(",")].concat(es.map(e => keys.map(k => e[k] === null ? "" :
+    e[k] === true ? "True" : e[k] === false ? "False" : e[k]).join(",")));
+  save("nek100-log.csv", rows.join("\r\n") + "\r\n", "text/csv");
+};
+$("raw").onclick = () => save("nek100-log.syx", new Uint8Array(raw), "application/octet-stream");
+</script>
+</body>
+</html>
