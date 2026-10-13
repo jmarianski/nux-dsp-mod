@@ -196,6 +196,17 @@ def cmd_port(a):
     print("wrote draft target %s — every entry needs review, see docs/NEW_TARGET.md" % a.out_dir)
 
 
+def cmd_telemetry(a):
+    from . import telemetry
+    pgs, bad = telemetry.pages(read(a.dump))
+    es = telemetry.entries(pgs, a.sleep_w)
+    print("pages: %d (%d damaged, skipped)" % (len(pgs), bad))
+    print(telemetry.summary(es))
+    if a.csv:
+        write(a.csv, telemetry.to_csv(es).encode())
+        print("wrote %s" % a.csv)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="nuxdsp", description="Community patcher for NUX digital piano DSP firmware")
     ap.add_argument("--target", help="target id, directory or .map file (default: detected from the firmware file)")
@@ -250,6 +261,10 @@ def main(argv=None):
     s.add_argument("firmware", help="official file of a supported target")
     s.add_argument("new_firmware", help="the other firmware file (e.g. another model or version)")
     s.add_argument("out_dir", help="new target directory, e.g. targets/nek110-dsp-1.0.0")
+    s = sub.add_parser("telemetry", help="decode the extra_menu telemetry log (MIDI dump, see nuxdsp/telemetry.py)")
+    s.add_argument("dump", help=".syx file, e.g. from: amidi -p hw:1,0,0 -S 'AF 7D 4E' -r log.syx -t 30")
+    s.add_argument("--csv", help="also write every window as CSV")
+    s.add_argument("--sleep-w", type=int, default=60, help="the SLEEP_W the firmware was built with")
     s = sub.add_parser("web", help="regenerate web/targets/<id>.js for the given official files")
     s.add_argument("firmware", nargs="+", help="official firmware files (only used to compute the patch words)")
     s.add_argument("--web-dir", default=None, help="default: web/ of this repository")

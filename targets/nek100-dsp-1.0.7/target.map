@@ -16,6 +16,8 @@ ramdata 0x155f7 0x17f23     ; initialised data, copied to RAM address 0 at boot
 pool    0x09ad4 0x09bd4     ; unreferenced function (no calls, branches or pointers) — patch code goes here (C)
 pool    0x062f3 0x06558     ; unreferenced function, same checks (C: polish_font runs here)
 pool    0x0f0b0 0x0fff0     ; 0xffff filler after the code of bank 0, loaded into program memory (C: probe words at 0xf0b0 and 0xffe0 read back on the device)
+pool    0x08e5a 0x08eff     ; C-library call wrappers (0x810d/0x820d .. epilogue) that nothing calls: no word of the image equals an address inside, no known branch comes in; checked: the telemetry runs here
+pool    0x09169 0x091fb     ; more of them, same checks; checked: telemetry runs here
 glyphs  0x12cf7 0x1348f 243 ; glyph/image table (8 words each: u32 byte offset, size, width, height) + bitmaps
 soundbank NEK100_SBANK_V1.0.4 sha256 59d5c23ba8269e21c231195280ef8c6255ced890a5c8977868c9aba83313b646 template 479 1 loop 48 0 ; added instruments copy the settings of 479.Shamisen's zone 1 (C: quick attack, follows the keyboard, decays), those with loops 48.Organ 10's zone 0 (C: holds while the key is held)
 
@@ -88,6 +90,7 @@ var   0x0001c batt_low                ; 1 after 15 readings below batt_levels[0]
 var   0x02809 batt_levels 6           ; ADC thresholds of the battery bars (+0x12 while charging)
 var   0x0000f ui_part                 ; (H) index of the part being edited (0 = main voice)
 var   0x00069 factory_presets 155     ; 5 x 31 words, initialised data
+var   0x00145 volume                  ; (H, strong) master VOL 0..10 shown on the main screen (glyph 0xe9); param handler 0x3fa4 sends vol*127/10; saved in presets
 var   0x00158 octave                  ; Octave 0..2 = -1/0/+1 (C: menu), read through param_get, saved in presets
 var   0x00144 touch                   ; Touch 0..4 = LIGHT2 LIGHT1 NORMAL HARD1 HARD2 (C); sent to MCU as CC 0x32
 var   0x0015d sustain_on              ; Sustain key state 0/1 (init 0, not in presets); drawn as soft key 2 (glyphs 0xf1/0xf2)
