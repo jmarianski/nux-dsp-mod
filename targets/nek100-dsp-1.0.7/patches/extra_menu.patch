@@ -60,7 +60,8 @@
 ; asks for a wake-up. After 1 s (the amplifier is off by then: switching the clock under it pops) port 0x40 bit
 ; 0x8000 is cleared (H: the system clock leaves the PLL for the 12.288 MHz crystal, the first step of the start-up
 ; code at 0x479), then bit 0x4000 (H: PLL off, the second step; datasheet: 6 mA instead of 76 for the chip). Ticks
-; run about 60 times slower then (C: a 100-tick wait took about a minute). The UART to the MCU runs at the wrong
+; run 32 times slower then (checked: the power key's 50 ticks take 16 s instead of 0.5 s; the PLL makes 32x the
+; crystal). The UART to the MCU runs at the wrong
 ; speed: any byte is garbage, and only means "wake up" (C: keys, panel keys and the dial all wake it).
 ; Wake-up in tick_10ms: bit 0x4000, the start-up's wait, bit 0x8000, the screen back; bytes are dropped and the
 ; amplifier stays off for SLEEP_GRACE more ticks (garbage still queued, the clock settling).
@@ -92,6 +93,13 @@
 
 .param BATT_DEFAULT 4 0 7 "Battery time when not set yet: 0 Off, 1 5 min, 2 10, 3 15, 4 30, 5 60, 6 90, 7 120 min"
 .param CABLE_DEFAULT 0 0 7 "Cable time when not set yet (same values)"
+; entry points of the optional telemetry patch (telemetry.patch, it hooks these places itself without
+; extra_menu); without it they do nothing
+.weak tl_tick ex_ret
+.weak tl_boot ex_ret
+.weak tl_close ex_ret
+.weak tl_key ex_ret
+.weak tl_amp ex_ret
 
 .hook 0x009a4 expect 0xfbf1 0xbf20 0x0002 0xd148 0x000b 0xfa81 0xfaf7 0xfa13 0xe102 0xd7c8 0x0948  ; idle_ticks >= 180000 -> power_off
     .dw   0xd0ce, ao_due
@@ -134,9 +142,6 @@
     call  amp_note
 .end
 
-.hook 0x00c1c expect 0xd7c8 0x0948     ; battery_tick: low battery, power_off
-    .dw   0xd0ce, tl_lowoff
-.end
 .hook 0x00b15 expect 0xfb63 0xd148 0x000b 0xce91 0xcf90   ; battery_tick on cable: idle_ticks = 0
     .dw   0x7800, 0x7800, 0x7800, 0x7800, 0x7800
 .end
@@ -1154,7 +1159,8 @@ st_read:
 .rd_hidden:
     .dw   0xd0ce, st_apply
 
-; ---- Patches (screen 22): names of the installed patches, 5 lines a page (like Info), page in ex_pg.
+; ---- Patches (screen 22): names of the installed patches, 5 lines a page (like Info), page in ex_pg (back to
+; page 0 after the last one).
 ; Counters across calls live at the end of text_buf (names use at most 13 words of it).
 pp_screen:
     .dw   0x830d, 0x2b01
@@ -1169,7 +1175,7 @@ pp_screen:
     st    [text_buf+15], r7
 .p_count:
     ld    r7, [text_buf+14]
-    cmp   r7, #10
+    cmp   r7, #11
     blt   .p_count_go
     jmp   .p_counted
 .p_count_go:
@@ -1183,20 +1189,25 @@ pp_screen:
     jmp   .p_count
 .p_counted:
     call  ex_norm
+    ld    r7, [ex_pg]         ; 5 * page past the last one: page 0
+    mov   r6, r7
+    shl   r7, 2
+    add   r7, r6
     ld    r6, [text_buf+15]
-    cmp   r6, #6
-    blt   .p_one_page
-    jmp   .p_draw
-.p_one_page:
+    cmp   r7, r6
+    blt   .p_draw
     mov   r7, #0
     st    [ex_pg], r7
 .p_draw:
     mov   r7, #0
     st    [text_buf+14], r7   ; entry
-    st    [text_buf+15], r7   ; installed ones before it
+    ld    r1, [ex_pg]
+    addi  r1, #pp_off
+    ldc   r7, [r1+0]
+    st    [text_buf+15], r7   ; installed ones before it, minus 5 * page = its line
 .p_loop:
     ld    r7, [text_buf+14]
-    cmp   r7, #10
+    cmp   r7, #11
     blt   .p_go
     .dw   0xd0ce, 0x061f5
 .p_go:
@@ -1213,13 +1224,6 @@ pp_screen:
     mov   r6, r7
     add   r6, #1
     st    [text_buf+15], r6
-    ld    r6, [ex_pg]
-    and   r6, #1
-    cmp   r6, #0
-    beq   .p_line
-    li    r6, #0xfffb         ; page 1: lines 5..9
-    add   r7, r6
-.p_line:
     cmp   r7, #0
     blt   .p_next
     cmp   r7, #5
@@ -1286,10 +1290,10 @@ pp_page_f:                    ; dial: other page
     .dw   0xd0ce, pp_flip
 .pf_out:
     .dw   0xd0ce, 0x03b5f
-pp_flip:                      ; toggle the page, redraw (one page -> pp_screen resets it)
+pp_flip:                      ; next page, redraw (past the last one -> pp_screen goes back to 0)
     ld    r7, [ex_pg]
     add   r7, #1
-    and   r7, #1
+    and   r7, #3
     st    [ex_pg], r7
     ld    r7, [screen]
     push  r7
@@ -1307,6 +1311,7 @@ pp_tab:                       ; kind (0 code word, 1 RAM word, 2 always), addres
     .dw   1, 0x00168, 0x0047, pp_n7, pp_p7      ; lang_pl
     .dw   0, 0x04fb6, 0xd14a, pp_n8, pp_p8      ; custom_voices
     .dw   1, 0x05806, 0x0000, pp_n9, pp_p9      ; welcome_cat
+    .dw   0, 0x00c1c, 0xd7c8, pp_n10, pp_p10    ; telemetry
 pp_n0:
     .dw   0x54, 0x4f, 0x55, 0x43, 0x48, 0x20, 0x4f, 0x46, 0x46, 0
 pp_p0:
@@ -1455,7 +1460,10 @@ bl_dial:                      ; dial: setting -1 / +1, clamp 0..7, save to flash
 ; r1 = 0x0117, as the instruction it replaces. Reads presets_header only (the menu code may be halfway
 ; through ex_norm / ex_put). Before boot_presets has read the settings the word is not ours: on.
 bl_tick:
-    call  tl_tick             ; then sl_tick
+    ld    r7, [sl_on]         ; telemetry: asleep,
+    ld    r6, [amp_cnt]       ; ticks since the last message to the synthesizer
+    call  tl_tick
+    call  sl_tick
     ld    r7, [sl_on]
     cmp   r7, #0
     bne   .l_off
@@ -1495,7 +1503,7 @@ bl_wake:
     st    [sl_wake], r1
     mov   r1, #0
     st    [bl_count], r1
-    st    [tl_quiet], r1
+    call  tl_key              ; r1 = 0
     li    r1, #0x000b
     ret
 
@@ -1670,12 +1678,10 @@ amp_chk:
     .dw   0x00e0, 0xd0cd, 0xefff   ; port 0xe0 &= ~0x1000 (C: not enough on its own, the speaker hissed on)
     .dw   0xd0cd, 0xfeff           ; and ~0x100 (H: speaker amplifier; on unless headphones), as power_off
     mov   r7, #1
-    st    [tl_ampoff], r7
-    ret
+    .dw   0xd0ce, tl_amp      ; jmp: r7 = 1, speaker off
 .m_stock:
-    ld    r7, [0x0011]
-    st    [tl_ampoff], r7     ; the welcome counter: 0 = on
-    ret
+    ld    r7, [0x0011]        ; the welcome counter: 0 = on
+    .dw   0xd0ce, tl_amp
 
 ; the synthesizer's MIDI input (0x0d6d0, the library's; synth_send and many others call it): a message
 amp_note:
@@ -2186,495 +2192,18 @@ sl_tick:
     ret
 
 
-; r1 = the open entry (tl_n kept in 0..4). Leaf, uses r7 (telemetry).
-tl_slot:
-    ld    r7, [tl_n]
-    cmp   r7, #5
-    blt   .ts_ok
-    mov   r7, #4
-    st    [tl_n], r7
-.ts_ok:
-    shl   r7, 1
-    mov   r1, r7
-    shl   r7, 1
-    add   r1, r7
-    addi  r1, #(tl_buf + 1)
+ex_ret:                       ; the telemetry patch's entry points without it
     ret
 
 sl_lim:                       ; Sleep times in half ticks: 30 s, 1 min, 5 min (amp_cnt stops at 5 min)
     .dw   1500, 3000, 15000
 .end
 
-
-; ---- Telemetry: a log of 5-minute windows in DataFlash pages 0x200..0x5ff (a ring of 1024 pages, ~17 days;
-; nothing in the firmware touches them, the presets are at 0x700..0x706). A page is written with
-; preset_write_flash (31 words, the page erased first): word 0 = 0x8000 on the first page after power-on |
-; sequence number (14 bits), then 5 entries of 6 words:
-;   0 status at the window's end: batt_adc | power_src << 10 (1 = battery, checked) | charge_full << 12 | [0x0005] << 13 (H: 0 with
-;     headphones) | batt_low << 14; 0xffff while the window is open
-;   1 ticks with sound (amp_cnt < 4 * PLAY_TIME: something went to the synthesizer: keys, demo, metronome...)
-;   2 sum of volume (0..10) over every 16th of those ticks
-;   3 ticks of silence with the speaker on, 4 with the speaker off (Speaker), 5 ticks asleep (slow ticks)
-; A window is 30000 awake ticks, a sleeping tick counts SLEEP_W. The page goes to flash when full, but only
-; after 2 s without a panel key or the dial (tl_quiet: the stock code writes presets from those), and at
-; power-off (power key, Auto Off, low battery). The USB MIDI packet AF 7D 4E (poly pressure, channel 16) sends the
-; log, page by page, oldest first, then the page in RAM, over USB MIDI (sub_062cc, one packet per tick: more at
-; once jams the USB output). A page goes as channel 16 messages (USB-MIDI SysEx packets not tried): pitch bend =
-; page (0x7ff = RAM), then 93 x poly pressure, key k = 0..92, value = 7 bits of word k / 3, high first. Erased
-; pages are skipped.
-.param PLAY_TIME 75 1 250 "Telemetry: how long after the last message to the synthesizer it still counts as playing, in 40 ms (4 ticks)"
-.param SLEEP_W 60 1 255 "Telemetry: 10 ms ticks per tick while asleep (the clock is slower)"
-.param DUMP_EVERY 1 1 100 "Telemetry: ticks between two pages sent over USB (after the 94 a page takes)"
-.code 0x0f0b0
-.equ tl_magic, 0x6330         ; 0x4c47 while the log is running (0 after init_all's copy, cleared at power-off)
-.equ tl_quiet, 0x6331         ; ticks since a panel key or the dial (15 bits, wraps)
-.equ tl_req, 0x6332           ; the USB input packet last looked at ([0x2900])
-.equ tl_dump, 0x6333          ; 0 idle, 1 + k: flash page k of the ring next, 1025: the RAM page
-.equ tl_clk, 0x6334           ; window clock
-.equ tl_ampoff, 0x6335        ; amp_chk: 1 = speaker off
-.equ tl_page, 0x6336          ; next page to write (0..1023)
-.equ tl_seq, 0x6337
-.equ tl_n, 0x6338             ; open entry (0..4)
-.equ tl_full, 0x6339          ; page full, to be written
-.equ tl_dcnt, 0x633a
-.equ tl_i, 0x633b
-.equ tl_tmp, 0x633c
-.equ tl_rp, 0x633d
-.equ tl_cnt, 0x633e
-.equ tl_src, 0x633f
-.equ tl_idx, 0x6340
-.equ tl_k, 0x6342
-.equ tl_v, 0x6343
-.equ tl_snd, 0x6349            ; page being sent: 0 no, 1 its pitch bend next, 2 its words
-.equ tl_part, 0x634a
-.equ tl_skip, 0x634b
-.equ tl_buf, 0x6350           ; the page being filled, 31 words
-.equ tl_rd, 0x6370            ; a page read from flash, 31 words
-
-; tick_10ms (from bl_tick, in place of its call sl_tick): count, close windows, write pages, send the log
-tl_tick:
-    call  tl_rx               ; a request from the host
-    call  tl_step             ; one USB packet of the page being sent
-    ld    r7, [tl_magic]
-    li    r6, #0x4c47
-    cmp   r7, r6
-    bne   .tt_out
-    ld    r7, [tl_quiet]
-    add   r7, #1
-    shl   r7, 1
-    shr   r7, 1
-    st    [tl_quiet], r7
-    call  tl_slot
-    mov   r6, #5              ; entry word: 5 asleep, 1 sound, 3 speaker on, 4 off
-    ld    r7, [sl_on]
-    cmp   r7, #0
-    bne   .tt_cat
-    mov   r6, #1
-    ld    r7, [amp_cnt]
-    shr   r7, 2
-    cmp   r7, #PLAY_TIME
-    blt   .tt_cat
-    mov   r6, #3
-    ld    r7, [tl_ampoff]
-    cmp   r7, #0
-    beq   .tt_cat
-    mov   r6, #4
-.tt_cat:
-    add   r1, r6
-    ld    r7, [r1+0]
-    add   r7, #1
-    st    [r1+0], r7
-    cmp   r6, #1
-    bne   .tt_clk
-    and   r7, #15             ; every 16th tick of sound: + volume
-    cmp   r7, #0
-    bne   .tt_clk
-    ld    r7, [r1+1]
-    ld    r6, [volume]
-    add   r7, r6
-    st    [r1+1], r7
-    mov   r6, #1
-.tt_clk:
-    mov   r7, #1
-    cmp   r6, #5
-    bne   .tt_add
-    mov   r7, #SLEEP_W
-.tt_add:
-    ld    r6, [tl_clk]
-    add   r7, r6
-    st    [tl_clk], r7
-    li    r6, #30000
-    cmp   r7, r6
-    blt   .tt_job
-    mov   r7, #0
-    st    [tl_clk], r7
-    call  tl_end
-.tt_job:
-    ld    r7, [tl_quiet]
-    cmp   r7, #200
-    blt   .tt_out
-    ld    r7, [tl_full]
-    cmp   r7, #0
-    beq   .tt_send
-    call  tl_flush
-    jmp   .tt_out
-.tt_send:
-    call  tl_send
-.tt_out:
-    .dw   0xd0ce, sl_tick
-
-; close the open entry: its status word, then the next entry, or the page is full
-tl_end:
-    call  tl_slot
-    ld    r7, [batt_low]
-    and   r7, #1
-    ld    r6, [0x0005]
-    and   r6, #1
-    shl   r7, 1
-    or    r7, r6
-    ld    r6, [charge_full]
-    and   r6, #1
-    shl   r7, 1
-    or    r7, r6
-    ld    r6, [power_src]
-    and   r6, #3
-    shl   r7, 2
-    or    r7, r6
-    shl   r7, 10
-    ld    r6, [batt_adc]
-    or    r7, r6
-    st    [r1+0], r7
-    ld    r7, [tl_n]
-    cmp   r7, #4
-    blt   .te_next
-    mov   r7, #1
-    st    [tl_full], r7
-    ret
-.te_next:
-    add   r7, #1
-    st    [tl_n], r7
-; a new open entry at tl_n
-tl_zero:
-    call  tl_slot
-    li    r7, #0xffff
-    st    [r1+0], r7
-    mov   r7, #0
-    st    [r1+1], r7
-    st    [r1+2], r7
-    st    [r1+3], r7
-    st    [r1+4], r7
-    st    [r1+5], r7
-    ret
-
-; write the page, start the next one
-tl_flush:
-    ld    r7, [tl_page]
-    addi  r7, #(0x200 - 0x701)  ; preset_write_flash writes page 0x701 + n
-    push  r7
-    push  #tl_buf
-    ccall preset_write_flash
-    ld    r7, [tl_page]
-    add   r7, #1
-    shl   r7, 6
-    shr   r7, 6
-    st    [tl_page], r7
-    ld    r7, [tl_seq]
-    add   r7, #1
-    shl   r7, 2
-    shr   r7, 2
-    st    [tl_seq], r7
-; empty page with header r7
-tl_new:
-    li    r1, #tl_buf
-    st    [r1+0], r7
-    li    r7, #0xffff
-    mov   r6, #1
-.tn_fill:
-    add   r1, #1
-    st    [r1+0], r7
-    add   r6, #1
-    cmp   r6, #31
-    blt   .tn_fill
-    mov   r7, #0
-    st    [tl_n], r7
-    st    [tl_full], r7
-    jmp   tl_zero
-
-; tick (from tl_tick): the USB input does not go through midi_parse_byte: sub_06273 keeps the last 100 packets
-; it gets (2 words each, at 0x6a58, the newest at index [0x2900]) and gives them to the synthesizer. A new
-; packet AF 7D 4E (poly pressure, channel 16) starts sending the log. Only the newest packet is looked at, and
-; its words in either order (which one is first is not checked on the device).
-tl_rx:
-    ld    r7, [0x2900]
-    ld    r6, [tl_req]
-    cmp   r7, r6
-    beq   .rx_out
-    st    [tl_req], r7
-    mov   r1, r7
-    shl   r1, 1
-    addi  r1, #0x6a58
-    ld    r7, [r1+0]
-    ld    r6, [r1+1]
-    li    r1, #0x0aaf
-    cmp   r7, r1
-    bne   .rx_b
-    li    r1, #0x7d4e
-    cmp   r6, r1
-    beq   .rx_go
-.rx_out:
-    ret
-.rx_b:
-    li    r1, #0x7d4e
-    cmp   r7, r1
-    bne   .rx_out
-    li    r1, #0x0aaf
-    cmp   r6, r1
-    bne   .rx_out
-.rx_go:
-    mov   r7, #1
-    st    [tl_dump], r7
-    ret
-
-tl_pp:                        ; tl_step: AF, tl_k++, r7 & 0x7f
-    and   r7, #0x7f
-    st    [tl_v], r7
-    ld    r7, [tl_k]
-    shl   r7, 8
-    ld    r6, [tl_v]
-    add   r7, r6
-    st    [tl_v], r7
-    ld    r7, [tl_k]
-    add   r7, #1
-    st    [tl_k], r7
-    ld    r7, [tl_v]
-    li    r6, #0x0aaf         ; cable 0, CIN A, AF
-; USB-MIDI packet r6 (cable << 12 | CIN << 8 | status) : r7 (data 1 << 8 | data 2) to the host, as route_note_on
-; does it (sub_062cc, the USB stack: the low word is pushed first)
-tl_pk:
-    push  r7
-    push  r6
-    ccall 0x062cc
-    ret
-
-.end
 .code 0x08e5a
-; read tl_cnt words of flash page tl_page + r7 (mod 1024) into tl_rd, as st_read (the flash routines keep no
-; registers); tl_idx = the ring index; r7 = the first word
-tl_rdp:
-    ld    r6, [tl_page]
-    add   r7, r6
-    shl   r7, 6
-    shr   r7, 6
-    st    [tl_idx], r7
-    addi  r7, #0x200
-    st    [tl_rp], r7
-    call  0x07b2d
-    mov   r7, #0
-    ld    r6, [tl_rp]
-    call  0x07bf1
-    mov   r7, #0
-    st    [tl_i], r7
-.tr_loop:
-    call  flash_get_word
-    ld    r7, [tl_i]
-    mov   r1, r7
-    addi  r1, #tl_rd
-    st    [r1+0], r0
-    add   r7, #1
-    st    [tl_i], r7
-    ld    r6, [tl_cnt]
-    cmp   r7, r6
-    blt   .tr_loop
-    call  0x07b2d
-    ld    r7, [tl_rd]
-    ret
-
-; power-on (st_boot): find where the ring goes on (the first page that does not follow its predecessor)
-tl_boot:
-    li    r1, #tl_magic
-    mov   r7, #0
-    st    [r1+0], r7          ; tl_magic
-    st    [r1+1], r7          ; tl_quiet
-    st    [r1+2], r7          ; tl_req
-    st    [r1+3], r7          ; tl_dump
-    st    [r1+4], r7          ; tl_clk
-    st    [r1+5], r7          ; tl_ampoff
-    st    [r1+6], r7          ; tl_page
-    mov   r7, #1
-    st    [tl_cnt], r7
-    mov   r7, #0
-    call  tl_rdp              ; page 0: erased (bit 14) -> start there with 0
-    shl   r7, 1
-    shr   r7, 1
-    st    [tl_tmp], r7
-    shr   r7, 14
-    cmp   r7, #0
-    beq   .tb_next
-    li    r7, #0xffff
-    st    [tl_tmp], r7
-    jmp   .tb_found
-.tb_next:
-    ld    r7, [tl_page]
-    add   r7, #1
-    st    [tl_page], r7
-    li    r6, #1024
-    cmp   r7, r6
-    blt   .tb_rd
-    mov   r7, #0
-    st    [tl_page], r7
-    jmp   .tb_found
-.tb_rd:
-    mov   r7, #0
-    call  tl_rdp
-    shl   r7, 1
-    shr   r7, 1
-    ld    r6, [tl_tmp]
-    add   r6, #1
-    shl   r6, 2
-    shr   r6, 2
-    cmp   r7, r6
-    bne   .tb_found
-    st    [tl_tmp], r7
-    jmp   .tb_next
-.tb_found:
-    ld    r7, [tl_tmp]
-    add   r7, #1
-    shl   r7, 2
-    shr   r7, 2
-    st    [tl_seq], r7
-    li    r6, #0x8000
-    or    r7, r6
-    call  tl_new
-    li    r7, #0x4c47
-    st    [tl_magic], r7
-    ret
-
-; power-off: close the entry, write the page, stop
-tl_close:
-    ld    r7, [tl_magic]
-    li    r6, #0x4c47
-    cmp   r7, r6
-    bne   .tc_out
-    call  tl_end
-    call  tl_flush
-    mov   r7, #0
-    st    [tl_magic], r7
-.tc_out:
-    ret
-
-tl_lowoff:                    ; battery_tick, low battery (0x0c1c)
-    call  tl_close
-    ccall power_off
-
-.end
-.code 0x09169
-; one page of the log every DUMP_EVERY ticks (from tl_tick, quiet)
-tl_send:
-    ld    r7, [tl_snd]
-    cmp   r7, #0
-    bne   .tls_out
-    ld    r7, [tl_dump]
-    cmp   r7, #0
-    beq   .tls_out
-    ld    r6, [tl_dcnt]
-    add   r6, #1
-    st    [tl_dcnt], r6
-    cmp   r6, #DUMP_EVERY
-    blt   .tls_out
-    mov   r6, #0
-    st    [tl_dcnt], r6
-    mov   r7, #31
-    st    [tl_cnt], r7
-    mov   r7, #16             ; erased pages skipped per tick: each is a flash read
-    st    [tl_skip], r7
-.tls_next:
-    ld    r7, [tl_dump]
-    li    r6, #1025
-    cmp   r7, r6
-    blt   .tls_flash
-    mov   r7, #0
-    st    [tl_dump], r7
-    li    r7, #0x7ff
-    st    [tl_idx], r7
-    li    r7, #tl_buf
-    jmp   .tls_send
-.tls_flash:
-    add   r7, #1
-    st    [tl_dump], r7
-    addi  r7, #0xfffe         ; page tl_page + k
-    call  tl_rdp
-    li    r6, #0xffff
-    cmp   r7, r6
-    beq   .tls_skip           ; erased
-    li    r7, #tl_rd
-    jmp   .tls_send
-.tls_skip:                    ; the next one now, or in the next tick
-    ld    r7, [tl_skip]
-    li    r6, #0xffff
-    add   r7, r6
-    st    [tl_skip], r7
-    cmp   r7, #0
-    bne   .tls_next
-    ret
-.tls_send:                    ; start sending the 31 words at r7 (page tl_idx), one packet per tick (tl_step)
-    st    [tl_src], r7
-    mov   r7, #1
-    st    [tl_snd], r7
-.tls_out:
-    ret
-
-; tick: the next packet of the page: channel 16, pitch bend = the ring index, then 93 x poly pressure, key
-; k = 0..92, value = 7 bits of word k/3 (high first). One per tick: more at once jams the USB output.
-tl_step:
-    ld    r7, [tl_snd]
-    cmp   r7, #0
-    beq   .tls_out
-    cmp   r7, #1
-    bne   .tp_word
-    mov   r7, #2
-    st    [tl_snd], r7
-    mov   r7, #0
-    st    [tl_i], r7
-    st    [tl_k], r7
-    st    [tl_part], r7
-    ld    r7, [tl_idx]
-    shr   r7, 7
-    st    [tl_v], r7
-    ld    r7, [tl_idx]
-    and   r7, #0x7f
-    shl   r7, 8
-    ld    r6, [tl_v]
-    add   r7, r6
-    li    r6, #0x0eef         ; USB-MIDI: cable 0, CIN E, EF
-    call  tl_pk
-    ret
-.tp_word:
-    ld    r7, [tl_i]
-    ld    r1, [tl_src]
-    add   r1, r7
-    ld    r7, [r1+0]
-    ld    r6, [tl_part]
-    cmp   r6, #0
-    bne   .tp_p1
-    shr   r7, 14
-.tp_p1:
-    cmp   r6, #1
-    bne   .tp_go
-    shr   r7, 7
-.tp_go:
-    add   r6, #1
-    cmp   r6, #3
-    blt   .tp_st
-    mov   r6, #0
-    ld    r1, [tl_i]
-    add   r1, #1
-    st    [tl_i], r1
-    cmp   r1, #31
-    blt   .tp_st
-    st    [tl_snd], r6
-.tp_st:
-    st    [tl_part], r6
-    call  tl_pp
-    ret
-
+pp_off:                       ; ex_pg -> minus 5 * page (Patches)
+    .dw   0, 0xfffb, 0xfff6, 0xfff1
+pp_n10:
+    .dw   0x54, 0x45, 0x4c, 0x45, 0x4d, 0x45, 0x54, 0x52, 0x59, 0
+pp_p10:
+    .dw   0x54, 0x45, 0x4c, 0x45, 0x4d, 0x45, 0x54, 0x52, 0x49, 0x41, 0
 .end

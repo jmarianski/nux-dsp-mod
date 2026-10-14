@@ -4,10 +4,14 @@ Patch file syntax (see docs/PATCHING.md):
     .patch NAME
     .title "One line description"
     .requires NAME ...                             patches that must be applied too
+    .weak NAME FALLBACK                            NAME is FALLBACK unless another applied patch defines
+                                                   it (an optional patch's entry points)
     .param NAME DEFAULT MIN MAX "description"     user-tunable constant, usable in expressions
     .hook ADDR expect W [W...]                     replace exactly these original words at ADDR ...
         instructions                               ... with the same number of words
     .end
+    .hook ADDR expect W [W...] unless NAME ...     ... only when none of these patches is applied (it
+                                                   hooks the same place and calls this one's .weak entry)
     .code                                          new code, placed automatically in a free pool
         label:
         instructions                               labels starting with '.' are local to the patch
@@ -58,6 +62,7 @@ class Hook:
     expect: list
     lines: list
     line_no: int
+    unless: list = field(default_factory=list)
 
 
 @dataclass
@@ -74,6 +79,7 @@ class Patch:
     tables: list = field(default_factory=list)
     draws: list = field(default_factory=list)
     requires: list = field(default_factory=list)
+    weaks: list = field(default_factory=list)     # (name, fallback)
     path: str = ""
 
 
@@ -138,12 +144,18 @@ def parse(text, path="<patch>"):
             p.title = t[1]
         elif d == ".requires":
             p.requires += t[1:]
+        elif d == ".weak":
+            if len(t) != 3:
+                raise PatchError("%s: .weak NAME FALLBACK" % where)
+            p.weaks.append((t[1], t[2]))
         elif d == ".param":
             p.params.append(Param(t[1], int(t[2], 0), int(t[3], 0), int(t[4], 0), t[5] if len(t) > 5 else ""))
         elif d == ".hook":
             if len(t) < 4 or t[2] != "expect":
                 raise PatchError("%s: .hook ADDR expect W [W...]" % where)
-            cur = Hook(int(t[1], 0), [int(x, 0) for x in t[3:]], [], n)
+            unless = t[t.index("unless") + 1:] if "unless" in t else []
+            ws = t[3:t.index("unless")] if "unless" in t else t[3:]
+            cur = Hook(int(t[1], 0), [int(x, 0) for x in ws], [], n, unless)
             p.hooks.append(cur)
             block = "hook"
         elif d == ".code":
@@ -334,6 +346,12 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
                 if k in syms:
                     raise PatchError("%s: label %r collides with an existing symbol" % (p.name, k))
                 syms[k] = v
+    for p in patches:
+        for name, fallback in p.weaks:
+            if name not in syms:
+                if fallback not in syms:
+                    raise PatchError("%s: .weak %s: unknown fallback %r" % (p.name, name, fallback))
+                syms[name] = syms[fallback]
 
     w = container.words(image)
     orig = list(w)
@@ -358,6 +376,8 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
                 report.append("%-18s code  %#07x..%#07x (%d words)" % (key, place[key],
                                                                       place[key] + len(words), len(words)))
             for h in p.hooks:
+                if any(u in names for u in h.unless):
+                    continue
                 cur = orig[h.addr:h.addr + len(h.expect)]
                 if cur != h.expect:
                     raise PatchError("%s: hook %#x expects %s, firmware has %s"

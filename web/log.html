@@ -52,9 +52,9 @@ a { color: var(--accent); }
 <body>
 <main>
   <h1>NUX Usage Log</h1>
-  <p class="sub">Reads the usage log of the <code>extra_menu</code> patch from a NEK-100 connected over USB, in this
+  <p class="sub">Reads the usage log of the optional <code>telemetry</code> patch from a NEK-100 connected over USB, in this
   browser (Web MIDI: Chrome, Edge, Firefox). Nothing is sent anywhere else.<br>
-  Odczyt dziennika użycia z poprawki <code>extra_menu</code> z NEK-100 podłączonego przez USB, w przeglądarce.
+  Odczyt dziennika użycia z opcjonalnej poprawki <code>telemetry</code> z NEK-100 podłączonego przez USB, w przeglądarce.
   Dane nigdzie nie wychodzą.</p>
 
   <div class="card">
@@ -94,10 +94,10 @@ a { color: var(--accent); }
 </main>
 <script>
 "use strict";
-// Dump format (extra_menu.patch, Telemetry): a page = pitch bend on channel 16 (the ring index, 0x7ff = the
+// Dump format (telemetry.patch): a page = pitch bend on channel 16 (the ring index, 0x7ff = the
 // page in RAM, sent last) + 93 poly pressures on channel 16, key k = 0..92, value = 7 bits of word k / 3,
 // high first. Request: poly pressure AF 7D 4E.
-const RAM_PAGE = 0x7ff, DIAG_PAGE = 0x7fe, KEYS = 93, TICK = 0.01, SLEEP_W = 60;
+const RAM_PAGE = 0x7ff, DIAG_PAGE = 0x7fe, KEYS = 93, TICK = 0.01, SLEEP_W = 32;
 const REQUEST = [0xAF, 0x7D, 0x4E];
 const $ = id => document.getElementById(id);
 let access = null, raw = [], pages = [], bad = 0, cur = null, lastData = 0, timer = null, reading = false, es = [];
@@ -186,8 +186,8 @@ function finish(why) {
   const ram = pages.some(p => p.idx === RAM_PAGE);
   if (!pages.length) {
     $("rstatus").innerHTML = '<span class="bad">' + (why || "") + ' — nothing received. Is the patched firmware with ' +
-      'extra_menu installed? If even played notes do not arrive, switch the keyboard off and on. / nic nie dotarło. ' +
-      'Czy jest wgrany firmware z extra_menu? Jeśli nie dochodzą nawet grane nuty, wyłącz i włącz pianino.</span>';
+      'the telemetry patch installed? If even played notes do not arrive, switch the keyboard off and on. / nic nie dotarło. ' +
+      'Czy jest wgrany firmware z poprawką telemetry? Jeśli nie dochodzą nawet grane nuty, wyłącz i włącz pianino.</span>';
     return;
   }
   $("rstatus").innerHTML = '<span class="' + (ram ? "ok" : "bad") + '">' + (why ? why + " · " : "") +
@@ -258,7 +258,7 @@ function show(es) {
     [batt.length ? batt[0].batt_adc + " → " + batt[batt.length - 1].batt_adc : "—", "battery ADC / bateria (ADC)"],
   ];
   $("stats").innerHTML = st.map(([b, s]) => "<div class=stat><b>" + b + "</b><span>" + s + "</span></div>").join("");
-  const src = { 0: "?", 1: "battery", 2: "?", 3: "?" };
+  const src = { 0: "no battery", 1: "battery", 2: "charger", 3: "?" };
   let h = "<tr><th>#</th><th>play</th><th>vol</th><th>speaker on</th><th>speaker off</th><th>asleep</th><th>power</th><th>batt ADC</th></tr>";
   for (const e of es) {
     h += "<tr" + (e.power_on ? " class=on" : "") + "><td>" + e.seq + (e.power_on ? " ⏻" : "") + (e.closed ? "" : " …") +

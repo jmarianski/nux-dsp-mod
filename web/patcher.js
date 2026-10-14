@@ -67,6 +67,9 @@ function applyPatches(target, bytes, selection) {
       if (!Number.isInteger(v) || v < prm.lo || v > prm.hi) throw `${prm.name} must be ${prm.lo}..${prm.hi}`;
       Object.assign(words, prm.values[v]);
     }
+    for (const [other, diff] of Object.entries(p.with || {}))  // .weak entry points, `unless` hooks
+      if (other in selection)
+        for (const [a, w] of Object.entries(diff)) if (w === null) delete words[a]; else words[a] = w;
     for (const [a, w] of Object.entries(words)) {
       if (owner[a]) throw `${owner[a]} and ${p.name} both modify word ${a}`;
       owner[a] = p.name; dv.setUint16(2 * a, w, true);
