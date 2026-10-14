@@ -8,7 +8,7 @@ input    NEK100_DSP_V1.0.7.bin
 output   NEK100_DSP_V1.0.7B_mod.bin
 download https://nuxaudio.com/product/nek100/
 defaults boot_preset touch_off sustain_in_preset version_tag octave_per_part extra_menu
-optional polish_font lang_pl custom_voices
+optional polish_font lang_pl custom_voices telemetry
 
 code    0x00400 0x0f0a3     ; code bank 0
 code    0x10400 0x128ab     ; code bank 1 (reached how? unknown)
@@ -27,7 +27,7 @@ func  0x007dd tick_10ms               ; (C: 10 ms, 6000 ticks of idle measured a
 func  0x00948 power_off               ; drops the power/amp/LCD output pins and loops forever
 func  0x00958 power_key_poll          ; input 0x28e0 bit 0x400 held 50 ticks -> power_off; idle_ticks >= 180000 (30 min) -> power_off (C: auto off, on battery); extra_menu: limit per power source, also on cable (C)
 func  0x0078a usb_poll                ; input 0x28e2 bit 1 (H: USB connected): after ~1 s sends the NUX identity SysEx
-func  0x00b01 battery_tick            ; per tick: input 0x28e0 bit 2 low -> power_src=2 (H: charger plugged; also zeroes idle_ticks, so no auto off on cable), else 1; low battery: blink icon ~14 s then power_off
+func  0x00b01 battery_tick            ; per tick: input 0x28e0 bit 2 low -> power_src=2 (charger plugged, checked: ADC rises in those windows; also zeroes idle_ticks, so no auto off on cable), else 1; low battery: blink icon ~14 s then power_off
 func  0x00a25 battery_adc_sample      ; one ADC reading (10 bit) into a 32-entry ring at 0x2a1a
 func  0x00aa4 battery_average         ; averages the ring sums into batt_adc; on battery counts readings below batt_levels[0]
 func  0x00a63 charge_full_poll        ; output 0xe0 bit 3 low, wait, input 0x28e0 bit 4 -> charge_full
@@ -83,7 +83,7 @@ func  0x0c7b8 param_change            ; (H) generic "change parameter by r2" hel
 
 # --- RAM variables ---------------------------------------------------------------------------
 var   0x0000b idle_ticks 2            ; 32-bit, +1 per tick, zeroed by every key, button, dial and MIDI event
-var   0x00006 power_src               ; 0 = no battery seen at power-on (logic off), 1 = on battery, 2 = (H) charger plugged
+var   0x00006 power_src               ; 0 = no battery seen at power-on (logic off), 1 = on battery, 2 = charger plugged (checked)
 var   0x00007 charge_full             ; on cable: 1 = (H) charger reports full, 0 = charging
 var   0x00008 batt_adc                ; averaged battery ADC (10 bit); < 0x190 at power-on -> power_src = 0
 var   0x0001c batt_low                ; 1 after 15 readings below batt_levels[0] on battery: icon blinks, power_off after 1400 ticks

@@ -1,4 +1,4 @@
-"""Telemetry log of the extra_menu patch: decode the dump (see the Telemetry part of extra_menu.patch).
+"""Usage log of the telemetry patch (opt-in): decode the dump (see telemetry.patch).
 
 The USB side of the keyboard passes no SysEx, so the request and the dump are channel 16 messages: a page is
 a pitch bend (the ring index, 0x7ff = the page in RAM, 0x7fe = the DIAG heartbeat) and 93 poly pressures, key k = 0..92, value = 7 bits
@@ -66,7 +66,7 @@ def pages(data):
     return out, bad
 
 
-def entries(pgs, sleep_w=60):
+def entries(pgs, sleep_w=32):
     """One dict per window, oldest first. Pages are put in order by their sequence numbers (the RAM page
     last), so a dump that started while the ring was being written still comes out right."""
     flash = [(idx, ws) for idx, ws in pgs if idx not in (RAM_PAGE, DIAG_PAGE) and ws[0] != 0xFFFF]

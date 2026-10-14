@@ -8,9 +8,14 @@ something (with a few `expect` words as a safety check) and *what* to put there 
 .title "One line: what it does"
 .param LEVEL 100 1 127 "Shown to the user in the CLI and the web page"
 .requires polish_font                   ; (optional) patches that must be applied too
+.weak tl_tick ex_ret                    ; (optional) tl_tick is ex_ret unless another applied
+                                        ; patch defines it: hooks for an optional patch
 
 .hook 0x02833 expect 0xc1bf 0xc793      ; replace exactly these 2 words ...
     call  my_hook                       ; ... with exactly 2 words
+.end
+.hook 0x00830 expect 0xd148 0x0117 unless extra_menu   ; (optional) only when extra_menu is not
+    call  my_tick                       ; applied: it hooks the same place and calls my_tick (.weak)
 .end
 
 .code                                   ; placed automatically in free space (the map's pool)

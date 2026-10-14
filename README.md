@@ -25,6 +25,7 @@ Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one 
 | `version_tag` | version screen shows `DSP:1.0.7B`, so you can see the mod is installed |
 | `short_welcome` *(optional)* | shorter welcome screen at power-on: under 1 s instead of about 3 s (the rest is the instrument starting up; adjustable) |
 | `welcome_cat` *(optional)* | two cats beside the welcome text on the power-on screen |
+| `telemetry` *(optional, off unless you select it)* | usage log for measuring battery life: 5-minute windows of time played, average volume, silence with the speaker on and off, time asleep and the battery reading (sleep and speaker off come from `extra_menu`; without it they stay 0), in flash pages the stock firmware does not use (about 17 days). Nothing leaves the instrument by itself: it is read only on request over USB (below). Listed on the Extra → Patches screen when installed (with `extra_menu`) |
 | `polish_font` *(optional)* | Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font, strings in Unicode. A base for translations |
 | `lang_pl` *(optional, needs `polish_font`)* | Polish UI: the 500 sound and 100 demo names, Touch and reverb values, style sections, buttons, screen headers and dialogs |
 
@@ -117,7 +118,7 @@ Both detect the target from the file's SHA-256 and refuse anything else.
 file instead of the original. Make sure the tool reports a non-zero amount programmed. Afterwards check
 *version* on the instrument: it should say `DSP:1.0.7B`. To go back, flash the official file the same way.
 
-**Usage log (`extra_menu`):** the instrument keeps a log in flash pages the stock firmware does not use: 5-minute
+**Usage log (`telemetry`, opt-in):** with that patch the instrument keeps a log in flash pages the stock firmware does not use: 5-minute
 windows with time played, average volume, silence with the speaker on and off, time asleep and the battery
 reading at the window's end (about 17 days, the oldest overwritten). Read it with the instrument connected over
 USB (Linux, find the port with `amidi -l`):
@@ -173,6 +174,7 @@ DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](d
 | `version_tag` | ekran wersji pokazuje `DSP:1.0.7B`, więc widać, że mod jest wgrany |
 | `short_welcome` *(opcjonalny)* | krótszy ekran powitalny po włączeniu: poniżej 1 s zamiast ok. 3 s (resztę zajmuje uruchamianie instrumentu; do ustawienia) |
 | `welcome_cat` *(opcjonalny)* | dwa kotki obok powitania na ekranie startowym |
+| `telemetry` *(opcjonalny, wyłączony, dopóki go nie wybierzesz)* | dziennik użycia do mierzenia czasu pracy na baterii: okna po 5 minut z czasem grania, średnią głośnością, ciszą z włączonym i wyłączonym głośnikiem, czasem uśpienia i odczytem baterii (uśpienie i wyłączony głośnik pochodzą z `extra_menu`; bez niego zostają 0), w stronach flasha nieużywanych przez fabryczny firmware (około 17 dni). Nic nie wychodzi z instrumentu samo: odczyt tylko na żądanie przez USB (niżej). Widoczny na ekranie Dodatki → Patche, gdy jest wgrany (z `extra_menu`) |
 | `polish_font` *(opcjonalny)* | polskie litery w głównym foncie UI, napisy w Unicode. Baza pod tłumaczenia |
 | `lang_pl` *(opcjonalny, wymaga `polish_font`)* | polski interfejs: 500 nazw brzmień i 100 dem, wartości Touch i pogłosu, sekcje stylów, przyciski, nagłówki ekranów i okna dialogowe |
 
@@ -218,7 +220,7 @@ strona rozpozna model i wersję, pokaże dostępne poprawki i da gotowy plik.
 są opisane wyżej.
 **Wgrywanie:** oficjalnym narzędziem NUX, tak samo jak zwykłą aktualizację DSP. Narzędzie musi pokazać
 niezerową ilość zaprogramowanych danych. Na ekranie wersji powinno być `DSP:1.0.7B`.
-**Dziennik użycia (`extra_menu`):** instrument zapisuje we flashu, w stronach nieużywanych przez fabryczny firmware,
+**Dziennik użycia (`telemetry`, tylko gdy go wybierzesz):** instrument z tym patchem zapisuje we flashu, w stronach nieużywanych przez fabryczny firmware,
 okna po 5 minut: czas grania, średnią głośność, ciszę z włączonym i wyłączonym głośnikiem, czas uśpienia i odczyt
 baterii (około 17 dni, najstarsze są nadpisywane). Odczyt przez USB: `amidi -p hw:2,0,0 -S 'AF 7D 4E' -r log.syx -t 30`
 (port z `amidi -l`), potem `python3 -m nuxdsp telemetry log.syx`, albo w przeglądarce:

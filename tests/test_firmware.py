@@ -1,5 +1,6 @@
 """Tests against the official NEK-100 firmware. Set NEK100_FW=/path/to/NEK100_DSP_V1.0.7.bin to run them."""
 import os
+import re
 import shutil
 import json
 import subprocess
@@ -13,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus custom_voices (empty name table), boot_preset's preset labels (confirmed on hardware too), polish_font's small font
 # mapping and the full lang_pl translation (all confirmed on hardware).
-ALL_SHA = "38955cce39fb934d382f5124452bbc3b902321e0faa501a6ad0c97cfe7a47bc0"
+ALL_SHA = "9c14d05b0c0a0ea5ed756fe3f383552d7a306bd56efad19d37c32b193fc6917b"
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -45,8 +46,36 @@ class TestFirmware(unittest.TestCase):
             p = patcher.load(n)
             one, _ = patcher.build(self.img, self.map, [patcher.load(r) for r in p.requires] + [p])
             ow = container.words(one)
+            # .weak entry points: as in a build without the patches that define them
+            weak = {name for name, _ in p.weaks}
+            rest = [m for m in patcher.available()
+                    if not weak & set(re.findall(r"^(\w+):", "\n".join(patcher.load(m).code), re.M))]
+            part, _ = patcher.build(self.img, self.map, patcher.resolve_patches(rest))
+            pw = container.words(part)
+            alone = {h.addr + i for h in p.hooks if h.unless for i in range(len(h.expect))}  # hooks of its own
             for a in range(len(ow) - 1):
-                self.assertIn(ow[a], (orig[a], fw[a]), "%s @%#x" % (n, a))
+                if a not in alone:
+                    self.assertIn(ow[a], (orig[a], fw[a], pw[a]), "%s @%#x" % (n, a))
+
+    def test_telemetry_is_opt_in(self):
+        # the usage log is its own patch, not a default; without it extra_menu has no trace of it, and it works
+        # without extra_menu (its own hooks where extra_menu would call it)
+        self.assertNotIn("telemetry", patcher.defaults(self.map))
+        self.assertEqual(patcher.load("telemetry", self.map).requires, [])
+        alone, _ = patcher.build(self.img, self.map, patcher.resolve_patches(["telemetry"]))
+        both, _ = patcher.build(self.img, self.map, patcher.resolve_patches(["extra_menu", "telemetry"]))
+        em, _ = patcher.build(self.img, self.map, patcher.resolve_patches(["extra_menu"]))
+        aw, bw, ew = container.words(alone), container.words(both), container.words(em)
+        for a in (0x830, 0x2602, 0x9a2, 0x9ad, 0x3860, 0x391b, 0xd6d3):
+            self.assertNotEqual(aw[a:a + 2], container.words(self.img)[a:a + 2], "@%#x" % a)
+            self.assertEqual(bw[a:a + 2], ew[a:a + 2], "@%#x" % a)   # with extra_menu, its hooks stay
+        names = [n for n in patcher.available(self.map) if n != "telemetry"]
+        out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
+        ow, orig = container.words(out), container.words(self.img)
+        self.assertEqual(ow[0xc1c:0xc1e], orig[0xc1c:0xc1e])   # low battery: the stock power_off
+        for a in range(len(ow) - 1):   # no load or store of the log's RAM (0x6330..0x638f)
+            if ow[a] != orig[a] and (ow[a] & 0xf8ef) == 0xf880:   # ld / st [abs] that we wrote
+                self.assertFalse(0x6330 <= ow[a + 1] < 0x6390, "@%#x" % a)
 
     def test_extra_menu_detects_patches(self):
         # the Patches screen of extra_menu finds each patch by one word; check that word against the patch
@@ -113,7 +142,8 @@ class TestFirmware(unittest.TestCase):
             cases = [({}, {}), ({"BOOT_PRESET": 4, "PRESET_LABELS": 2, "OFF_VELOCITY": 90},
                                 {"boot_preset": {"BOOT_PRESET": 4, "PRESET_LABELS": 2},
                                  "touch_off": {"OFF_VELOCITY": 90}}),
-                     ({}, {"version_tag": {}, "polish_font": {}, "lang_pl": {}})]
+                     ({}, {"version_tag": {}, "polish_font": {}, "lang_pl": {}}),
+                     ({}, {"extra_menu": {}, "telemetry": {}}), ({}, {"extra_menu": {}}), ({}, {"telemetry": {}})]
             for params, sel in cases:
                 names = list(sel) or patcher.available()
                 sel = sel or {n: {} for n in names}
