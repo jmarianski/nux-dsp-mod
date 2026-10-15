@@ -95,7 +95,10 @@ instructions in [ISA.md](ISA.md).
 - input must be the official firmware (SHA-256 from the map), otherwise nothing is built;
 - every hook checks its `expect` words and must assemble to exactly the same number of words;
 - two patches writing the same word is an error;
-- code blocks must fit into the pools; each bundled patch has a fixed place (`canonical_layout`), so any
+- code blocks must fit into the pools; `.code START` at the start of a `farpool` puts a block above 0xffff
+  (reach it with `call`, not `ccall`; `.dw` and `li` of a far label are refused). A block past the end of
+  the official file makes the output longer;
+- each bundled patch has a fixed place (`canonical_layout`), so any
   combination gives the same bytes in the CLI and on the web page;
 - the container checksum is recomputed and the output re-validated.
 

@@ -162,9 +162,12 @@ def encode_op(op, rest, pc, symbols):
         return isa.encode("push", (("imm", ops[0][1]),))
     if op in ("li", "addi"):
         need(kinds == ("reg", "imm"), "%s rN, #imm16" % op)
+        need(-0x8000 <= ops[1][1] <= 0xFFFF, "%s: %#x does not fit 16 bits" % (op, ops[1][1]))
         return isa.encode(op, (reg(ops[0]), ops[1][1]))
     if op in ("call", "ccall"):
-        need(kinds == ("expr",) and 0 <= ops[0][1] <= 0xFFFF, "call target")
+        need(kinds == ("expr",), "call target")
+        need(0 <= ops[0][1] <= (0x7FFFF if op == "call" else 0xFFFF),
+             "%s target %#x out of range (far targets: call only)" % (op, ops[0][1]))
         return isa.encode(op, (("abs", ops[0][1]),))
     if op in ("jmp", "b.e0", "blt", "beq", "bne"):
         need(kinds == ("expr",), "branch target")
@@ -238,7 +241,10 @@ def assemble(lines, symbols=None, origin=None, label_prefix=None, labels_only=Fa
             if st[0] in ("label", "equ"):
                 continue
             if st[0] == "dw":
-                ws = [eval_expr(fix_locals(e), allsyms) & 0xFFFF for e in st[1]]
+                ws = [eval_expr(fix_locals(e), allsyms) for e in st[1]]
+                for v in ws:
+                    need(-0x8000 <= v <= 0xFFFF, ".dw %#x does not fit 16 bits (a far address?)" % v)
+                ws = [v & 0xFFFF for v in ws]
             else:
                 ws = encode_op(st[1], fix_locals(st[2]), pc, allsyms)
             if len(ws) != stmt_size(st):

@@ -153,6 +153,41 @@ class TestFirmware(unittest.TestCase):
                 with open(outp, "rb") as f:
                     self.assertEqual(f.read(), cli)
 
+    FAR = (".patch far_test\n.title \"far call test\"\n"
+           ".hook 0x00ccb expect 0xd7c8 0x5bb3\n    call fa_a\n.end\n"
+           ".code 0x19720\nfa_a:\n    ccall 0x5bb3\n    call fa_b\n    ret\n.end\n"
+           ".code 0x1a280\nfa_b:\n    mov r7, #0x58\n    st [0x2826], r7\n    ret\n.end\n")
+
+    def test_far_code_grows_the_file(self):
+        out, report = patcher.build(self.img, self.map, [patcher.parse(self.FAR)])
+        w = container.words(out)
+        self.assertEqual(len(w), 0x1a2c0)
+        self.assertEqual(container.validate(out), [])
+        self.assertEqual((w[1], w[2]), (0xa2c0, 1))
+        self.assertEqual(w[0x00ccb:0x00ccd], [0xd6c9, 0x9720])
+        self.assertEqual(w[0x19722:0x19724], [0xd6c9, 0xa280])
+        self.assertEqual(w[0x1a27f], 0xffff)  # the old checksum word
+        self.assertIn("file grows to 0x1a2c0 words", report)
+        near, _ = patcher.build(self.img, self.map, [patcher.parse(self.FAR.replace(".code 0x1a280", ".code"))])
+        self.assertEqual(len(near), len(self.img))  # far pools are never chosen automatically
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_web_page_grows_the_file_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            shutil.copy(os.path.join(web.WEB_DIR, "index.html"), d)
+            shutil.copy(os.path.join(web.WEB_DIR, "patcher.js"), d)
+            os.mkdir(os.path.join(d, "targets"))
+            far = os.path.join(d, "far_test.patch")
+            with open(far, "w") as f:
+                f.write(self.FAR)
+            web.write_target(self.img, self.map, d, names=[far])
+            web.write_packs(d)
+            outp = os.path.join(d, "o.bin")
+            subprocess.check_call(["node", os.path.join(HERE, "web_check.js"), d, FW, outp, '{"far_test": {}}'])
+            cli, _ = patcher.build(self.img, self.map, [patcher.parse(self.FAR)])
+            with open(outp, "rb") as f:
+                self.assertEqual(f.read(), cli)
+
     def test_committed_web_data_is_current(self):
         path = os.path.join(web.WEB_DIR, "targets", self.map.id + ".js")
         with open(path, encoding="utf-8") as f:

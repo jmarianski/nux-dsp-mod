@@ -49,6 +49,14 @@ class TestAsm(unittest.TestCase):
             with self.assertRaises(asm.AsmError):
                 asm.assemble(bad, origin=0)
 
+    def test_far_call(self):
+        words, _ = asm.assemble(["call 0x1a280", "call far"], {"far": 0x7ffff}, origin=0x100)
+        self.assertEqual([words[a] for a in range(0x100, 0x104)], [0xD6C9, 0xA280, 0xD6CF, 0xFFFF])
+        self.assertEqual(isa.decode(0xD6C9, 0xA280), ("call", (("abs", 0x1A280),)))
+        for bad in (["ccall 0x1a280"], ["call 0x80000"], [".dw 0x1a280"], ["li r1, #0x1a280"]):
+            with self.assertRaises(asm.AsmError, msg=bad[0]):
+                asm.assemble(bad, origin=0)
+
     def test_branch_range(self):
         with self.assertRaises(asm.AsmError):
             asm.assemble(["beq 0x200"], origin=0)

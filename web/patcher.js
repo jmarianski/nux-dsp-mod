@@ -56,8 +56,20 @@ async function identify(bytes) {
 }
 // --- patching: selection = {patchName: {PARAM: value}} -> new image bytes (tested in tests/) ---
 function applyPatches(target, bytes, selection) {
-  const out = new Uint8Array(bytes), dv = new DataView(out.buffer);
-  const n = out.length / 2, owner = {};
+  const sel = target.patches.filter(p => p.name in selection);
+  // code in a far pool past the end of the file: the file grows in 64-word blocks (as nuxdsp/patcher.py build)
+  const end = Math.max(0, ...sel.flatMap(p => [p.words, ...p.params.flatMap(prm => Object.values(prm.values))]
+    .flatMap(ws => Object.keys(ws).map(a => +a + 1))));
+  let out = new Uint8Array(bytes);
+  if (end > out.length / 2 - 1) {
+    const grown = new Uint8Array(Math.ceil((end + 1) / 0x40) * 0x40 * 2).fill(0xff);
+    grown.set(out);
+    put16(grown, out.length - 2, 0xffff);  // the old checksum word becomes padding
+    put32(grown, 2, grown.length / 2);
+    out = grown;
+  }
+  const dv = new DataView(out.buffer);
+  const owner = {};
   for (const p of target.patches) {
     if (!(p.name in selection)) continue;
     for (const r of p.requires || []) if (!(r in selection)) throw `${p.name} needs ${r} too`;

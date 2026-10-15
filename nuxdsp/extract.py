@@ -69,6 +69,8 @@ def extract_bitmaps(a, b, fwmap):
 
 def extract(orig_img, mod_img, fwmap, name="my_patch"):
     a, b = container.words(orig_img), container.words(mod_img)
+    if len(b) > len(a):   # grown by code in a far pool: compare with 0xffff filler where the file was shorter
+        a = a[:-1] + [0xFFFF] * (len(b) - len(a) + 1)
     if len(a) != len(b):
         raise ValueError("images differ in size")
     starts = {x for x, _, _ in disasm.iter_insns(a, fwmap.code)}
@@ -84,6 +86,13 @@ def extract(orig_img, mod_img, fwmap, name="my_patch"):
     # must not split the block, so each pool's changes become one range
     in_pool = [(min(s for s, _ in rs), max(e for _, e in rs))
                for rs in ([r for r in in_pool if ps <= r[0] < pe] for ps, pe in fwmap.pools) if rs]
+    # far pools: one block from the pool's start (a `.code START` block is placed there)
+    far = []
+    for ps, pe in fwmap.farpools:
+        rs = changed_ranges(a, b, ps, min(pe, len(b) - 1))
+        if rs:
+            far.append((ps, max(e for _, e in rs)))
+    in_pool += far
     labels = {e.addr: e.name for e in fwmap.by_kind("func", "label")}
     labels.update({s: "blk_%05x" % s for s, _ in in_pool})
     # every target inside a moved block gets a label, so the extracted patch is relocatable
@@ -105,9 +114,14 @@ def extract(orig_img, mod_img, fwmap, name="my_patch"):
         out.append("    .dw   " + ", ".join("%#06x" % v for v in b[s:e]))
         out.append(".end")
     out += extract_bitmaps(a, b, fwmap)
-    if in_pool:
+    near = [r for r in in_pool if r not in far]
+    if near:
         out += ["", ".code"]
-        for s, e in in_pool:
+        for s, e in near:
             out += decode_block(b, s, e, labels, fwmap)
+        out.append(".end")
+    for s, e in far:
+        out += ["", ".code %#07x" % s]
+        out += decode_block(b, s, e, labels, fwmap)
         out.append(".end")
     return "\n".join(out) + "\n"

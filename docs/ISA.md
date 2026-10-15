@@ -39,6 +39,7 @@ variable `X` lives at file word `ramdata_start + X`.
 | `push rN` | `7e0N` | | H |
 | `push #imm16` | `c14c i` | argument for `ccall` | C |
 | `call target` | `d6c8 a` | plain call, frame (`fp`) preserved — ideal for hooks inside a function | C |
+| `call target` (far) | `d6c8+(t>>16) a` | the low 3 bits of the opcode are bits 16..18 of the target: `d6c9 a` calls `0x1aaaa`; the firmware itself calls its bank-1 code this way, and code there returns to bank 0 with a plain `ret` | C |
 | `ccall target` | `d7c8 a` | call of a C-style function, arguments pushed before, callee pops them | C |
 | `ret` | `d1ca` | return from a `call` | C |
 | `jmp rel8` | `78rr` | target = pc + 1 + rel | C |
