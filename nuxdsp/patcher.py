@@ -36,6 +36,7 @@ Inside .code, an .art block becomes column data for program memory (ldc):
     .art                                           rows of '#'/'.', top row first
     .endart                                        -> one word per column, bit 0 = top row, then 0xf000
 """
+import functools
 import os
 import re
 import shlex
@@ -279,13 +280,24 @@ def allocate(patches, fwmap, layout=None):
     return layout
 
 
+_layout_cache = {}
+
+
 def canonical_layout(fwmap):
     """Pool positions of the bundled patches when all are applied, in the map's order.
 
     Used for every selection, so a given set of patches always produces the same image
     (CLI and web patcher agree, and unselected patches leave their space untouched).
+    Cached while the map and the patch files stay the same.
     """
-    return {k: v for k, v in allocate(resolve_patches(available(fwmap), fwmap), fwmap).items() if v is not None}
+    names = available(fwmap)
+    key = (fwmap.id, tuple(fwmap.pools), tuple(fwmap.farpools), tuple(names),
+           tuple((st.st_size, st.st_mtime_ns) for st in (os.stat(os.path.join(fwmap.patch_dir, n + ".patch"))
+                                                         for n in names)))
+    if key not in _layout_cache:
+        _layout_cache[key] = {k: v for k, v in allocate(resolve_patches(names, fwmap), fwmap).items()
+                              if v is not None}
+    return dict(_layout_cache[key])
 
 
 def find_string(w, fwmap, s):
@@ -299,15 +311,31 @@ def find_string(w, fwmap, s):
     return hits[0]
 
 
+@functools.lru_cache(maxsize=4)
+def _input_check(image):
+    """(sha256, container problems, words) of an input image: the same bytes are often built many times."""
+    return container.sha256(image), container.validate(image), tuple(container.words(image))
+
+
 def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner_out=None):
     """Apply patches to an official image. Returns (new_image, report lines).
 
     owner_out: optional dict, filled with {word address: patch name} for every word written.
     """
-    if check_sha and container.sha256(image) != fwmap.sha256:
+    w, report = build_words(image, fwmap, patches, params, layout, check_sha, owner_out)
+    out = container.pack(container.fix_checksum(w))
+    probs = container.validate(out)
+    if probs:
+        raise PatchError("internal error, output invalid: " + "; ".join(probs))
+    return out, report
+
+
+def build_words(image, fwmap, patches, params=None, layout=None, check_sha=True, owner_out=None):
+    """build() up to the words of the new image, before the checksum."""
+    sha, probs, words = _input_check(image) if isinstance(image, bytes) else _input_check.__wrapped__(image)
+    if check_sha and sha != fwmap.sha256:
         raise PatchError("input is not the official %s (SHA-256 mismatch) — refusing to patch"
                          % fwmap.firmware)
-    probs = container.validate(image)
     if probs:
         raise PatchError("input container invalid: " + "; ".join(probs))
     names = [p.name for p in patches]
@@ -354,7 +382,7 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
                     raise PatchError("%s: .weak %s: unknown fallback %r" % (p.name, name, fallback))
                 syms[name] = syms[fallback]
 
-    w = container.words(image)
+    w = list(words)
     orig = list(w)
     # code in a far pool past the end of the file: the file grows (header length, checksum moves to the end)
     end = max([place[k] + n for p in patches for k, _, n in code_blocks(p) if place.get(k) is not None] + [0])
@@ -427,11 +455,7 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
                 report.append("%-18s table %#06x %s" % (p.name, ram, info))
         except asm.AsmError as e:
             raise PatchError("%s: %s" % (p.name, e))
-    out = container.pack(container.fix_checksum(w))
-    probs = container.validate(out)
-    if probs:
-        raise PatchError("internal error, output invalid: " + "; ".join(probs))
-    return out, report
+    return w, report
 
 
 def glyph_info(w, fwmap, idx):

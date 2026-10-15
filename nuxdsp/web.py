@@ -22,8 +22,7 @@ def patch_words(image, fwmap, p, params=None, also=()):
     names = list(dict.fromkeys(list(p.requires) + [r for a in also for r in patcher.load(a, fwmap).requires] +
                                list(also)))
     need = [patcher.load(r, fwmap) for r in names if r != p.name]  # built along, their words are their own
-    out, _ = patcher.build(image, fwmap, need + [p], params, owner_out=owner)
-    new = container.words(out)
+    new, _ = patcher.build_words(image, fwmap, need + [p], params, owner_out=owner)
     return {a: new[a] for a in sorted(owner) if owner[a] == p.name}  # the checksum word is recomputed in JS
 
 
