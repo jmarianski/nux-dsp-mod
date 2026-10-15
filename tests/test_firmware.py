@@ -13,8 +13,15 @@ FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus custom_voices (empty name table), boot_preset's preset labels (confirmed on hardware too), polish_font's small font
-# mapping and the full lang_pl translation (all confirmed on hardware).
-ALL_SHA = "9c14d05b0c0a0ea5ed756fe3f383552d7a306bd56efad19d37c32b193fc6917b"
+# mapping and the full lang_pl translation (all confirmed on hardware); battery_percent (number, %, standing icon:
+# shown on hardware at a high level; lower fill levels and charging not yet seen) and extra_menu's functions moved
+# above 0xffff (run on hardware with it).
+ALL_SHA = "fcb4022c674503854cb311af233a3ad18aa2ec0e03c3135ff9a76b8ec67b9e59"
+
+
+def padded(w, n):
+    """Words of an image as if grown to n words (0xffff filler; the old checksum word becomes filler too)."""
+    return w if len(w) >= n else w[:-1] + [0xFFFF] * (n - len(w) + 1)
 
 
 @unittest.skipUnless(FW and os.path.exists(FW), "set NEK100_FW to the official firmware file")
@@ -51,9 +58,10 @@ class TestFirmware(unittest.TestCase):
             rest = [m for m in patcher.available()
                     if not weak & set(re.findall(r"^(\w+):", "\n".join(patcher.load(m).code), re.M))]
             part, _ = patcher.build(self.img, self.map, patcher.resolve_patches(rest))
-            pw = container.words(part)
+            pw = padded(container.words(part), len(ow))
+            orig, fw = padded(orig, len(ow)), padded(fw, len(ow))
             alone = {h.addr + i for h in p.hooks if h.unless for i in range(len(h.expect))}  # hooks of its own
-            for a in range(len(ow) - 1):
+            for a in range(3, len(ow) - 1):   # 1, 2: the file length
                 if a not in alone:
                     self.assertIn(ow[a], (orig[a], fw[a], pw[a]), "%s @%#x" % (n, a))
 
@@ -71,7 +79,8 @@ class TestFirmware(unittest.TestCase):
             self.assertEqual(bw[a:a + 2], ew[a:a + 2], "@%#x" % a)   # with extra_menu, its hooks stay
         names = [n for n in patcher.available(self.map) if n != "telemetry"]
         out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
-        ow, orig = container.words(out), container.words(self.img)
+        ow = container.words(out)
+        orig = padded(container.words(self.img), len(ow))
         self.assertEqual(ow[0xc1c:0xc1e], orig[0xc1c:0xc1e])   # low battery: the stock power_off
         for a in range(len(ow) - 1):   # no load or store of the log's RAM (0x6330..0x638f)
             if ow[a] != orig[a] and (ow[a] & 0xf8ef) == 0xf880:   # ld / st [abs] that we wrote

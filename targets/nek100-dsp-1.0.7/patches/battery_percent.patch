@@ -1,0 +1,427 @@
+.patch battery_percent
+.title "Battery in percent on the status bar instead of the bar icon (73%), from an adjustable discharge curve; on battery the number only goes down"
+; The status bar ends with BPM's number at x 89..103; the stock battery is the lightning at x 107..111 and the
+; icon at 112..125. draw_battery (hooked after its prologue) now clears x 104..127 and draws:
+;   on battery   a 5x5 standing battery icon (filled by level), the percentage, right-aligned, and a 3x5 '%' (the small font has none)
+;                at x 124..126: "[] 73%", 100% fills x 104..126
+;   charging     the lightning against the icon and at most 99%; 100% (no lightning) once the charger reports
+;                full (never seen in the telemetry log: charge_full stayed 0 at the 955 plateau)
+;   power_src 0  (no battery seen at power-on) the stock full icon
+; Low battery (batt_low): the stock code blinks the icon for 1400 ticks, then calls power_off. Hooked at its
+; start: the same counter and times, the number blinks instead (1 s off, 1 s on), and at 1400 we jump to the
+; stock power_off call (telemetry hooks that call).
+;
+; The curve: EMPTY is the ADC reading of 0% (stock: below batt_levels[0] = 756 the battery is low and the
+; instrument switches off), STEP1..STEP10 the ADC span of each tenth (0-10%, 10-20%, .. 90-100%), so 100% is at
+; EMPTY + STEP1 + .. + STEP10. Within a tenth the percentage is linear. The defaults are a straight line from
+; 756 to 935 (the reading after a full charge, telemetry log): percent of ADC range, not yet of playing time;
+; log.html can fit the steps to a logged full discharge. While charging the reading is 18 higher (the stock
+; thresholds add 0x12): taken off before the curve.
+; On battery the shown value never goes up (a lighter load lets the voltage recover); it starts afresh at
+; power-on and after the charger is unplugged.
+; The stock code redraws the battery when the ADC moved by more than 5 since the last drawing (about 3%);
+; REDRAW lowers that.
+;
+; Code above 0xffff (far call, checked with far_test), past the end of the official file (it grows). Uses only r1, r6,
+; r7 and RAM 0x6400..0x6424 (unused after init_all, see FINDINGS).
+.param EMPTY 756 650 850 "Battery %: ADC reading of 0% (stock low-battery threshold 756)"
+.param STEP1 18 0 50 "Battery %: ADC span of 0-10%"
+.param STEP2 18 0 50 "Battery %: ADC span of 10-20%"
+.param STEP3 18 0 50 "Battery %: ADC span of 20-30%"
+.param STEP4 18 0 50 "Battery %: ADC span of 30-40%"
+.param STEP5 18 0 50 "Battery %: ADC span of 40-50%"
+.param STEP6 18 0 50 "Battery %: ADC span of 50-60%"
+.param STEP7 18 0 50 "Battery %: ADC span of 60-70%"
+.param STEP8 18 0 50 "Battery %: ADC span of 70-80%"
+.param STEP9 18 0 50 "Battery %: ADC span of 80-90%"
+.param STEP10 17 0 50 "Battery %: ADC span of 90-100%"
+.param REDRAW 2 1 5 "Battery %: redraw when the ADC moved by more than this (stock 5)"
+
+; draw_battery, after `enter #2`: everything is ours, then its epilogue
+.hook 0x055b4 expect 0xc14c 0x0000 0xc14c 0x00bd
+    call  bp_draw
+    .dw   0xd0ce, 0x5712
+.end
+
+; battery_tick, batt_low set: replaces the counter and the first blink case
+.hook 0x00b35 expect 0xd148 0x001e 0xc790 0x1701 0xcf90 0x0f64 0xe00d 0x0500
+    call  bp_blink
+    cmp   r7, #0
+    beq   .stay
+    .dw   0xd0ce, 0x0c1c      ; time is up: the stock `ccall power_off`
+.stay:
+    .dw   0xd0ce, 0x0c1e      ; after the blink cases
+.end
+
+; battery_tick: redraw threshold (stock `mov r7, #5`)
+.hook 0x00c6b expect 0x0705
+    mov   r7, #REDRAW
+.end
+
+.code 0x1a280
+.equ bp_a, 0x6400             ; 10 x the reading
+.equ bp_b, 0x6401             ; 10 x the threshold of the next percent
+.equ bp_val, 0x6402           ; the percentage
+.equ bp_p, 0x6403             ; -> the step of the current tenth
+.equ bp_j, 0x6404             ; percent within the tenth
+.equ bp_last, 0x6405          ; the lowest value shown on battery
+.equ bp_mag, 0x6406           ; 0x5aa5 while bp_last is valid
+.equ bp_ph, 0x6407            ; blink phase drawn: 0 hidden, 1 shown
+.equ bp_n, 0x6408             ; characters in bp_txt
+.equ bp_x, 0x6409             ; x of the number
+.equ bp_t, 0x640a             ; tens
+.equ bp_u, 0x640b             ; units
+.equ bp_ix, 0x640c            ; x of the battery icon
+.equ bp_bolt, 0x640d          ; 1: draw the lightning (charging)
+.equ bp_s, 0x6410             ; STEP1..STEP10
+.equ bp_txt, 0x6420           ; the number, 0-terminated
+
+bp_draw:
+    push  #0
+    push  #7
+    push  #0x18
+    push  #0
+    push  #0x68
+    ccall 0x04a69             ; clear x 104..127, y 0..6
+    ld    r7, [power_src]
+    cmp   r7, #0
+    bne   .bat
+    push  #0                  ; no battery at power-on: the stock full icon
+    push  #0xbd
+    push  #1
+    push  #0x70
+    ccall draw_glyph
+    push  #1
+    push  #3
+    push  #0xa
+    push  #2
+    push  #0x71
+    ccall 0x04a69
+    ret
+.bat:
+    call  bp_pct
+    mov   r7, #0
+    st    [bp_bolt], r7
+    ld    r7, [power_src]
+    cmp   r7, #2
+    bne   .txt
+    ld    r7, [charge_full]
+    cmp   r7, #1
+    bne   .chg
+    mov   r7, #100            ; charger reports full: 100%, no lightning (as the stock full icon)
+    st    [bp_val], r7
+    jmp   .txt
+.chg:
+    mov   r7, #1
+    st    [bp_bolt], r7
+    ld    r7, [bp_val]
+    cmp   r7, #100
+    blt   .txt
+    mov   r7, #99
+    st    [bp_val], r7
+.txt:
+    call  bp_text
+    push  #1                  ; as BPM's number: spacing 1, small font, y 1
+    push  #1
+    push  #bp_txt
+    push  #0
+    push  #1
+    ld    r7, [bp_x]
+    push  r7
+    ccall draw_text_impl
+    push  #1                  ; '%': #.# / ..# / .#. / #.. / #.#
+    push  #1
+    push  #1
+    push  #1
+    push  #124
+    ccall 0x04a69
+    push  #1
+    push  #2
+    push  #1
+    push  #1
+    push  #126
+    ccall 0x04a69
+    push  #1
+    push  #1
+    push  #1
+    push  #3
+    push  #125
+    ccall 0x04a69
+    push  #1
+    push  #2
+    push  #1
+    push  #4
+    push  #124
+    ccall 0x04a69
+    push  #1
+    push  #1
+    push  #1
+    push  #5
+    push  #126
+    ccall 0x04a69
+    ld    r7, [bp_x]          ; battery icon left of the number, standing (a lying 5x5 one read as something else):
+    li    r6, #-6             ; .###. / ##### / #...# / #...# / #####, inside filled from 34% (bottom), 67% (both)
+    add   r7, r6
+    st    [bp_ix], r7
+    push  #1                  ; body, filled; the empty part is cleared below
+    push  #4
+    push  #5
+    push  #2
+    ld    r7, [bp_ix]
+    push  r7
+    ccall 0x04a69
+    push  #1                  ; terminal
+    push  #1
+    push  #3
+    push  #1
+    ld    r7, [bp_ix]
+    add   r7, #1
+    push  r7
+    ccall 0x04a69
+    ld    r7, [bp_val]        ; empty rows inside, from the top: 2 below 34%, 1 below 67%, else none
+    cmp   r7, #67
+    blt   .lv1
+    jmp   .lvdone
+.lv1:
+    push  #0
+    cmp   r7, #34
+    blt   .lv2
+    push  #1
+    jmp   .lvclr
+.lv2:
+    push  #2
+.lvclr:
+    push  #3
+    push  #3
+    ld    r7, [bp_ix]
+    add   r7, #1
+    push  r7
+    ccall 0x04a69
+.lvdone:
+    ld    r7, [bp_bolt]
+    cmp   r7, #0
+    beq   .nobolt
+    push  #0                  ; charging: the stock lightning (4x5), against the icon
+    push  #0xc4
+    push  #1
+    ld    r7, [bp_ix]
+    li    r6, #-4
+    add   r7, r6
+    push  r7
+    ccall draw_glyph
+.nobolt:
+    ret
+
+; batt_adc -> bp_val 0..100 along the curve
+bp_pct:
+    li    r7, #STEP1
+    st    [bp_s], r7
+    li    r7, #STEP2
+    st    [bp_s+1], r7
+    li    r7, #STEP3
+    st    [bp_s+2], r7
+    li    r7, #STEP4
+    st    [bp_s+3], r7
+    li    r7, #STEP5
+    st    [bp_s+4], r7
+    li    r7, #STEP6
+    st    [bp_s+5], r7
+    li    r7, #STEP7
+    st    [bp_s+6], r7
+    li    r7, #STEP8
+    st    [bp_s+7], r7
+    li    r7, #STEP9
+    st    [bp_s+8], r7
+    li    r7, #STEP10
+    st    [bp_s+9], r7
+    ld    r7, [batt_adc]
+    ld    r6, [power_src]
+    cmp   r6, #2
+    bne   .adc
+    li    r6, #-18            ; charging: the reading is 18 higher
+    add   r7, r6
+.adc:
+    mov   r6, r7              ; x10
+    shl   r7, 2
+    add   r7, r6
+    shl   r7, 1
+    st    [bp_a], r7
+    li    r7, #EMPTY*10
+    st    [bp_b], r7
+    mov   r7, #0
+    st    [bp_val], r7
+    ld    r6, [bp_a]
+    ld    r7, [bp_b]
+    cmp   r6, r7
+    blt   .done               ; below EMPTY: 0%
+    li    r7, #bp_s
+    st    [bp_p], r7
+.tenth:
+    mov   r7, #0
+    st    [bp_j], r7
+.step:                        ; bp_b += the tenth's step; one more percent while the reading reaches it
+    ld    r1, [bp_p]
+    ld    r6, [r1+0]
+    ld    r7, [bp_b]
+    add   r7, r6
+    st    [bp_b], r7
+    ld    r6, [bp_a]
+    cmp   r6, r7
+    blt   .done
+    ld    r7, [bp_val]
+    add   r7, #1
+    st    [bp_val], r7
+    cmp   r7, #100
+    beq   .done
+    ld    r7, [bp_j]
+    add   r7, #1
+    st    [bp_j], r7
+    cmp   r7, #10
+    blt   .step
+    ld    r7, [bp_p]
+    add   r7, #1
+    st    [bp_p], r7
+    jmp   .tenth
+.done:
+    ld    r7, [power_src]
+    cmp   r7, #1
+    beq   .mono
+    mov   r7, #0              ; charger or no battery: start afresh when back on battery
+    st    [bp_mag], r7
+    ret
+.mono:
+    ld    r7, [bp_mag]
+    li    r6, #0x5aa5
+    cmp   r7, r6
+    beq   .min
+    ld    r7, [batt_adc]
+    li    r6, #400            ; no reading yet (stock: < 0x190 = no battery): nothing to remember
+    cmp   r7, r6
+    blt   .ret
+    li    r6, #0x5aa5
+    st    [bp_mag], r6
+    ld    r7, [bp_val]
+    st    [bp_last], r7
+.ret:
+    ret
+.min:
+    ld    r6, [bp_last]
+    ld    r7, [batt_adc]
+    li    r1, #400
+    cmp   r7, r1
+    blt   .keep               ; no reading: the last value
+    ld    r7, [bp_val]
+    cmp   r6, r7
+    blt   .keep
+    st    [bp_last], r7
+    ret
+.keep:
+    st    [bp_val], r6        ; never up on battery
+    ret
+
+; bp_val -> bp_txt, bp_x = 124 - its width (draw_text_impl advances 5 per digit, 4 after a '1')
+bp_text:
+    mov   r6, #0
+    st    [bp_n], r6
+    mov   r6, #124
+    st    [bp_x], r6
+    ld    r7, [bp_val]
+    cmp   r7, #100
+    blt   .tens
+    mov   r7, #1
+    call  bp_dig
+    mov   r7, #0
+    call  bp_dig
+    mov   r7, #0
+    call  bp_dig
+    jmp   .end
+.tens:
+    mov   r6, #0
+    st    [bp_t], r6
+.t:
+    cmp   r7, #10
+    blt   .u
+    li    r6, #-10
+    add   r7, r6
+    ld    r6, [bp_t]
+    add   r6, #1
+    st    [bp_t], r6
+    jmp   .t
+.u:
+    st    [bp_u], r7
+    ld    r7, [bp_t]
+    cmp   r7, #0
+    beq   .one
+    call  bp_dig
+.one:
+    ld    r7, [bp_u]
+    call  bp_dig
+.end:
+    ld    r1, [bp_n]
+    addi  r1, #bp_txt
+    mov   r7, #0
+    st    [r1+0], r7
+    ret
+
+; r7 = a digit: appended to bp_txt, bp_x moved left by its advance
+bp_dig:
+    ld    r1, [bp_n]
+    addi  r1, #bp_txt
+    mov   r6, r7
+    add   r6, #0x30
+    st    [r1+0], r6
+    ld    r6, [bp_n]
+    add   r6, #1
+    st    [bp_n], r6
+    li    r6, #-5
+    cmp   r7, #1
+    bne   .w
+    li    r6, #-4
+.w:
+    ld    r7, [bp_x]
+    add   r7, r6
+    st    [bp_x], r7
+    ret
+
+; batt_low, every tick: the stock counter 0x1e; 100 ticks hidden, 100 shown; r7 = 1 at 1400 (power off)
+bp_blink:
+    ld    r7, [0x001e]
+    add   r7, #1
+    st    [0x001e], r7
+    li    r6, #1400
+    cmp   r7, r6
+    blt   .on
+    mov   r7, #1
+    ret
+.on:
+    li    r6, #-200
+.mod:
+    cmp   r7, #200
+    blt   .ph
+    add   r7, r6
+    jmp   .mod
+.ph:
+    mov   r6, #0
+    cmp   r7, #100
+    blt   .p
+    mov   r6, #1
+.p:
+    ld    r7, [bp_ph]
+    cmp   r7, r6
+    beq   .same               ; draw only when the phase changes
+    st    [bp_ph], r6
+    cmp   r6, #0
+    beq   .hide
+    call  bp_draw
+    jmp   .same
+.hide:
+    push  #0
+    push  #7
+    push  #0x18
+    push  #0
+    push  #0x68
+    ccall 0x04a69
+.same:
+    mov   r7, #0
+    ret
+.end
