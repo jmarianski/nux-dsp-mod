@@ -12,6 +12,9 @@ defaults NAME...                 patches applied by default (and the pool layout
 code    START END                code ranges, END exclusive (word addresses)
 ramdata START END                file words copied to RAM address 0 at boot
 pool    START END                free space for patch code (must be provably unused)
+farpool START END                free space above 0xffff, reached by a far `call`; used only by `.code START`.
+                                 It may end past the official file: the output then grows (header length,
+                                 checksum moved to the new last word)
 func    ADDR NAME ; text         function entry
 label   ADDR NAME ; text         named place inside a function
 var     ADDR NAME [SIZE] ; text  RAM variable (RAM word address), optional size in words

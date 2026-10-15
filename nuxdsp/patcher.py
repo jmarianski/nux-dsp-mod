@@ -258,6 +258,7 @@ def allocate(patches, fwmap, layout=None):
             layout.setdefault(k, None)
             continue
         pools = [(s, e) for s, e in fwmap.pools if pool is None or s == pool]
+        pools += [(s, e) for s, e in fwmap.farpools if s == pool]  # far pools: only on request
         if not pools:
             raise PatchError("%s: no pool starts at %#x" % (k, pool))
         for s, e in pools:
@@ -273,7 +274,7 @@ def allocate(patches, fwmap, layout=None):
             raise PatchError("no free pool space for %s (%d words)" % (k, n))
     for k, n, name, _ in blocks:
         a = layout[k]
-        if n and not any(s <= a and a + n <= e for s, e in fwmap.pools):
+        if n and not any(s <= a and a + n <= e for s, e in fwmap.pools + fwmap.farpools):
             raise PatchError("%s: code at %#x..%#x is outside the pools" % (k, a, a + n))
     return layout
 
@@ -355,8 +356,14 @@ def build(image, fwmap, patches, params=None, layout=None, check_sha=True, owner
 
     w = container.words(image)
     orig = list(w)
+    # code in a far pool past the end of the file: the file grows (header length, checksum moves to the end)
+    end = max([place[k] + n for p in patches for k, _, n in code_blocks(p) if place.get(k) is not None] + [0])
+    if end > len(w) - 1:
+        w[-1] = 0xFFFF
+        w.extend([0xFFFF] * (-(-(end + 1) // 0x40) * 0x40 - len(w)))  # whole 64-word blocks, as the original
+        w[1], w[2] = len(w) & 0xFFFF, len(w) >> 16
     owner = {} if owner_out is None else owner_out
-    report = []
+    report = [] if len(w) == len(orig) else ["file grows to %#x words" % len(w)]
 
     def put(addr, word, who):
         if addr in owner:

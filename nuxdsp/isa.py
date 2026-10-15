@@ -64,8 +64,8 @@ def decode(x, lit):
             op = {0xE0: "b.e0", 0xE1: "blt", 0xE2: "beq", 0xE3: "bne"}[hi]
             return op, (("rel8", lo - 256 if lo & 0x80 else lo),)
         return None
-    if x == 0xD6C8:
-        return "call", (("abs", lit),)
+    if (x & 0xFFF8) == 0xD6C8:  # bits 16..18 of the target in the low bits (d6c9 = 0x1xxxx)
+        return "call", (("abs", (x & 7) << 16 | lit),)
     if x == 0xD7C8:
         return "ccall", (("abs", lit),)
     if (x & 0xF8FF) == 0xD048:
@@ -110,7 +110,7 @@ def encode(op, args):
     if op in ("b.e0", "blt", "beq", "bne"):
         return [({"b.e0": 0xE0, "blt": 0xE1, "beq": 0xE2, "bne": 0xE3}[op]) << 8 | (args[0][1] & 0xFF)]
     if op in ("call", "ccall"):
-        return [0xD6C8 if op == "call" else 0xD7C8, args[0][1] & 0xFFFF]
+        return [(0xD6C8 | args[0][1] >> 16) if op == "call" else 0xD7C8, args[0][1] & 0xFFFF]
     if op in ("li", "addi"):
         return [(0xD048 if op == "li" else 0xD04A) | args[0] << 8, args[1] & 0xFFFF]
     if op.startswith("lb"):

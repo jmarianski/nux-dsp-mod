@@ -13,6 +13,8 @@ Format, one entry per line, `;` starts a comment that is kept as the entry descr
     code    START END            code range (word addresses, END exclusive)
     ramdata START END            file words copied to RAM address 0 at boot
     pool    START END            free space usable for patch code
+    farpool START END            free space above 0xffff (reached with a far `call`, d6c9..): used only by
+                                 `.code START` blocks; may end past the official file, which then grows
     func    ADDR NAME            function entry
     label   ADDR NAME            named location inside a function
     var     ADDR NAME [SIZE]     RAM variable (word address), optional size in words
@@ -55,6 +57,7 @@ class FwMap:
     code: list = field(default_factory=list)
     ramdata: tuple = None
     pools: list = field(default_factory=list)
+    farpools: list = field(default_factory=list)
     glyphs: tuple = None
     soundbank: dict = None
     entries: list = field(default_factory=list)
@@ -109,8 +112,9 @@ def load(path=None):
                 setattr(m, k, " ".join(shlex.split(line)[1:]))
             elif k in ("defaults", "optional"):
                 setattr(m, k, t[1:])
-            elif k in ("code", "pool"):
-                getattr(m, "code" if k == "code" else "pools").append((int(t[1], 16), int(t[2], 16)))
+            elif k in ("code", "pool", "farpool"):
+                getattr(m, {"code": "code", "pool": "pools", "farpool": "farpools"}[k]).append(
+                    (int(t[1], 16), int(t[2], 16)))
             elif k == "glyphs":
                 m.glyphs = (int(t[1], 16), int(t[2], 16), int(t[3], 0))
             elif k == "soundbank":
