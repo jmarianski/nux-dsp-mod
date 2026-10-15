@@ -30,6 +30,10 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .desc { color: var(--muted); font-size: 13px; }
 button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
 button:disabled { opacity: .45; cursor: default; }
+label.file { display: inline-block; padding: 4px 10px; font-size: 13px; color: var(--accent); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.note { color: var(--muted); font-size: 12.5px; margin: 4px 0 10px; }
+.card h3 { font-size: 14px; margin: 18px 0 6px; }
+td.weak { color: var(--muted); }
 button.small { padding: 4px 10px; font-size: 13px; background: transparent; color: var(--accent); border: 1px solid var(--line); }
 select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); max-width: 100%; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; font-size: 14px; }
@@ -74,6 +78,7 @@ a { color: var(--accent); }
     do ~16 min. Nie wyłączaj i nie graj w trakcie.</p>
     <button id="read" disabled>Read the log / Odczytaj dziennik</button>
     <button class="small" id="stop" hidden>Stop</button>
+    <label class="small file">Open a saved .syx / Otwórz zapisany .syx <input type="file" id="file" accept=".syx,.bin,application/octet-stream" hidden></label>
     <div class="status" id="rstatus"></div>
     <progress id="prog" hidden></progress>
   </div>
@@ -85,6 +90,11 @@ a { color: var(--accent); }
       <button class="small" id="csv">CSV</button>
       <button class="small" id="raw">Raw dump (.syx) / Surowy zrzut</button>
     </div>
+    <h3>Battery / Bateria</h3>
+    <div class="stats" id="bstats"></div>
+    <p class="note" id="bnote"></p>
+    <div class="tbl"><table id="stbl"></table></div>
+    <h3>Windows / Okna</h3>
     <div class="tbl"><table id="tbl"></table></div>
   </div>
 
@@ -132,14 +142,20 @@ function fillPorts() {
 }
 
 function onMsg(ev) {
-  const d = ev.data;
-  if (!d.length || d[0] >= 0xF0) return;
+  const r = take(ev.data);
+  if (r === 2) return finish();
+  if (r === 1) { lastData = Date.now(); progress(); }
+}
+
+// one MIDI message: 0 = not ours, 1 = data, 2 = the RAM page (sent last) is complete
+function take(d) {
+  if (!d.length || d[0] >= 0xF0) return 0;
   raw.push(...d);
   if (d[0] === 0xEF && d.length >= 3) {
     if (cur) bad++;
     cur = { idx: d[1] | d[2] << 7, v: [] };
   } else if (d[0] === 0xAF && d.length >= 3 && cur) {
-    if (d[1] !== cur.v.length) { bad++; cur = null; return; }
+    if (d[1] !== cur.v.length) { bad++; cur = null; return 1; }
     cur.v.push(d[2]);
     if (cur.v.length === KEYS) {
       const v = cur.v, ws = [];
@@ -147,12 +163,25 @@ function onMsg(ev) {
       pages.push({ idx: cur.idx, ws });
       const done = cur.idx === RAM_PAGE;
       cur = null;
-      if (done) return finish();
+      if (done) return 2;
     }
-  } else return;
-  lastData = Date.now();
-  progress();
+  } else return 0;
+  return 1;
 }
+
+$("file").onchange = async ev => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const b = new Uint8Array(await f.arrayBuffer());
+  raw = []; pages = []; bad = 0; cur = null;
+  for (let i = 0; i < b.length; i++) {
+    if (!(b[i] & 0x80) || b[i] >= 0xF0) continue;
+    take([b[i], b[i + 1] & 0x7F, b[i + 2] & 0x7F]);
+    i += 2;
+  }
+  ev.target.value = "";
+  finish(f.name);
+};
 
 function progress() {
   const n = pages.filter(p => p.idx !== DIAG_PAGE).length;
@@ -177,10 +206,10 @@ $("stop").onclick = () => finish("Stopped / Przerwano");
 
 function finish(why) {
   clearInterval(timer);
-  const inp = access.inputs.get($("pin").value);
+  const inp = access && access.inputs.get($("pin").value);
   if (inp) inp.onmidimessage = null;
   reading = false;
-  $("stop").hidden = true; $("prog").hidden = true; $("read").disabled = false;
+  $("stop").hidden = true; $("prog").hidden = true; $("read").disabled = !access;
   if (cur) { bad++; cur = null; }
   const flash = pages.filter(p => p.idx !== RAM_PAGE && p.idx !== DIAG_PAGE).length;
   const ram = pages.some(p => p.idx === RAM_PAGE);
@@ -268,7 +297,124 @@ function show(es) {
       "</td><td>" + (e.closed ? e.batt_adc : "") + "</td></tr>";
   }
   $("tbl").innerHTML = h;
+  showBattery(battery(es));
   $("out").hidden = false;
+}
+
+// Battery drain from batt_adc in the closed windows on battery. The voltage sags under load and comes back
+// at rest, so readings are compared only while asleep (light load), SETTLE s after the last awake moment.
+// A session = awake windows between two such readings; the sleep inside it is subtracted at the sleep rate.
+const EMPTY = 756;        // batt_levels[0] in the stock firmware: 15 readings below it -> low battery, power off
+const SETTLE = 600, MIN_SLEEP = 3600, MIN_SESSION = 1200;
+const awake = e => e.play_s + e.silent_speaker_on_s + e.silent_speaker_off_s;
+
+function battery(es) {
+  // chains of consecutive closed windows on battery (a power-off in between costs next to nothing)
+  const chains = [];
+  let c = [];
+  for (const e of es) {
+    if (e.closed && e.power_src === 1) c.push(e);
+    else if (c.length) { chains.push(c); c = []; }
+  }
+  if (c.length) chains.push(c);
+
+  // the sleep rate: runs of pure sleep windows, without the first SETTLE s of each run
+  let sd = 0, sh = 0, sruns = 0;
+  for (const ch of chains) {
+    let i = 0;
+    while (i < ch.length) {
+      if (awake(ch[i]) > 1) { i++; continue; }
+      let j = i, t = 0;
+      while (j < ch.length && awake(ch[j]) <= 1 && t < SETTLE) t += ch[j++].asleep_s;
+      if (j === i || j >= ch.length || awake(ch[j]) > 1) { i = j + 1; continue; }
+      const a = j - 1;           // the first settled reading
+      let k = j, u = 0;
+      while (k < ch.length && awake(ch[k]) <= 1) u += ch[k++].asleep_s;
+      if (u >= MIN_SLEEP) { sd += ch[a].batt_adc - ch[k - 1].batt_adc; sh += u / 3600; sruns++; }
+      i = k;
+    }
+  }
+  const sr = sh ? sd / sh : null;
+
+  // sessions: from the last sleep reading before to a settled sleep reading after
+  const sess = [];
+  for (const ch of chains) {
+    let i = 0;
+    while (i < ch.length) {
+      if (awake(ch[i]) <= 1) { i++; continue; }
+      let j = i;
+      while (j < ch.length && awake(ch[j]) > 1) j++;
+      const s = { from: ch[i], to: ch[j - 1], before: null, after: null, play: 0, pause: 0, slp: 0 };
+      if (i > 0) s.before = ch[i - 1].batt_adc;
+      let k = j, t = 0;
+      while (k < ch.length && awake(ch[k]) <= 1 && t < SETTLE) t += ch[k++].asleep_s;
+      if (t >= SETTLE) s.after = ch[k - 1].batt_adc;
+      for (let m = i; m < k; m++) {
+        const e = ch[m];
+        s.play += e.play_s / 3600; s.pause += (e.silent_speaker_on_s + e.silent_speaker_off_s) / 3600; s.slp += e.asleep_s / 3600;
+      }
+      s.on = s.play + s.pause;
+      s.ok = s.before !== null && s.after !== null && sr !== null && s.on * 3600 >= MIN_SESSION;
+      if (s.before !== null && s.after !== null && sr !== null) s.net = s.before - s.after - sr * s.slp;
+      sess.push(s);
+      i = j;
+    }
+  }
+  const good = sess.filter(s => s.ok);
+  const on = good.reduce((a, s) => a + s.on, 0), net = good.reduce((a, s) => a + s.net, 0);
+  const rate = on ? net / on : null;
+
+  // playing vs pause: least squares net = p * play + q * pause, if the sessions differ enough
+  let split = null;
+  if (good.length >= 3) {
+    let aa = 0, ab = 0, bb = 0, ay = 0, by = 0;
+    for (const s of good) { aa += s.play * s.play; ab += s.play * s.pause; bb += s.pause * s.pause; ay += s.play * s.net; by += s.pause * s.net; }
+    const det = aa * bb - ab * ab;
+    if (det > 1e-3 * aa * bb) {
+      const p = (ay * bb - by * ab) / det, q = (by * aa - ay * ab) / det;
+      if (p > 0 && q > 0) split = { play: p, pause: q };
+    }
+  }
+  const bat = chains.flat();
+  const full = bat.length ? Math.max(...bat.filter(e => awake(e) <= 1).map(e => e.batt_adc), 0) || null : null;
+  const last = bat.length ? bat[bat.length - 1].batt_adc : null;
+  return { sr, sh, sruns, sess, rate, on, good: good.length, split, full, last };
+}
+
+function showBattery(b) {
+  const f1 = x => x === null ? "—" : x.toFixed(1);
+  const hrs = (span, r) => span === null || !r || r <= 0 ? "—" : "~" + Math.round(span / r) + " h";
+  const span = b.full ? b.full - EMPTY : null, left = b.last ? b.last - EMPTY : null;
+  const st = [
+    [f1(b.sr) + " /h", "asleep, ADC drop per hour (" + b.sruns + " runs, " + b.sh.toFixed(1) + " h) / uśpienie, spadek ADC na godzinę"],
+    [f1(b.rate) + " /h", "switched on, playing with pauses (" + b.good + " sessions, " + b.on.toFixed(1) + " h) / włączone: granie z pauzami"],
+    [b.split ? f1(b.split.play) + " /h" : "—", "playing alone / samo granie"],
+    [b.split ? f1(b.split.pause) + " /h" : "—", "pause, switched on / pauza, włączone"],
+    [hrs(span, b.rate), "full → off, playing with pauses / od pełnej do wyłączenia, granie z pauzami"],
+    [hrs(span, b.sr), "full → off, asleep / od pełnej do wyłączenia, uśpienie"],
+    [hrs(left, b.rate) + " · " + hrs(left, b.sr), "from the last reading (ADC " + (b.last ?? "—") + "): playing · asleep / od ostatniego odczytu: granie · uśpienie"],
+  ];
+  $("bstats").innerHTML = st.map(([v, s]) => "<div class=stat><b>" + v + "</b><span>" + s + "</span></div>").join("");
+  $("bnote").innerHTML = "ADC is the battery voltage, not its charge: the drop is not linear and usually speeds up near " +
+    "the end, so the hours are rough. Full = the highest reading asleep on battery (" + (b.full ?? "—") + "), off = " + EMPTY +
+    ". A session counts from " + MIN_SESSION / 60 + " min switched on, with a reading asleep before and " + SETTLE / 60 +
+    " min asleep after (connect the cable only to read the log, it charges). " +
+    (b.split ? "" : "Playing and pauses are told apart once there are 3+ sessions with different shares of playing. ") +
+    "<br>ADC to napięcie, nie ładunek: spadek nie jest liniowy i pod koniec zwykle przyspiesza, więc godziny są zgrubne. " +
+    "Sesja liczy się od " + MIN_SESSION / 60 + " min włączenia, z odczytem w uśpieniu przed i po " + SETTLE / 60 +
+    " min uśpienia po (kabel podłączaj tylko do odczytu, ładuje). " +
+    (b.split ? "" : "Granie od pauz da się oddzielić przy 3+ sesjach o różnym udziale grania.");
+  const hm2 = h => Math.floor(h) + ":" + String(Math.round(h % 1 * 60)).padStart(2, "0");
+  let h = "<tr><th>session / sesja</th><th>on / włączone</th><th>play / granie</th><th>ADC before → after</th><th>net / netto</th><th>per h / na h</th></tr>";
+  for (const s of b.sess) {
+    const w = s.ok ? "" : " class=weak";
+    h += "<tr><td" + w + ">" + s.from.seq + (s.to.seq !== s.from.seq ? "–" + s.to.seq : "") + (s.ok ? "" : " (too short / no reading)") +
+      "</td><td" + w + ">" + hm2(s.on) + "</td><td" + w + ">" + hm2(s.play) +
+      "</td><td" + w + ">" + (s.before ?? "?") + " → " + (s.after ?? "?") +
+      "</td><td" + w + ">" + (s.net === undefined ? "" : s.net.toFixed(1)) +
+      "</td><td" + w + ">" + (s.net === undefined ? "" : (s.net / s.on).toFixed(1)) + "</td></tr>";
+  }
+  $("stbl").innerHTML = b.sess.length ? h : "";
 }
 
 function save(name, data, type) {

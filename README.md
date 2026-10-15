@@ -129,9 +129,11 @@ python3 -m nuxdsp telemetry log.syx                  # summary; --csv log.csv fo
 ```
 
 Or in the browser, without installing anything: **https://jmarianski.github.io/nux-dsp-mod/log.html** (Web MIDI:
-Chrome, Edge, Firefox) sends the request, shows the summary and every window, and saves CSV.
+Chrome, Edge, Firefox) sends the request, shows the summary and every window, and saves CSV. It also estimates battery drain
+(ADC per hour asleep and per hour switched on, playing vs pauses once the sessions allow it) and the hours from
+full to the low-battery power-off; a saved `.syx` can be opened there too.
 The request is a poly pressure on channel 16, the dump comes as channel 16 messages (one packet per 10 ms tick,
-so about 1 s per written page and up to ~16 min for a full ring; `-t` is how long amidi listens).
+so about 1 s per written page and up to ~16 min for a full ring; `-t` is how many seconds of silence end amidi).
 
 ## Make your own patches
 
@@ -224,5 +226,6 @@ niezerową ilość zaprogramowanych danych. Na ekranie wersji powinno być `DSP:
 okna po 5 minut: czas grania, średnią głośność, ciszę z włączonym i wyłączonym głośnikiem, czas uśpienia i odczyt
 baterii (około 17 dni, najstarsze są nadpisywane). Odczyt przez USB: `amidi -p hw:2,0,0 -S 'AF 7D 4E' -r log.syx -t 30`
 (port z `amidi -l`), potem `python3 -m nuxdsp telemetry log.syx`, albo w przeglądarce:
-**https://jmarianski.github.io/nux-dsp-mod/log.html**. Każda zapisana strona to około 1 s
-transmisji, pełny ring do ~16 min (`-t` = ile sekund słucha amidi).
+**https://jmarianski.github.io/nux-dsp-mod/log.html** (tam też szacunek zużycia baterii: ADC na godzinę
+uśpienia i włączenia, granie kontra pauzy, godziny od pełnej do wyłączenia; można też otworzyć zapisany `.syx`).
+Każda zapisana strona to około 1 s transmisji, pełny ring do ~16 min (`-t` = po ilu sekundach ciszy amidi kończy).
