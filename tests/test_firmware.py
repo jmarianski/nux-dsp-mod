@@ -31,6 +31,13 @@ class TestFirmware(unittest.TestCase):
         with open(FW, "rb") as f:
             cls.img = f.read()
         cls.map = fwmap.load()
+        cls._js = None
+
+    def target_js(self):
+        # the web export builds every value of every parameter: once for all tests
+        if type(self)._js is None:
+            type(self)._js = web.target_js(self.img, self.map)
+        return self._js
 
     def test_official(self):
         self.assertEqual(container.sha256(self.img), self.map.sha256)
@@ -146,7 +153,9 @@ class TestFirmware(unittest.TestCase):
             shutil.copy(os.path.join(web.WEB_DIR, "index.html"), d)
             shutil.copy(os.path.join(web.WEB_DIR, "patcher.js"), d)
             os.mkdir(os.path.join(d, "targets"))
-            web.write_target(self.img, self.map, d)
+            with open(os.path.join(d, "targets", self.map.id + ".js"), "w", encoding="utf-8") as f:
+                f.write(self.target_js())
+            web.update_index(d)
             web.write_packs(d)
             cases = [({}, {}), ({"BOOT_PRESET": 4, "PRESET_LABELS": 2, "OFF_VELOCITY": 90},
                                 {"boot_preset": {"BOOT_PRESET": 4, "PRESET_LABELS": 2},
@@ -200,7 +209,7 @@ class TestFirmware(unittest.TestCase):
     def test_committed_web_data_is_current(self):
         path = os.path.join(web.WEB_DIR, "targets", self.map.id + ".js")
         with open(path, encoding="utf-8") as f:
-            self.assertEqual(f.read(), web.target_js(self.img, self.map),
+            self.assertEqual(f.read(), self.target_js(),
                              "run: python3 -m nuxdsp web %s" % self.map.input)
 
     def test_detected_by_sha(self):

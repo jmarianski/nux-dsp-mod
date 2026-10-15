@@ -11,6 +11,7 @@ Operands: rN | #EXPR | [r1+EXPR] | [fp+EXPR] | [EXPR] | EXPR (branch/call target
 EXPR: numbers, symbols, + - * & | << >> and parentheses.
 """
 import ast
+import functools
 import re
 
 from . import isa
@@ -23,11 +24,16 @@ class AsmError(Exception):
     pass
 
 
-def eval_expr(text, symbols):
+@functools.lru_cache(maxsize=None)
+def parse_expr(text):
     try:
-        tree = ast.parse(text.strip(), mode="eval").body
+        return ast.parse(text.strip(), mode="eval").body
     except SyntaxError:
         raise AsmError("bad expression %r" % text)
+
+
+def eval_expr(text, symbols):
+    tree = parse_expr(text)
 
     def ev(n):
         if isinstance(n, ast.Constant) and isinstance(n.value, int):
@@ -75,8 +81,9 @@ def split_operands(text):
     return out
 
 
+@functools.lru_cache(maxsize=None)
 def parse_statement(line):
-    """-> ('label', name) | ('org', expr) | ('dw', [exprs]) | ('op', op, operand_text) | None"""
+    """-> ('label', name) | ('org', expr) | ('dw', (exprs)) | ('op', op, operand_text) | None"""
     line = line.split(";", 1)[0].strip()
     if not line:
         return None
@@ -91,10 +98,11 @@ def parse_statement(line):
         name, _, expr = rest.partition(",")
         return ("equ", name.strip(), expr)
     if op == ".dw":
-        return ("dw", split_operands(rest))
+        return ("dw", tuple(split_operands(rest)))
     return ("op", op, rest)
 
 
+@functools.lru_cache(maxsize=None)
 def stmt_size(st):
     if st[0] == "dw":
         return len(st[1])
@@ -203,9 +211,7 @@ def assemble(lines, symbols=None, origin=None, label_prefix=None, labels_only=Fa
         return (label_prefix + name) if (label_prefix and name.startswith(".")) else name
 
     def fix_locals(text):
-        if not label_prefix:
-            return text
-        return re.sub(r"(?<![\w.])\.(?=[A-Za-z_])", label_prefix + ".", text)
+        return prefixed(label_prefix, text) if label_prefix else text
 
     labels, pc = {}, origin
     for n, st in stmts:  # pass 1: addresses
@@ -257,6 +263,12 @@ def assemble(lines, symbols=None, origin=None, label_prefix=None, labels_only=Fa
         except AsmError as e:
             raise AsmError("line %d: %s" % (n, e))
     return out, labels
+
+
+@functools.lru_cache(maxsize=None)
+def prefixed(label_prefix, text):
+    """Local labels (.name) in an operand made global: label_prefix.name"""
+    return re.sub(r"(?<![\w.])\.(?=[A-Za-z_])", label_prefix + ".", text)
 
 
 def block_size(lines):
