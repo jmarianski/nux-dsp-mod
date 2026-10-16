@@ -13,10 +13,11 @@
 ;
 ; The curve: EMPTY is the ADC reading of 0% (stock: below batt_levels[0] = 756 the battery is low and the
 ; instrument switches off), STEP1..STEP10 the ADC span of each tenth (0-10%, 10-20%, .. 90-100%), so 100% is at
-; EMPTY + STEP1 + .. + STEP10. Within a tenth the percentage is linear. The defaults are a straight line from
-; 756 to 935 (the reading after a full charge, telemetry log): percent of ADC range, not yet of playing time;
-; log.html can fit the steps to a logged full discharge. While charging the reading is 18 higher (the stock
-; thresholds add 0x12): taken off before the curve.
+; EMPTY + STEP1 + .. + STEP10. Within a tenth the percentage is linear. The defaults come from a logged full
+; discharge (telemetry, 2026-10-16: 42 h on battery from full, 87% of it asleep): percent of time on battery,
+; read awake (under load the reading is 3..19 lower than asleep), 100% at 922 (awake right after a full charge:
+; 917..921), the lowest tenth extrapolated to the stock cut-off. While charging the reading is higher by about
+; CHARGING (34 at the plug-in in the log; the stock thresholds add 0x12): taken off before the curve.
 ; On battery the shown value never goes up (a lighter load lets the voltage recover); it starts afresh at
 ; power-on and after the charger is unplugged.
 ; The stock code redraws the battery when the ADC moved by more than 5 since the last drawing (about 3%);
@@ -25,16 +26,17 @@
 ; Code above 0xffff (far call, checked with far_test), past the end of the official file (it grows). Uses only r1, r6,
 ; r7 and RAM 0x6400..0x6424 (unused after init_all, see FINDINGS).
 .param EMPTY 756 650 850 "Battery %: ADC reading of 0% (stock low-battery threshold 756)"
-.param STEP1 18 0 50 "Battery %: ADC span of 0-10%"
-.param STEP2 18 0 50 "Battery %: ADC span of 10-20%"
-.param STEP3 18 0 50 "Battery %: ADC span of 20-30%"
-.param STEP4 18 0 50 "Battery %: ADC span of 30-40%"
-.param STEP5 18 0 50 "Battery %: ADC span of 40-50%"
-.param STEP6 18 0 50 "Battery %: ADC span of 50-60%"
-.param STEP7 18 0 50 "Battery %: ADC span of 60-70%"
-.param STEP8 18 0 50 "Battery %: ADC span of 70-80%"
-.param STEP9 18 0 50 "Battery %: ADC span of 80-90%"
-.param STEP10 17 0 50 "Battery %: ADC span of 90-100%"
+.param STEP1 23 0 50 "Battery %: ADC span of 0-10%"
+.param STEP2 16 0 50 "Battery %: ADC span of 10-20%"
+.param STEP3 12 0 50 "Battery %: ADC span of 20-30%"
+.param STEP4 10 0 50 "Battery %: ADC span of 30-40%"
+.param STEP5 11 0 50 "Battery %: ADC span of 40-50%"
+.param STEP6 13 0 50 "Battery %: ADC span of 50-60%"
+.param STEP7 16 0 50 "Battery %: ADC span of 60-70%"
+.param STEP8 19 0 50 "Battery %: ADC span of 70-80%"
+.param STEP9 22 0 50 "Battery %: ADC span of 80-90%"
+.param STEP10 24 0 50 "Battery %: ADC span of 90-100%"
+.param CHARGING 34 0 80 "Battery %: how much higher the reading is with the charger plugged in"
 .param REDRAW 2 1 5 "Battery %: redraw when the ADC moved by more than this (stock 5)"
 
 ; draw_battery, after `enter #2`: everything is ours, then its epilogue
@@ -238,7 +240,7 @@ bp_pct:
     ld    r6, [power_src]
     cmp   r6, #2
     bne   .adc
-    li    r6, #-18            ; charging: the reading is 18 higher
+    li    r6, #-CHARGING      ; charging: the reading is higher
     add   r7, r6
 .adc:
     mov   r6, r7              ; x10
