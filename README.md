@@ -118,6 +118,21 @@ Both detect the target from the file's SHA-256 and refuse anything else.
 file instead of the original. Make sure the tool reports a non-zero amount programmed. Afterwards check
 *version* on the instrument: it should say `DSP:1.0.7B`. To go back, flash the official file the same way.
 
+**Flashing on Linux (or macOS), without the Windows tool:** `nuxdsp flash` speaks the instrument's update
+protocol (Dream RPC) over USB; it needs `pip install pyusb`. Switch the instrument on in update mode (hold
+Power + VOL+ + VOL- for about half a second), then:
+
+```sh
+sudo cp udev/70-nux-dfu.rules /etc/udev/rules.d/ && sudo udevadm control --reload   # once, Linux: no root needed after
+python3 -m nuxdsp dfu-info                                   # what the instrument offers (read only)
+python3 -m nuxdsp flash --dry-run NEK100_DSP_V1.0.7B_mod.bin # checks the file against the instrument, sends nothing
+python3 -m nuxdsp flash NEK100_DSP_V1.0.7B_mod.bin
+```
+
+The range comes from the file (DSP firmware, soundbank or style); a DSP file must pass its checksum. When it
+is done, switch the instrument off and on and check *version*. Tested with the DSP firmware; the soundbank
+and style the same way, but not yet tried.
+
 **Usage log (`telemetry`, opt-in):** with that patch the instrument keeps a log in flash pages the stock firmware does not use: 5-minute
 windows with time played, average volume, silence with the speaker on and off, time asleep and the battery
 reading at the window's end (about 17 days, the oldest overwritten). Read it with the instrument connected over
@@ -222,6 +237,11 @@ strona rozpozna model i wersję, pokaże dostępne poprawki i da gotowy plik.
 są opisane wyżej.
 **Wgrywanie:** oficjalnym narzędziem NUX, tak samo jak zwykłą aktualizację DSP. Narzędzie musi pokazać
 niezerową ilość zaprogramowanych danych. Na ekranie wersji powinno być `DSP:1.0.7B`.
+**Wgrywanie pod Linuksem (albo macOS), bez windowsowego narzędzia:** `python3 -m nuxdsp flash plik.bin`
+(potrzebuje `pip install pyusb`). Instrument włącz w trybie aktualizacji (Power + VOL+ + VOL− przez około pół
+sekundy); pod Linuksem raz skopiuj `udev/70-nux-dfu.rules` do `/etc/udev/rules.d/`, wtedy root nie jest potrzebny.
+`--dry-run` sprawdza plik z instrumentem i niczego nie wysyła. Po wgraniu wyłącz i włącz instrument.
+Sprawdzone z firmware DSP; soundbank i style idą tak samo, ale jeszcze ich nie próbowaliśmy.
 **Dziennik użycia (`telemetry`, tylko gdy go wybierzesz):** instrument z tym patchem zapisuje we flashu, w stronach nieużywanych przez fabryczny firmware,
 okna po 5 minut: czas grania, średnią głośność, ciszę z włączonym i wyłączonym głośnikiem, czas uśpienia i odczyt
 baterii (około 17 dni, najstarsze są nadpisywane). Odczyt przez USB: `amidi -p hw:2,0,0 -S 'AF 7D 4E' -r log.syx -t 30`

@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import asm, container, disasm, extract, fwmap, instrument, patcher, sf2, soundbank
+from . import asm, container, dfu, disasm, extract, fwmap, instrument, patcher, sf2, soundbank
 
 
 def read(path):
@@ -207,6 +207,43 @@ def cmd_telemetry(a):
         print("wrote %s" % a.csv)
 
 
+def cmd_dfu_info(a):
+    t = dfu.Usb()
+    try:
+        print("info words: %s" % " ".join("%04x" % w for w in dfu.info(t)))
+        frag, table = dfu.ranges(t)
+        print("fragment: %d words" % frag)
+        for name, start, end in table:
+            print("  %-12s %#010x .. %#010x  (%d KB)" % (name, start, end, (end - start) * 2 // 1024))
+    finally:
+        t.close()
+
+
+def cmd_flash(a):
+    data = read(a.file)
+    t = dfu.Usb()
+    try:
+        frag, table = dfu.ranges(t)
+        name, start, words = dfu.plan(data, table, frag, a.range)
+        print("%s -> %s at %#x, %d words (%d KB)" % (a.file, name, start, words, words * 2 // 1024))
+        if a.dry_run:
+            print("dry run: nothing sent")
+            return 0
+        if not a.yes and input("flash it? [y/N] ").strip().lower() not in ("y", "yes", "t", "tak"):
+            print("cancelled")
+            return 1
+
+        def progress(done, total):
+            print("\r  %3d%%  %d / %d words" % (100 * done // total, done, total), end="", flush=True)
+
+        name, ok = dfu.flash(t, data, a.file, a.range, restart=not a.no_restart, progress=progress)
+        print()
+        print("done: %s%s" % (name, ", restarting" if ok and not a.no_restart else
+                              "" if ok else " (the instrument did not confirm; switch it off and on)"))
+    finally:
+        t.close()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="nuxdsp", description="Community patcher for NUX digital piano DSP firmware")
     ap.add_argument("--target", help="target id, directory or .map file (default: detected from the firmware file)")
@@ -265,6 +302,13 @@ def main(argv=None):
     s.add_argument("dump", help=".syx file, e.g. from: amidi -p hw:1,0,0 -S 'AF 7D 4E' -r log.syx -t 30")
     s.add_argument("--csv", help="also write every window as CSV")
     s.add_argument("--sleep-w", type=int, default=32, help="the SLEEP_W the firmware was built with")
+    sub.add_parser("dfu-info", help="read the update-mode range table over USB (instrument in update mode)")
+    s = sub.add_parser("flash", help="flash a file over USB in update mode, without the Windows updater")
+    s.add_argument("file", help="DSP firmware, soundbank or style file")
+    s.add_argument("--range", help="range name as dfu-info lists it (default: from the file's magic)")
+    s.add_argument("--dry-run", action="store_true", help="check the file against the instrument, send nothing")
+    s.add_argument("-y", "--yes", action="store_true", help="do not ask")
+    s.add_argument("--no-restart", action="store_true", help="stay in update mode when done")
     s = sub.add_parser("web", help="regenerate web/targets/<id>.js for the given official files")
     s.add_argument("firmware", nargs="+", help="official firmware files (only used to compute the patch words)")
     s.add_argument("--web-dir", default=None, help="default: web/ of this repository")
@@ -275,6 +319,6 @@ def main(argv=None):
         a.web_dir = web.WEB_DIR
     try:
         return globals()["cmd_" + a.cmd.replace("-", "_")](a) or 0
-    except (patcher.PatchError, asm.AsmError, soundbank.BankError, instrument.PackError, sf2.SF2Error, ValueError, OSError) as e:
+    except (patcher.PatchError, dfu.DfuError, asm.AsmError, soundbank.BankError, instrument.PackError, sf2.SF2Error, ValueError, OSError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 1
