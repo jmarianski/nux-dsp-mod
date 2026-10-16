@@ -9,8 +9,8 @@ class Code(dict):
         return 0xFFFF
 
 
-DEFAULTS = {"EMPTY": 756, "STEP1": 18, "STEP2": 18, "STEP3": 18, "STEP4": 18, "STEP5": 18, "STEP6": 18,
-            "STEP7": 18, "STEP8": 18, "STEP9": 18, "STEP10": 17, "REDRAW": 2}
+DEFAULTS = {"EMPTY": 756, "STEP1": 23, "STEP2": 16, "STEP3": 12, "STEP4": 10, "STEP5": 11, "STEP6": 13,
+            "STEP7": 16, "STEP8": 19, "STEP9": 22, "STEP10": 24, "CHARGING": 34, "REDRAW": 2}
 
 
 def expected(adc, params):
@@ -67,14 +67,14 @@ class TestCurve(unittest.TestCase):
         r.s.wr(0x6406, 0)
         self.assertEqual((r.pct(755), r.pct(756)), (0, 0))
         r.s.wr(0x6406, 0)
-        self.assertEqual(r.pct(935), 100)
+        self.assertEqual(r.pct(922), 100)
         r.s.wr(0x6406, 0)
-        self.assertEqual(r.pct(846), 50)  # 756 + 5 * 18
+        self.assertEqual(r.pct(828), 50)  # 756 + 23 + 16 + 12 + 10 + 11
 
     def test_uneven_steps(self):
         r = Runner(EMPTY=700, STEP1=40, STEP2=0, STEP3=5, STEP10=50)
         for adc in range(650, 1024):
-            self.assertEqual(r.pct(adc, src=2), expected(adc - 18, r.params), adc)
+            self.assertEqual(r.pct(adc, src=2), expected(adc - r.params["CHARGING"], r.params), adc)
 
     def test_never_up_on_battery(self):
         r = Runner()
@@ -87,9 +87,10 @@ class TestCurve(unittest.TestCase):
         r.pct(990, src=2)                          # charger: afresh
         self.assertEqual(r.pct(900), expected(900, r.params))
 
-    def test_charging_takes_off_18(self):
+    def test_charging_takes_off_the_offset(self):
         r = Runner()
-        self.assertEqual(r.pct(864, src=2), expected(846, r.params))
+        self.assertEqual(r.pct(862, src=2), expected(828, r.params))
+        self.assertEqual(Runner(CHARGING=18).pct(846, src=2), expected(828, r.params))
 
 
 class TestText(unittest.TestCase):

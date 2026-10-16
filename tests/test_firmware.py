@@ -16,7 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # mapping and the full lang_pl translation (all confirmed on hardware); battery_percent (number, %, standing icon:
 # shown on hardware at a high level; lower fill levels and charging not yet seen) and extra_menu's functions moved
 # above 0xffff (run on hardware with it).
-ALL_SHA = "fcb4022c674503854cb311af233a3ad18aa2ec0e03c3135ff9a76b8ec67b9e59"
+ALL_SHA = "180f9d1246a30fc7017c1888f67b1e6f190280450249d48ed3e6f33ac45cf0af"
 
 
 def padded(w, n):
