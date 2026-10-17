@@ -282,6 +282,10 @@ unsigned mu_shi, mu_slo, mu_hi, mu_lo, mu_wait;
 unsigned mbuf[16];
 int mu_i, mu_ok;
 
+#define DEV_VOL (*(unsigned *)0x0145)          /* the piano's VOL, 0..10 */
+unsigned mvol[16];                              /* each channel's volume as the song set it */
+unsigned mu_dv;                                 /* VOL the channels were last scaled with */
+
 unsigned mword(void)
 {
     if (mu_i >= 16) {
@@ -300,10 +304,23 @@ unsigned mword(void)
 
 void mu_restart(void)
 {
+    int c;
+    for (c = 0; c < 16; c++) mvol[c] = 100;     /* MIDI's default */
+    mu_dv = 0xffff;                             /* mu_tick sends them all, scaled */
     mu_hi = mu_shi;
     mu_lo = mu_slo;
     mu_i = 16;
     mu_wait = 0;
+}
+
+
+unsigned mu_scale(int c) { return mvol[c] * DEV_VOL / 10; }
+
+void mu_volumes(void)                           /* all channels' volume again, after VOL changed */
+{
+    int c;
+    mu_dv = DEV_VOL;
+    for (c = 4; c < 16; c++) synth(0x0bb0 | c, 0x0700 | mu_scale(c));
 }
 
 void mu_tick(void)
@@ -311,6 +328,7 @@ void mu_tick(void)
     unsigned w0, w1, st;
     int n;
     if (!mu_ok) return;
+    if (DEV_VOL != mu_dv) mu_volumes();
     if (mu_wait) {
         mu_wait--;
         if (mu_wait) return;
@@ -323,6 +341,10 @@ void mu_tick(void)
             mu_restart();
             return;
         }
+        if ((st & 0xf0) == 0xb0 && (w1 >> 8) == 7) {    /* channel volume: kept, sent scaled by VOL */
+            mvol[st & 15] = w1 & 127;
+            w1 = 0x0700 | mu_scale(st & 15);
+        }
         if (st) synth((st >> 4) << 8 | st, w1);
         mu_wait = w0 >> 8;
         if (mu_wait) return;
@@ -333,7 +355,7 @@ void mu_stop(void)                              /* a panel key leaves the game: 
 {
     int c;
     mu_ok = 0;
-    for (c = 0; c < 16; c++) {
+    for (c = 4; c < 16; c++) {                  /* ours only: 0..3 are the keyboard's parts */
         synth(0x0bb0 | c, 123 << 8);
         synth(0x0bb0 | c, 120 << 8);
     }

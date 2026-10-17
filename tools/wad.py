@@ -13,6 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WAD = os.path.join(HERE, "..", "wad", "DOOM1.WAD")
 
 MUS_CTRL = {1: 0, 2: 1, 3: 7, 4: 10, 5: 11, 6: 91, 7: 93, 8: 64, 9: 67}   # MUS controller -> MIDI CC (0 = program)
+FREE = [4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15]  # melodic channels: 0..3 are the keyboard's parts, 9 percussion
 MUS_SYS = {10: 120, 11: 123, 12: 126, 13: 127, 14: 121}
 
 
@@ -44,7 +45,7 @@ def mus_events(mus):
     while True:
         b = mus[p]; p += 1
         last, kind, ch = b >> 7, b >> 4 & 7, b & 15
-        mch = 9 if ch == 15 else 15 if ch == 9 else ch      # MUS 15 = percussion = MIDI 9
+        mch = 9 if ch == 15 else FREE[ch % len(FREE)]     # MUS 15 = percussion = MIDI 9
         if kind == 0:
             out.append((t, 0x80 | mch, mus[p] & 127, 0)); p += 1
         elif kind == 1:
