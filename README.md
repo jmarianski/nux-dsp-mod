@@ -88,9 +88,11 @@ The long-term goal is Doom running on the NEK-100 itself, drawn on its 128x64 LC
 
 - Step 1, `fb_splash` (works on a real NEK-100): a full-screen test card copied into the framebuffer; the image
   stays until the next full redraw of the main screen.
-- Step 2, `fb_test` (`firmware/fbtest.py`): the card and a font read from far program memory (above 0xffff)
-  with the firmware's own copy routine, then a game loop in the 10 ms tick (a whole frame per tick: sweeping line,
-  bouncing box) with timings on screen. VOL+/VOL- on the main screen starts and stops it.
+- Step 2, `fb_test` (`firmware/fbtest.py`, works on a real NEK-100): the card read from far program memory
+  (above 0xffff) with the firmware's own copy routine, then a game loop in the 10 ms tick (a whole frame every
+  50 ms: sweeping line, bouncing box, numbers) with timings on screen. VOL+/VOL- on the main screen starts and
+  stops it. Measured: a whole 128x64 frame (~5000 instructions) renders in ~0.2 ms, a full LCD refresh takes
+  ~0.8 ms, so at 20 frames/s a frame has a budget of very roughly 1-2 million instructions.
 
 ```sh
 python3 firmware/fbtest.py                       # regenerates firmware/fb_test.patch (our own code + data)
