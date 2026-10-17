@@ -21,7 +21,7 @@ variable `X` lives at file word `ramdata_start + X`.
 | Syntax | Encoding | Notes | |
 |---|---|---|---|
 | `mov rD, #imm8` | `0Dii` | | C |
-| `cmp rD, #imm8` | `0(D+8)ii` | sets flags for `beq/bne/blt` | C |
+| `cmp rD, #imm8` | `0(D+8)ii` | sets flags for `beq/bne/blt`; the comparison is **unsigned** (C: after `cmp 0xffff, #1` `blt` is not taken; doom-piano's diagnostics). For signed `a < b`, add 0x8000 to both first; for `x < 0`, test bit 15 | C |
 | `add rD, #imm8` | `1Dii` | imm8 is **zero-extended** (C: `add r, #-5` adds 251); to subtract, `li` the 16-bit value into a register and `add rD, rS` | C |
 | `and rD, #imm8` | `1(D+8)ii` | | C |
 | `mov rD, rS` | `8D0S` | | C |
@@ -45,7 +45,7 @@ variable `X` lives at file word `ramdata_start + X`.
 | `ret` | `d1ca` | return from a `call` | C |
 | `jmp rel8` | `78rr` | target = pc + 1 + rel | C |
 | `ljmp target` | `d0ce a` | absolute jump within the instruction's own 64K bank (bank 1 code of the firmware jumps to bank 1 targets this way), so far code cannot jump to bank 0 with it: use `call` | H |
-| `blt / beq / bne rel8` | `e1rr / e2rr / e3rr` | after `cmp`; target = pc + 1 + rel | C |
+| `blt / beq / bne rel8` | `e1rr / e2rr / e3rr` | after `cmp`; target = pc + 1 + rel; `blt` = below, unsigned | C |
 | `b.e0 rel8` | `e0rr` | conditional, condition unknown | H |
 | `lbN rel16` | `fNe7 r` | long branch, condition N unknown; target = pc + 2 + rel | H |
 

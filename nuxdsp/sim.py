@@ -1,8 +1,8 @@
 """Tiny simulator for patch code (only the instruction forms in isa.py, under our ISA model).
 
 It checks the *logic* of new code against a fake frame and RAM; it says nothing about whether the
-ISA model itself is right — that is what hardware tests are for. Assumptions: cmp compares signed
-16-bit values, imm8 is zero-extended (C: octave -2 test showed garbage with sign extension), shr is logical, `call` returns to the next instruction.
+ISA model itself is right — that is what hardware tests are for. Assumptions: cmp compares unsigned
+16-bit values (C: doom-piano's diagnostics, cmp 0xffff, #1 does not take blt), imm8 is zero-extended (C: octave -2 test showed garbage with sign extension), shr is logical, `call` returns to the next instruction.
 """
 from . import isa
 
@@ -59,7 +59,7 @@ class Sim:
                 if op == "mov":
                     r[dst] = v & 0xFFFF
                 elif op == "cmp":
-                    self.flags = (s16(r[dst]) > s16(v)) - (s16(r[dst]) < s16(v))
+                    self.flags = (r[dst] > v) - (r[dst] < v)
                 elif op == "add":
                     r[dst] = (r[dst] + v) & 0xFFFF
                 elif op == "and":
