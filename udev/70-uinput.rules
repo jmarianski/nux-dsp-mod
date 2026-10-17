@@ -1,0 +1,2 @@
+# Lets the logged-in user create virtual input devices (/dev/uinput) without sudo
+KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="input", TAG+="uaccess", OPTIONS+="static_node=uinput"
