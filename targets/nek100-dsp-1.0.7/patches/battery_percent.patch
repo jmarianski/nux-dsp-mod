@@ -7,35 +7,44 @@
 ;   charging     the lightning against the icon and at most 99%; 100% (no lightning) once the charger reports
 ;                full (never seen in the telemetry log: charge_full stayed 0 at the 955 plateau)
 ;   power_src 0  (no battery seen at power-on) the stock full icon
-; Low battery (batt_low): the stock code blinks the icon for 1400 ticks, then calls power_off. Hooked at its
+; Low battery (batt_low): the stock code blinks the icon for 1400 ticks (14 s), then calls power_off. Hooked at its
 ; start: the same counter and times, the number blinks instead (1 s off, 1 s on), and at 1400 we jump to the
 ; stock power_off call (telemetry hooks that call).
 ;
-; The curve: EMPTY is the ADC reading of 0% (stock: below batt_levels[0] = 756 the battery is low and the
-; instrument switches off), STEP1..STEP10 the ADC span of each tenth (0-10%, 10-20%, .. 90-100%), so 100% is at
-; EMPTY + STEP1 + .. + STEP10. Within a tenth the percentage is linear. The defaults come from a logged full
-; discharge (telemetry, 2026-10-16: 42 h on battery from full, 87% of it asleep): percent of time on battery,
-; read awake (under load the reading is 3..19 lower than asleep), 100% at 922 (awake right after a full charge:
-; 917..921), the lowest tenth extrapolated to the stock cut-off. While charging the reading is higher by about
-; CHARGING (34 at the plug-in in the log; the stock thresholds add 0x12): taken off before the curve.
-; On battery the shown value never goes up (a lighter load lets the voltage recover); it starts afresh at
+; The curve: EMPTY is the reading of 0%, STEP1..STEP10 the span of each tenth (0-10%, 10-20%, .. 90-100%), so 100%
+; is at EMPTY + STEP1 + .. + STEP10; within a tenth the percentage is linear. The curve is on the scale of a
+; reading taken asleep: awake (backlight, amplifier, PLL) the reading is lower by an amount that grows with the
+; charge (telemetry, 2026-10-17: about 4 up to 858, then a quarter of the excess, at most 16 near full; playing or
+; not hardly matters), so awake SAG_LOW + (reading - SAG_KNEE) / 4, at most SAG_MAX, is added first. The steps
+; come from a logged full discharge (2026-10-16: 42 h on battery from full, 87% of it asleep; percent of time on
+; battery), 100% at 935 (awake right after a full charge, 917..921, plus the sag), 0% at 760 (the stock cut-off,
+; 756 awake). While charging the reading is higher by about CHARGING (34 at the plug-in in the log; the stock
+; thresholds add 0x12): taken off first. Asleep = extra_menu's sleep (its flag, valid with its magic); without it,
+; always awake.
+; On battery the shown value never goes up (a lighter load lets the voltage recover), and it stays as it is for
+; SETTLE seconds after falling asleep or waking up (the averaged reading moves for a while); it starts afresh at
 ; power-on and after the charger is unplugged.
 ; The stock code redraws the battery when the ADC moved by more than 5 since the last drawing (about 3%);
 ; REDRAW lowers that.
 ;
 ; Code above 0xffff (far call, checked with far_test), past the end of the official file (it grows). Uses only r1, r6,
-; r7 and RAM 0x6400..0x6424 (unused after init_all, see FINDINGS).
-.param EMPTY 756 650 850 "Battery %: ADC reading of 0% (stock low-battery threshold 756)"
-.param STEP1 23 0 50 "Battery %: ADC span of 0-10%"
-.param STEP2 16 0 50 "Battery %: ADC span of 10-20%"
-.param STEP3 12 0 50 "Battery %: ADC span of 20-30%"
-.param STEP4 10 0 50 "Battery %: ADC span of 30-40%"
-.param STEP5 11 0 50 "Battery %: ADC span of 40-50%"
-.param STEP6 13 0 50 "Battery %: ADC span of 50-60%"
-.param STEP7 16 0 50 "Battery %: ADC span of 60-70%"
-.param STEP8 19 0 50 "Battery %: ADC span of 70-80%"
-.param STEP9 22 0 50 "Battery %: ADC span of 80-90%"
-.param STEP10 24 0 50 "Battery %: ADC span of 90-100%"
+; r7 and RAM 0x6400..0x6424 (unused after init_all, see FINDINGS). Time comes from extra_menu's clock (bp_clk,
+; every tick, its tm_dt), without it from battery_tick.
+.param EMPTY 760 650 850 "Battery %: reading of 0%, asleep scale (stock low-battery threshold 756 awake)"
+.param STEP1 23 0 50 "Battery %: span of 0-10%"
+.param STEP2 16 0 50 "Battery %: span of 10-20%"
+.param STEP3 12 0 50 "Battery %: span of 20-30%"
+.param STEP4 10 0 50 "Battery %: span of 30-40%"
+.param STEP5 11 0 50 "Battery %: span of 40-50%"
+.param STEP6 13 0 50 "Battery %: span of 50-60%"
+.param STEP7 16 0 50 "Battery %: span of 60-70%"
+.param STEP8 24 0 50 "Battery %: span of 70-80%"
+.param STEP9 27 0 50 "Battery %: span of 80-90%"
+.param STEP10 23 0 50 "Battery %: span of 90-100%"
+.param SAG_LOW 4 0 30 "Battery %: how much lower the reading is awake than asleep, at low charge"
+.param SAG_KNEE 858 700 1000 "Battery %: from this reading (awake) the difference grows by a quarter of the excess"
+.param SAG_MAX 16 0 40 "Battery %: the largest difference awake / asleep"
+.param SETTLE 300 0 300 "Battery %: seconds the shown value stays after falling asleep or waking up"
 .param CHARGING 34 0 80 "Battery %: how much higher the reading is with the charger plugged in"
 .param REDRAW 2 1 5 "Battery %: redraw when the ADC moved by more than this (stock 5)"
 
@@ -60,6 +69,12 @@
     mov   r7, #REDRAW
 .end
 
+; battery_tick, every 32 calls (0.32 s awake, about 10 s asleep): the stock `mov r7, #0; st [r1+0], r7`
+; (r1 = 0x001a); without extra_menu's clock the settle timer counts here
+.hook 0x00c27 expect 0x0700 0xcf90
+    call  bp_tick
+.end
+
 .code 0x1a280
 .equ bp_a, 0x6400             ; 10 x the reading
 .equ bp_b, 0x6401             ; 10 x the threshold of the next percent
@@ -75,7 +90,13 @@
 .equ bp_u, 0x640b             ; units
 .equ bp_ix, 0x640c            ; x of the battery icon
 .equ bp_bolt, 0x640d          ; 1: draw the lightning (charging)
+.equ bp_slp, 0x640e           ; asleep as last seen by bp_tick
+.equ bp_hold, 0x640f          ; 10 ms since falling asleep or waking up (up to SETTLE s)
+.equ sl_magic, 0x6a3f         ; extra_menu: 0xa55a once its sleep state (and its clock) is set up
+.equ sl_on, 0x6a41            ; extra_menu: 1 asleep
+.equ tm_dt, 0x63c1            ; extra_menu's clock: 10 ms per tick now (1, more asleep)
 .equ bp_s, 0x6410             ; STEP1..STEP10
+.equ bp_dtl, 0x641a           ; bp_clk: 10 ms gone this time
 .equ bp_txt, 0x6420           ; the number, 0-terminated
 
 bp_draw:
@@ -243,6 +264,33 @@ bp_pct:
     li    r6, #-CHARGING      ; charging: the reading is higher
     add   r7, r6
 .adc:
+    st    [bp_a], r7
+    call  bp_asleep
+    cmp   r7, #0
+    bne   .sg_scale              ; asleep: the curve's own scale
+    ld    r7, [bp_a]          ; awake: + SAG_LOW + (reading - SAG_KNEE) / 4, at most SAG_MAX
+    li    r6, #SAG_KNEE
+    cmp   r7, r6
+    blt   .sg_low
+    li    r6, #-SAG_KNEE
+    add   r7, r6
+    shr   r7, 2
+    jmp   .sg_addl
+.sg_low:
+    mov   r7, #0
+.sg_addl:
+    li    r6, #SAG_LOW
+    add   r7, r6
+    li    r6, #SAG_MAX
+    cmp   r7, r6
+    blt   .sg_sag
+    mov   r7, r6
+.sg_sag:
+    ld    r6, [bp_a]
+    add   r7, r6
+    st    [bp_a], r7
+.sg_scale:
+    ld    r7, [bp_a]
     mov   r6, r7              ; x10
     shl   r7, 2
     add   r7, r6
@@ -312,6 +360,10 @@ bp_pct:
     li    r1, #400
     cmp   r7, r1
     blt   .keep               ; no reading: the last value
+    ld    r7, [bp_hold]
+    li    r1, #SETTLE*100
+    cmp   r7, r1
+    blt   .keep               ; just fell asleep or woke up: the last value
     ld    r7, [bp_val]
     cmp   r6, r7
     blt   .keep
@@ -319,6 +371,73 @@ bp_pct:
     ret
 .keep:
     st    [bp_val], r6        ; never up on battery
+    ret
+
+; r7 = 1 asleep (extra_menu's sleep), else 0
+bp_asleep:
+    ld    r7, [sl_magic]
+    li    r6, #0xa55a
+    cmp   r7, r6
+    bne   .as_no
+    ld    r7, [sl_on]
+    cmp   r7, #1
+    bne   .as_no
+    ret
+.as_no:
+    mov   r7, #0
+    ret
+
+; battery_tick every 32 calls: the replaced stock instructions; without extra_menu's clock (nothing sleeps
+; then) the settle timer goes on by those 32 ticks
+bp_tick:
+    mov   r7, #0
+    st    [r1+0], r7
+    ld    r7, [sl_magic]
+    li    r6, #0xa55a
+    cmp   r7, r6
+    beq   .tk_out
+    mov   r7, #32
+    jmp   bp_clk
+.tk_out:
+    ret
+
+; r7 = 1, or extra_menu's tm_dt (10 ms per tick)
+bp_dt:
+    ld    r7, [sl_magic]
+    li    r6, #0xa55a
+    cmp   r7, r6
+    bne   .dt_one
+    ld    r7, [tm_dt]
+    ret
+.dt_one:
+    mov   r7, #1
+    ret
+
+; every tick from extra_menu's clock (or bp_tick), r7 = 10 ms gone: the settle timer counts up from a change
+; of asleep / awake to SETTLE s. Keeps r7; uses r6.
+bp_clk:
+    st    [bp_dtl], r7
+    call  bp_asleep
+    ld    r6, [bp_slp]
+    cmp   r6, r7
+    beq   .tk_same
+    st    [bp_slp], r7
+    mov   r7, #0
+    jmp   .tk_st
+.tk_same:
+    ld    r7, [bp_hold]
+    ld    r6, [bp_dtl]
+    add   r7, r6
+    cmp   r7, #0              ; RAM is not cleared at power-on: at most a full settle
+    blt   .tk_cap
+    li    r6, #SETTLE*100
+    cmp   r7, r6
+    blt   .tk_st
+.tk_cap:
+    li    r7, #SETTLE*100
+.tk_st:
+    st    [bp_hold], r7
+    ld    r7, [bp_dtl]
     ret
 
 ; bp_val -> bp_txt, bp_x = 124 - its width (draw_text_impl advances 5 per digit, 4 after a '1')
@@ -385,10 +504,11 @@ bp_dig:
     st    [bp_x], r7
     ret
 
-; batt_low, every tick: the stock counter 0x1e; 100 ticks hidden, 100 shown; r7 = 1 at 1400 (power off)
+; batt_low, every tick: the stock counter 0x1e; 1 s hidden, 1 s shown; r7 = 1 at 14 s (power off)
 bp_blink:
-    ld    r7, [0x001e]
-    add   r7, #1
+    call  bp_dt               ; the stock counter, in 10 ms here (asleep a tick is longer)
+    ld    r6, [0x001e]
+    add   r7, r6
     st    [0x001e], r7
     li    r6, #1400
     cmp   r7, r6

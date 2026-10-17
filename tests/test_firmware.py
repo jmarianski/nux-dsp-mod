@@ -14,9 +14,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # All bundled patches with default parameters. Same code as tested on hardware (TEST8..10, 1.0.7B),
 # relocated, plus custom_voices (empty name table), boot_preset's preset labels (confirmed on hardware too), polish_font's small font
 # mapping and the full lang_pl translation (all confirmed on hardware); battery_percent (number, %, standing icon:
-# shown on hardware at a high level; lower fill levels and charging not yet seen) and extra_menu's functions moved
-# above 0xffff (run on hardware with it).
-ALL_SHA = "180f9d1246a30fc7017c1888f67b1e6f190280450249d48ed3e6f33ac45cf0af"
+# shown on hardware at a high level; lower fill levels and charging not yet seen; the awake sag compensation and
+# the settle timer not yet run on hardware) and extra_menu's functions moved
+# above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
+# timed from the last sound not yet run on hardware.
+ALL_SHA = "c2be18d2378f7701af5efb89b018084a4df90d27e93bb5651efde096b166849e"
 
 
 def padded(w, n):

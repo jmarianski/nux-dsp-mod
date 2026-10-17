@@ -6,7 +6,7 @@
 .end
 
 ; Without extra_menu the log hooks these places itself; with it, extra_menu's own hooks there call tl_tick (with
-; its sleep state and its count since the last message to the synthesizer), tl_boot, tl_close, tl_key and tl_amp
+; its clock and its time since the last sound), tl_boot, tl_close, tl_key and tl_amp
 ; (its .weak entry points). Without extra_menu nothing sleeps and the speaker is always on.
 .hook 0x00830 expect 0xd148 0x0117 unless extra_menu   ; tick_10ms, after the outputs: ldi r1, 0x0117
     call  tl_tick0
@@ -39,15 +39,15 @@
 ;   1 ticks with sound (fewer than 4 * PLAY_TIME ticks since something went to the synthesizer: keys, demo, metronome...)
 ;   2 sum of volume (0..10) over every 16th of those ticks
 ;   3 ticks of silence with the speaker on, 4 with the speaker off (Speaker), 5 ticks asleep (slow ticks)
-; A window is 30000 awake ticks, a sleeping tick counts SLEEP_W. The page goes to flash when full, but only
+; A window is 5 minutes: 30000 x 10 ms, a tick counts extra_menu's tm_dt (its SLEEP_W on the crystal clock,
+; those are the ticks asleep; nuxdsp telemetry --sleep-w is that value). The page goes to flash when full, but only
 ; after 2 s without a panel key or the dial (tl_quiet: the stock code writes presets from those), and at
 ; power-off (power key, Auto Off, low battery). The USB MIDI packet AF 7D 4E (poly pressure, channel 16) sends the
 ; log, page by page, oldest first, then the page in RAM, over USB MIDI (sub_062cc, one packet per tick: more at
 ; once jams the USB output). A page goes as channel 16 messages (USB-MIDI SysEx packets not tried): pitch bend =
 ; page (0x7ff = RAM), then 93 x poly pressure, key k = 0..92, value = 7 bits of word k / 3, high first. Erased
 ; pages are skipped.
-.param PLAY_TIME 75 1 250 "Telemetry: how long after the last message to the synthesizer it still counts as playing, in 40 ms (4 ticks)"
-.param SLEEP_W 32 1 255 "Telemetry: 10 ms ticks per tick while asleep (checked: the power key needs 16 s instead of 0.5 s; the PLL makes 32x the crystal)"
+.param PLAY_TIME 75 1 250 "Telemetry: how long after the last sound (a message to the synthesizer, or a key let go) it still counts as playing, in 40 ms"
 .param DUMP_EVERY 1 1 100 "Telemetry: ticks between two pages sent over USB (after the 94 a page takes)"
 .code 0x0f0b0
 .equ tl_magic, 0x6330         ; 0x4c47 while the log is running (0 after init_all's copy, cleared at power-off)
@@ -69,8 +69,8 @@
 .equ tl_idx, 0x6340
 .equ tl_k, 0x6342
 .equ tl_v, 0x6343
-.equ tl_slp, 0x6344           ; tl_tick's r7: asleep (extra_menu), 0 without it
-.equ tl_play, 0x6348          ; tl_tick's r6: ticks since the last message to the synthesizer
+.equ tl_slp, 0x6344           ; tl_tick's r7: 10 ms per tick (extra_menu's tm_dt), 1 without it
+.equ tl_play, 0x6348          ; tl_tick's r6: 10 ms since the last sound
 .equ tl_pcnt, 0x6341          ; that count without extra_menu (tl_tick0, tl_note0)
 .equ tl_snd, 0x6349            ; page being sent: 0 no, 1 its pitch bend next, 2 its words
 .equ tl_part, 0x634a
@@ -79,7 +79,7 @@
 .equ tl_rd, 0x6370            ; a page read from flash, 31 words
 
 ; tick_10ms (from extra_menu's bl_tick, or tl_tick0): count, close windows, write pages, send the log
-tl_tick:                      ; r7 = asleep, r6 = ticks since the last message to the synthesizer
+tl_tick:                      ; r7 = 10 ms per tick (more than 1: asleep), r6 = 10 ms since the last sound
     st    [tl_slp], r7
     st    [tl_play], r6
     call  tl_rx               ; a request from the host
@@ -96,7 +96,7 @@ tl_tick:                      ; r7 = asleep, r6 = ticks since the last message t
     call  tl_slot
     mov   r6, #5              ; entry word: 5 asleep, 1 sound, 3 speaker on, 4 off
     ld    r7, [tl_slp]
-    cmp   r7, #0
+    cmp   r7, #1
     bne   .tt_cat
     mov   r6, #1
     ld    r7, [tl_play]
@@ -124,11 +124,7 @@ tl_tick:                      ; r7 = asleep, r6 = ticks since the last message t
     st    [r1+1], r7
     mov   r6, #1
 .tt_clk:
-    mov   r7, #1
-    cmp   r6, #5
-    bne   .tt_add
-    mov   r7, #SLEEP_W
-.tt_add:
+    ld    r7, [tl_slp]
     ld    r6, [tl_clk]
     add   r7, r6
     st    [tl_clk], r7
@@ -535,7 +531,7 @@ tl_slot:
 .end
 .code 0x09ad4
 ; tick_10ms without extra_menu (0x0830): count the ticks since the last message to the synthesizer, as
-; extra_menu's amp_chk does; not asleep. Ends with r1 = 0x0117, as the instruction it replaces.
+; extra_menu's amp_chk does; 10 ms per tick. Ends with r1 = 0x0117, as the instruction it replaces.
 tl_tick0:
     ld    r6, [tl_pcnt]
     li    r7, #30000
@@ -546,7 +542,7 @@ tl_tick0:
     add   r6, #1
     st    [tl_pcnt], r6
 .t0_go:
-    mov   r7, #0
+    mov   r7, #1
     call  tl_tick
     li    r1, #0x0117
     ret
