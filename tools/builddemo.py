@@ -89,5 +89,6 @@ def build(firmware, out, silent_audio=False):
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--firmware", type=Path, default=ROOT.parent / "NEK100_DSP_V1.0.7.bin")
+    p.add_argument("--silent", action="store_true", help="no music and no sound effects: the game sends nothing to the synth")
     args = p.parse_args()
-    build(args.firmware, ROOT / "build")
+    build(args.firmware, ROOT / "build", silent_audio=args.silent)
