@@ -224,6 +224,7 @@ unsigned span(int lo, int hi)
 }
 
 int col, top, bot, sh, edge;
+int col_cost;                                   /* frame_work's price of the last column */
 void wall_page(int p, int a, int b, int lo, int hi)
 {
     unsigned bits;
@@ -244,6 +245,7 @@ void wall(int a, int b)
     if (edge) return;
     lo = a > top ? a : top; hi = b < bot ? b : bot;
     if (lo >= hi) return;
+    col_cost += (hi - lo) >> 2;
     for (p = lo >> 3; p <= (hi - 1) >> 3; p++) wall_page(p, a, b, lo, hi);
 }
 
@@ -262,7 +264,8 @@ void load_material(unsigned material)
 void material_column(unsigned material, int s)
 {
     int u, n;
-    if (cached_material != material) load_material(material);
+    col_cost += 3;
+    if (cached_material != material) { load_material(material); col_cost += 3; }
     u = tex_u1 + muldiv(tex_u2 - tex_u1, muldiv(col - sx1, s2, sx2 - sx1), s);
     n = tex_base + ((u >> 2) & tex_width) * 9;
     readmap(12, n, 6); tex_count = buf[0];
@@ -277,6 +280,7 @@ void material_column(unsigned material, int s)
 void texture_run(int tile, int run, int lo, int hi)
 {
     int a, b, p;
+    col_cost++;
     a = screen_y(tile - (tex_runs[run] & 255) * 4, tex_scale);
     b = screen_y(tile - (tex_runs[run] >> 8) * 4, tex_scale);
     if (a < lo) a = lo; if (b > hi) b = hi;
@@ -314,6 +318,7 @@ void draw_column(void)
     if (top >= bot) return;
     s = s1 + muldiv(s2 - s1, col - sx1, sx2 - sx1);
     yc = screen_y(fc, s); yf = screen_y(ff, s);
+    col_cost = 3;                               /* wall() adds the rows it draws */
     sh = shade(fl, s); edge = corner && col == sx1;
     tex_on = 0;
     if (back_sector == 0xffff) {
@@ -396,7 +401,7 @@ void bsp_work(void)
 {
     unsigned n, side, front, back;
     while (col < render_end && (windows[col] & 0x8000)) col++;
-    if (col < render_end && open_columns) { draw_column(); col++; return; }
+    if (col < render_end && open_columns) { col_cost = -1; draw_column(); col++; return; }
     if (render_seg < render_last && open_columns) {
         seg_data(render_seg++);
         col = render_end = 0;
@@ -415,18 +420,29 @@ void bsp_work(void)
     }
 }
 
+#define FRAME_BUDGET 96
+
+int bsp_step(void)                              /* one BSP operation -> its price */
+{
+    int cost = render_seg < render_last ? 8 : 14;
+    col_cost = 0;
+    bsp_work();
+    if (col_cost > 0) return col_cost;
+    if (col_cost < 0) return 4;
+    return cost;
+}
+
 void frame_work(void)
 {
     int k, cost;
     render_context = 1;
-    for (k = 0; k < 256 && render_state; k += cost) {
-        cost = 8;
-        if (render_state == 1) {
-            cost = col < render_end ? 8 : render_seg < render_last ? 4 : 8;
-            bsp_work();
-        }
-        else if (render_state == 2) { cost = render_kind ? 16 : 2; pickup_draw_work(); }
-        else if (render_state == 3) { cost = render_kind ? 16 : 4; enemy_draw_work(); }
+    /* Costs in units of ~512 decoded instructions (measured on E1M1). The device keeps up with ~130k a tick
+     * (the raycaster); beyond that the firmware falls behind on keys and the LCD and never catches up. */
+    for (k = 0; k < FRAME_BUDGET && render_state; k += cost) {
+        cost = 34;
+        if (render_state == 1) cost = bsp_step();
+        else if (render_state == 2) { cost = render_kind ? 7 : 1; pickup_draw_work(); }
+        else if (render_state == 3) { cost = render_kind ? 12 : 1; enemy_draw_work(); }
         else if (render_state == 4) { draw_overlay(); render_state = 5; }
         else { nframe++; LCD_FLAG = LCD_FLAG | 1; render_state = 0; }
     }
@@ -566,7 +582,8 @@ void rc_tick(void)
         frame_work();
     }
     callback_stage = 0;
-    if (nframe < 3 || callback_count < 64 || !(callback_count & 63)) trace(0x600);
+    if (nframe < 3 || callback_count < 64) trace(0x600);
+    else if (!(callback_count & 63)) trace(0x700 | (nframe & 255));   /* frames done, every 64 callbacks */
 }
 
 void rc_key(int note, int vel)

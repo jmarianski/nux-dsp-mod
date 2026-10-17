@@ -12,8 +12,11 @@ void mu_restart(void) { mu_ok = 0; }
 void mu_clock(void) {}
 void mu_stop(void) { mu_ok = 0; }
 #else
+unsigned mu_sum, mu_cnt;
+
 unsigned mword(void)
 {
+    unsigned w;
     if (mu_i >= 16) {
         fr_dst = (unsigned)mbuf;
         fr_hi = mu_hi;
@@ -25,7 +28,11 @@ unsigned mword(void)
         if (mu_lo < 16) mu_hi++;
         mu_i = 0;
     }
-    return mbuf[mu_i++];
+    w = mbuf[mu_i++];
+    mu_sum += w ^ mu_cnt;                       /* the words as read on the device, checked against the PC */
+    mu_cnt++;
+    if (!(mu_cnt & 255)) { trace(0x800 | (mu_cnt >> 8)); trace(0x1000 | (mu_sum & 0xfff)); }
+    return w;
 }
 
 void mu_restart(void)
@@ -37,6 +44,7 @@ void mu_restart(void)
     mu_lo = mu_slo;
     mu_i = 16;
     mu_wait = 0;
+    mu_sum = mu_cnt = 0;
 }
 
 
