@@ -29,6 +29,7 @@ variable `X` lives at file word `ramdata_start + X`.
 | `add rD, rS` | `9D0S` | | C |
 | `and rD, rS` | `9(D+8)0S` | | C |
 | `or rD, rS` | `aD0S` | | C |
+| `sub rD, rS` | `a(D+8)0S` | rD -= rS (doom-piano's timings use it) | C |
 | `shl rN, k` / `shr rN, k` | `fN9k` / `fNdk` | k = 1..15 (`fN90` is `st [abs]`); shr is logical | C |
 | `ldc rR, [r1+k]` | `dR9k` | read **program memory** (tables, patch data), k = 0..15 | C |
 | `ld rR, [r1+k]` / `st [r1+k], rR` | `cR9k` / `c(R+8)9k` | k = 0..15 | C |
@@ -43,6 +44,7 @@ variable `X` lives at file word `ramdata_start + X`.
 | `ccall target` | `d7c8 a` | call of a C-style function, arguments pushed before, callee pops them | C |
 | `ret` | `d1ca` | return from a `call` | C |
 | `jmp rel8` | `78rr` | target = pc + 1 + rel | C |
+| `ljmp target` | `d0ce a` | absolute jump within the instruction's own 64K bank (bank 1 code of the firmware jumps to bank 1 targets this way), so far code cannot jump to bank 0 with it: use `call` | H |
 | `blt / beq / bne rel8` | `e1rr / e2rr / e3rr` | after `cmp`; target = pc + 1 + rel | C |
 | `b.e0 rel8` | `e0rr` | conditional, condition unknown | H |
 | `lbN rel16` | `fNe7 r` | long branch, condition N unknown; target = pc + 2 + rel | H |
@@ -54,7 +56,6 @@ variable `X` lives at file word `ramdata_start + X`.
 | `7d0e` | function prologue |
 | `c04c n` | prologue with n words of locals |
 | `d5cN` | epilogue: return and drop N argument words |
-| `d0ce a` | branch/jump with 16-bit target |
 | `b7kk` / `bfkk` | skip kk words if r7 is zero / not zero (H) |
 | `830d 2b0N` | recompute fp after a call (`ccall` clobbers it) |
 | `c749` | jump to the address in r7 (the stock `switch`: `ldc r7, [r1+0]` from a table, then this; H, strong) |

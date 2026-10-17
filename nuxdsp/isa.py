@@ -47,6 +47,8 @@ def decode(x, lit):
             return "and", (hi & 7, ("r", lo))
         if (x & 0xF8F8) == 0xA000:
             return "or", (hi & 7, ("r", lo))
+        if (x & 0xF8F8) == 0xA800:
+            return "sub", (hi & 7, ("r", lo))
         if (x & 0xF8F0) == 0xF090 and lo & 0xF:  # fR90 is st [abs]
             return "shl", (hi & 7, lo & 0xF)
         if (x & 0xF8F0) == 0xF0D0 and lo & 0xF:
@@ -68,6 +70,8 @@ def decode(x, lit):
         return "call", (("abs", (x & 7) << 16 | lit),)
     if x == 0xD7C8:
         return "ccall", (("abs", lit),)
+    if x == 0xD0CE:  # the target's bits 16.. are the instruction's own (bank 1 code jumps within bank 1)
+        return "ljmp", (("abs16", lit),)
     if (x & 0xF8FF) == 0xD048:
         return "li", (hi & 7, lit)
     if (x & 0xF8FF) == 0xD04A:
@@ -85,6 +89,8 @@ def encode(op, args):
     """Encode a decoded form back to a list of words (inverse of decode)."""
     if op == "ret":
         return [0xD1CA]
+    if op == "sub":
+        return [0xA800 | args[0] << 8 | args[1][1]]
     if op in ("mov", "cmp", "add", "and", "or"):
         d, s = args
         if isinstance(s, tuple):  # register form
@@ -109,6 +115,8 @@ def encode(op, args):
         return [0x7800 | (args[0][1] & 0xFF)]
     if op in ("b.e0", "blt", "beq", "bne"):
         return [({"b.e0": 0xE0, "blt": 0xE1, "beq": 0xE2, "bne": 0xE3}[op]) << 8 | (args[0][1] & 0xFF)]
+    if op == "ljmp":
+        return [0xD0CE, args[0][1] & 0xFFFF]
     if op in ("call", "ccall"):
         return [(0xD6C8 | args[0][1] >> 16) if op == "call" else 0xD7C8, args[0][1] & 0xFFFF]
     if op in ("li", "addi"):
@@ -120,7 +128,7 @@ def encode(op, args):
 
 def size_of(op, operands_text):
     """Instruction size in words from its textual form (used by the assembler's first pass)."""
-    if op in ("call", "ccall", "li", "addi") or op.startswith("lb"):
+    if op in ("call", "ccall", "ljmp", "li", "addi") or op.startswith("lb"):
         return 2
     if op == "push":
         return 2 if operands_text.strip().startswith("#") else 1

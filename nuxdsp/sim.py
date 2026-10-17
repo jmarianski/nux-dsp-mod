@@ -51,7 +51,9 @@ class Sim:
                 if pc is None:
                     return self.steps
                 continue
-            if op in ("mov", "cmp", "add", "and", "or"):
+            if op == "sub":
+                r[a[0]] = (r[a[0]] - r[a[1][1]]) & 0xFFFF
+            elif op in ("mov", "cmp", "add", "and", "or"):
                 dst, src = a
                 v = r[src[1]] if isinstance(src, tuple) else (src & 0xFF)
                 if op == "mov":
@@ -86,6 +88,8 @@ class Sim:
                          "blt": self.flags < 0}[op]
                 if taken:
                     nxt = pc + 1 + a[0][1]
+            elif op == "ljmp":
+                nxt = (pc & ~0xFFFF) | a[0][1]
             elif op == "call":
                 stack.append(nxt)
                 nxt = a[0][1]

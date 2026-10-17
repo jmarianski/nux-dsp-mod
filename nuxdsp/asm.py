@@ -150,6 +150,9 @@ def encode_op(op, rest, pc, symbols):
         v = ops[1][1]
         need(0 <= v <= 255, "imm8 out of range: %d (imm8 is zero-extended, C: no negative values; use li + a register)" % v)
         return isa.encode(op, (reg(ops[0]), v & 0xFF))
+    if op == "sub":
+        need(kinds == ("reg", "reg"), "sub rD, rS (register form only)")
+        return isa.encode(op, (reg(ops[0]), ("r", reg(ops[1]))))
     if op in ("shl", "shr"):
         need(kinds == ("reg", "expr") and 1 <= ops[1][1] <= 15, "shl/shr rN, 1..15")
         return isa.encode(op, (reg(ops[0]), ops[1][1]))
@@ -182,6 +185,10 @@ def encode_op(op, rest, pc, symbols):
         rel = ops[0][1] - (pc + 1)
         need(-128 <= rel <= 127, "%s target out of range (%d)" % (op, rel))
         return isa.encode(op, (("rel8", rel),))
+    if op == "ljmp":
+        need(kinds == ("expr",), "ljmp target")
+        need(ops[0][1] >> 16 == pc >> 16, "ljmp %#x: not in this instruction's bank (%#x)" % (ops[0][1], pc))
+        return isa.encode(op, (("abs16", ops[0][1]),))
     if re.fullmatch(r"lb[0-7]", op):
         need(kinds == ("expr",), "branch target")
         return isa.encode(op, (("rel16", ops[0][1] - (pc + 2)),))

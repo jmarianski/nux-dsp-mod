@@ -26,6 +26,8 @@ def target_of(a, op, args):
         return a + 1 + args[0][1]
     if op.startswith("lb"):
         return a + 2 + args[0][1]
+    if op == "ljmp":
+        return (a & ~0xFFFF) | args[0][1]
     return None
 
 
@@ -38,7 +40,7 @@ def format_insn(a, x, lit, fmt_target, var_name):
     op, args = d
     if op == "ret":
         return "ret", None
-    if op in ("mov", "cmp", "add", "and", "or"):
+    if op in ("mov", "cmp", "add", "and", "or", "sub"):
         dst, src = args
         s = "r%d" % src[1] if isinstance(src, tuple) else "#%#x" % src
         return "%-5s r%d, %s" % (op, dst, s), None
