@@ -28,7 +28,8 @@ extern unsigned framebuffer[];                 /* 0x662a: 8 pages x 128 columns,
 
 int px, py, pa;                 /* player: 8.8 cells, angle */
 unsigned held;
-int ticks, drew, t0, dt, st_val, st_ok, nframe;
+int ticks, dt, st_val, st_ok, nframe;
+unsigned fps_t0, fps_n;
 int lj;                                         /* the ljmp test (C8): 1 = came back */
 void ljtest(void);                              /* asm (ray.py) */
 void trace(int v);                              /* asm (ray.py): a marker to the host, one per tick over USB MIDI */
@@ -145,7 +146,8 @@ void view(void)
     rpy = fmul(rdx, 170);
 }
 
-#define PARTS 8                                 /* a frame is drawn over 8 ticks, 16 columns each */
+#define PARTS 8                                 /* a frame is 8 parts of 16 columns, PARTS_PER_TICK a tick */
+#define PARTS_PER_TICK 3                        /* 3 ticks a frame: ~33 fps */
 
 void render_part(int c)
 {
@@ -203,7 +205,7 @@ void steer(void)
 
 void finish(void)
 {
-    number(0, 0, dt, 3);                        /* last frame's time, ~ms */
+    number(0, 0, dt, 3);                        /* frames in the last second */
     if (lj) digit(124, 7, lj);                  /* the ljmp test came back */
     if (!st_ok) {
         number(0, 1, st_val, 5);
@@ -258,6 +260,7 @@ unsigned fr_dst, fr_hi, fr_lo, fr_n, fr_mode;
 void farcopy(void);                             /* asm (ray.py) */
 void fr_init(void);                             /* asm: pt_hi/pt_lo and mu_shi/mu_slo */
 void synth(int status, int data);               /* asm: synth_send(CIN << 8 | status, d1 << 8 | d2) */
+void mdiag(void);                               /* asm: the hardware mul's registers into dv[20..31] */
 unsigned pt_hi[3], pt_lo[3];
 unsigned fbuf[16];
 int fmode;                                      /* the layout that read pattern 0 right, -1 none */
@@ -351,6 +354,21 @@ void mu_tick(void)
     }
 }
 
+unsigned mu_last, mu_us;                        /* the music follows the us clock, not the tick count */
+
+void mu_clock(void)
+{
+    unsigned t, n;
+    t = CLOCK_LO;
+    mu_us += t - mu_last;
+    mu_last = t;
+    for (n = 0; n < 8 && mu_us >= 10000; n++) {
+        mu_us -= 10000;
+        mu_tick();
+    }
+    if (mu_us >= 10000) mu_us = 0;              /* far behind (a long stall): skip */
+}
+
 void mu_stop(void)                              /* a panel key leaves the game: all notes off */
 {
     int c;
@@ -371,23 +389,13 @@ void cdiag(void)
     fmode = -1;
     if (dv[16] == 8) fmode = 0;
     else if (dv[18] == 8) fmode = 1;
-    dv[20] = 0xeeee; dv[21] = 0xeeee; dv[22] = 0xeeee; dv[23] = 0xeeee;
     if (fmode >= 0) {
-        dv[20] = far_test(1, fmode);
-        dv[21] = fbuf[0];
-        dv[22] = far_test(2, fmode);
-        dv[23] = fbuf[0];
         mu_restart();
         mu_ok = 1;
+        mu_last = CLOCK_LO;
+        mu_us = 0;
     }
-    dv[24] = fmode;
-    dv[25] = mu_shi;
-    dv[26] = mu_slo;
-    dv[27] = pt_hi[2];
-    dv[28] = pt_lo[2];
-    dv[29] = pt_hi[0];
-    dv[30] = selftest();
-    dv[31] = 0x1234;
+    mdiag();
 }
 
 int dv_marker(int n)                            /* 0x2000 | (k & 15) << 8 | high, then 0x3000 | ... | low */
@@ -421,6 +429,7 @@ void rc_start(void)
 
 void rc_tick(void)
 {
+    int k;
     if (stage == 0) {                           /* one step per tick, each followed by a marker */
         adiag();
         cdiag();
@@ -432,17 +441,17 @@ void rc_tick(void)
         if (send_dv()) stage = 2;
         return;
     }
-    mu_tick();
-    if (drew) {                                 /* the clock moved past the part drawn last tick */
-        dt = now() - t0;
-        drew = 0;
+    mu_clock();
+    if (now() - fps_t0 >= 977) {                /* ~1 s: frames drawn in it */
+        dt = nframe - fps_n;
+        fps_n = nframe;
+        fps_t0 = now();
     }
-    t0 = now();
-    drew = 1;
     if (ticks == 0) steer();
-    trace(0x500 + ticks);                       /* part ticks starts */
-    render_part(ticks);
-    ticks++;
+    for (k = 0; k < PARTS_PER_TICK && ticks < PARTS; k++) {
+        render_part(ticks);
+        ticks++;
+    }
     if (ticks == PARTS) {
         finish();
         ticks = 0;
