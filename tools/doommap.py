@@ -28,6 +28,7 @@ import wad  # noqa: E402
 import walltex  # noqa: E402
 
 W, H = 128, 64
+FAR = 1536                                      # far plane (view z): segs wholly beyond it are not drawn
 NEAR = 17                                       # S = 2^19 / z stays a positive 16-bit number
 EYE = 41
 SIN = [round(256 * math.sin(i * math.pi / 128)) for i in range(65)]
@@ -255,8 +256,9 @@ PATTERN = [lambda x, y: x % 4 == 0, lambda x, y: x % 2 == 0, lambda x, y: x % 4 
 
 
 class Renderer:
-    def __init__(self, m):
+    def __init__(self, m, far=FAR):
         self.m = m
+        self.far = far                          # segs wholly beyond it are not drawn
 
     def frame(self, px, py, pa):
         m = self.m
@@ -290,7 +292,7 @@ class Renderer:
         clip1, clip2 = 0, 16384
         x1, z1 = self.view(v1)
         x2, z2 = self.view(v2)
-        if z1 < NEAR and z2 < NEAR:
+        if z1 < NEAR and z2 < NEAR or z1 > self.far and z2 > self.far:
             return
         if z1 < NEAR:
             clip1 = muldiv(NEAR - z1, 16384, z2 - z1)

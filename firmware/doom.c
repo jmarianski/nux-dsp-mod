@@ -142,7 +142,7 @@ void seg_data(unsigned k)
 
 int project(void)
 {
-    if (z1 < NEAR && z2 < NEAR) return 0;
+    if (z1 < NEAR && z2 < NEAR || z1 > FAR && z2 > FAR) return 0;
     clip_u1 = 0; clip_u2 = 16384;
     if (z1 < NEAR) {
         clip_u1 = muldiv(NEAR - z1, 16384, z2 - z1);
@@ -324,35 +324,50 @@ void frame_begin(void)
 }
 
 /* Yield only at complete operations: no C local frame or map buffer survives a tick. */
-int bbox_lo, bbox_hi, bbox_near, bbox_mask;
 
-void bbox_corner(int x, int y)
+int bbox_x[4], bbox_z[4];
+
+/* A child's box: 0 when wholly behind the near plane, left or right of the view, or beyond the far plane, or when
+ * every column it covers is closed. The corners are projected (four divisions) only for boxes that survive. */
+/* Columns lo..hi covered by the projected corners: 1 when one is open (or a corner is behind the near plane). */
+int bbox_open(void)
 {
-    view_point(x, y);
-    if (vz >= NEAR) bbox_mask &= ~1;
-    if (vx >= -vz) bbox_mask &= ~2;
-    if (vx <= vz) bbox_mask &= ~4;
-    if (vz < NEAR) bbox_near = 1;
-    else {
-        x = 64 + clamp(muldiv(vx, 64, vz), -16000, 16000);
-        if (x < bbox_lo) bbox_lo = x; if (x > bbox_hi) bbox_hi = x;
+    int x, i, lo, hi;
+    lo = 128; hi = 0;
+    for (i = 0; i < 4; i++) {
+        if (bbox_z[i] < NEAR) return 1;
+        x = 64 + clamp(muldiv(bbox_x[i], 64, bbox_z[i]), -16000, 16000);
+        if (x < lo) lo = x; if (x > hi) hi = x;
     }
+    lo = clamp(lo - 1, 0, 127); hi = clamp(hi + 1, 0, 127);
+    for (x = lo; x <= hi; x++) if (!(windows[x] & 0x8000)) return 1;
+    return 0;
+}
+
+/* Corner i in view space; -> bits of the planes it is outside: 1 near, 2 left, 4 right, 8 far. */
+int bbox_corner(int i, int x, int y)
+{
+    int mask;
+    view_point(x, y);
+    bbox_x[i] = vx; bbox_z[i] = vz;
+    mask = 0;
+    if (vz < NEAR) mask = 1;
+    if (vx < -vz) mask |= 2;
+    if (vx > vz) mask |= 4;
+    if (vz > FAR) mask |= 8;
+    return mask;
 }
 
 int bbox_visible(unsigned n, unsigned side)
 {
-    int left, right, bottom, top, x;
+    int left, right, bottom, top, mask;
     readmap(1, n * 14 + 6 + side * 4, 4);
     top = buf[0]; bottom = buf[1]; left = buf[2]; right = buf[3];
     if (view_x >= left && view_x <= right && view_y >= bottom && view_y <= top) return 1;
-    bbox_lo = 128; bbox_hi = 0; bbox_near = 0; bbox_mask = 7;
-    bbox_corner(left, top); bbox_corner(right, top);
-    bbox_corner(left, bottom); bbox_corner(right, bottom);
-    if (bbox_mask) return 0;
-    if (bbox_near) return 1;
-    bbox_lo = clamp(bbox_lo - 1, 0, 127); bbox_hi = clamp(bbox_hi + 1, 0, 127);
-    for (x = bbox_lo; x <= bbox_hi; x++) if (!(windows[x] & 0x8000)) return 1;
-    return 0;
+    mask = bbox_corner(0, left, top) & bbox_corner(1, right, top) & bbox_corner(2, left, bottom)
+         & bbox_corner(3, right, bottom);
+    if (mask) return 0;
+    return bbox_open();
 }
 
 void bsp_work(void)
@@ -381,7 +396,7 @@ void bsp_work(void)
 /* A tick's share of the frame, in work units of ~64 instructions: the asm arithmetic and the map reads count
  * themselves, the rest is a base price per operation (calibrated on E1M1 with tools/profile.cjs). The piano keeps
  * up with ~130k instructions a tick (the raycaster); beyond that the firmware falls behind on keys and the LCD. */
-#define FRAME_BUDGET 1200
+#define FRAME_BUDGET 1150
 
 unsigned tick_start;                            /* work when this tick began: logic and render share the budget */
 

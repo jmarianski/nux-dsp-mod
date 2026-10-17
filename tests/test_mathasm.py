@@ -59,6 +59,12 @@ def test_math_matches_python(tmp_path):
         small = rnd.randint(-256, 256)
         cases += [["umul32", a & 0xFFFF, b & 0xFFFF, 0], ["smul32", a, b, 0], ["fmul", a, b, 0], ["muldiv", a, b, c],
                   ["fmul", a, small, 0]]
+    for _ in range(3000):                       # muldiv: every quotient length (its 0/4/8/12/16-step paths)
+        c = rnd.choice([1, 2, 3, 17, 255, 256, 1000, 32767, rnd.randint(1, 32767)]) * rnd.choice([1, -1])
+        q = rnd.randint(0, (1 << rnd.randint(0, 16)) - 1)
+        b = rnd.choice([1, 2, 64, 255, 256, 8192, rnd.randint(1, 32767)])
+        a = max(-32768, min(32767, (q * abs(c) + rnd.randint(0, abs(c) - 1)) // b)) * rnd.choice([1, -1])
+        cases.append(["muldiv", a, b * rnd.choice([1, -1]), c])
     for _ in range(1500):                       # screen_y(h, s) with eye: near and far heights, scales up to NEAR's
         eye = rnd.randint(-200, 300)
         h = eye + (rnd.randint(-255, 255) if rnd.random() < 0.8 else rnd.randint(-2000, 2000))
