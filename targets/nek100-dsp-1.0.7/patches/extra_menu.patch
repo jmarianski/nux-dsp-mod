@@ -11,7 +11,9 @@
 ;   Patches   screen 22: which patches of this project are in the firmware (found by looking at their words)
 ;   Info      the stock screen 19; its Back key now returns to Extra
 ;   Sleep test screen 26 (page 3, makeshift: Extra's header, the Startup icon): see Sleep below
-;             Extra (the game draws over the screen and gives it back itself)
+;   Doom      page 3, item 7, only with a patch that defines dm_start (doom-piano): Enter calls dm_start and
+;             stays on Extra (the game draws over the screen and gives it back itself); dm_icon draws the
+;             item's icon, dm_panel sees every panel key first, dm_key (touch_off) every note
 ; Extra itself is screen 20, the cursor's item picks the page (arrows show the others). Screens 20..25 are reached through hooks in front of the range checks of
 ; draw_screen and the key dispatchers (A, B, D, dial); their images (ids 0x100 and up) are drawn by our
 ; own blitter from program memory, hooked into draw_glyph.
@@ -112,6 +114,9 @@
 .weak tl_key ex_ret
 .weak tl_amp ex_ret
 .weak bp_clk ex_ret           ; battery_percent: every tick, r7 = tm_dt
+.weak dm_start ex_ret         ; doom-piano: Extra's item 7 exists when dm_start != ex_ret
+.weak dm_icon ex_ret          ;   draws item 7's icon (page 3)
+.weak dm_panel ex_ret         ;   key_event, before the dispatch: may change the key ([fp+3]) to none; r6 = r7 = 0 in and out
 
 .hook 0x009a4 expect 0xfbf1 0xbf20 0x0002 0xd148 0x000b 0xfa81 0xfaf7 0xfa13 0xe102 0xd7c8 0x0948  ; idle_ticks >= 180000 -> power_off
     .dw   0xd0ce, ao_due
@@ -139,7 +144,7 @@
 .end
 
 .hook 0x03860 expect 0xd148 0x000b     ; key_event: ldi r1, idle_ticks (zeroed next)
-    call  bl_wake
+    call  bl_key
 .end
 
 .hook 0x0391b expect 0xd148 0x000b     ; the dial's handler, same
@@ -328,6 +333,9 @@ ex_head:
     beq   .h_ours
     li    r1, #0x112
     cmp   r7, #6
+    beq   .h_ours
+    li    r1, #0x101          ; Doom: EXTRA
+    cmp   r7, #7
     beq   .h_ours
     jmp   .h_stock            ; Info
 .h_21:
@@ -527,6 +535,7 @@ ex_scr_extra:
     push  #0x10
     push  #16
     ccall draw_glyph
+    call  dm_icon             ; Doom's icon, if any, in column 1
     push  #0
     push  #0xb7
     push  #0x1e
@@ -615,10 +624,7 @@ ex_next:                      ; middle key: next item, round
     mov   r6, r7
     shr   r6, 7
     and   r6, #7
-    add   r6, #1
-    cmp   r6, #7
-    blt   .x_set
-    mov   r6, #0
+    call  ex_succ
 .x_set:
     li    r5, #0xfc7f
     and   r7, r5
@@ -641,9 +647,7 @@ ex_dial:
     and   r6, #7
     cmp   r5, #0
     bne   .xd_down
-    cmp   r6, #6
-    beq   .xd_out
-    add   r6, #1
+    call  ex_up
     jmp   .xd_set
 .xd_down:
     cmp   r6, #0
@@ -663,8 +667,7 @@ ex_dial:
     .dw   0xd0ce, 0x03b5f
 
 ex_enter:                     ; right key: open the item
-    mov   r7, #0              ; Patches start on their first page
-    st    [ex_pg], r7
+    call  ex_pre              ; Patches start on their first page; Doom starts
     call  ex_norm
     shr   r7, 7
     and   r7, #7
@@ -685,6 +688,9 @@ ex_enter:                     ; right key: open the item
     beq   .xe_go
     mov   r6, #26
     cmp   r7, #6
+    beq   .xe_go
+    mov   r6, #20             ; Doom: Extra stays (the game takes the screen at its next tick)
+    cmp   r7, #7
     beq   .xe_go
     mov   r7, #0
     st    [0x6a4d], r7        ; Info: first page, as the stock Enter
@@ -1504,15 +1510,6 @@ bl_tick:
     li    r1, #0x0117
     ret
 
-; key_event and the dial's handler (0x391a), where they zero idle_ticks: the backlight comes back
-bl_wake:
-    ld    r1, [sl_on]         ; a key or the dial while asleep: wake up
-    st    [sl_wake], r1
-    mov   r1, #0
-    st    [bl_count], r1
-    call  tl_key              ; r1 = 0
-    li    r1, #0x000b
-    ret
 
 ; ---- Speaker (screen 25): bits 12-13 of presets_header (shown in the order of am_names: stored + 1), the dial changes
 ; it, the left key goes back
@@ -1672,18 +1669,6 @@ sl_msg:                       ; English, Polish (ex_name)
     .dw   0x53, 0x4c, 0x45, 0x45, 0x50, 0     ; SLEEP
     .dw   0x55, 0x15a, 0x50, 0x49, 0x45, 0x4e, 0x49, 0x45, 0     ; UŚPIENIE
 
-; r6 = the Sleep place: 0 Off, 1 30 s, 2 1 min, 3 5 min (bits 9 and 14 of presets_header). Leaf, uses r7.
-sl_get:
-    ld    r7, [presets_header]
-    mov   r6, r7
-    shr   r6, 13
-    and   r6, #2
-    shr   r7, 9
-    and   r7, #1
-    or    r6, r7
-    add   r6, #3
-    and   r6, #3
-    ret
 
 sl_dial:                      ; dial: place -1 / +1, clamp 0..3, save to flash
     .dw   0xd2cd, 0x0002      ; r5 = dial delta, signed
@@ -2219,6 +2204,78 @@ ex_put:
 .end
 
 ; far code (past the end of the official file, as battery_percent): leaf functions only, called with a far call
+.code 0x1a280
+
+; ---- moved from bank 0 (room for the Doom item there)
+; key_event and the dial's handler (0x391a), where they zero idle_ticks: the backlight comes back
+bl_wake:
+    ld    r1, [sl_on]         ; a key or the dial while asleep: wake up
+    st    [sl_wake], r1
+    mov   r1, #0
+    st    [bl_count], r1
+    call  tl_key              ; r1 = 0
+    li    r1, #0x000b
+    ret
+bl_key:                       ; key_event: the Doom patch first (it may turn the key into none), then as the dial
+    call  dm_panel
+    jmp   bl_wake
+
+; r6 = the Sleep place: 0 Off, 1 30 s, 2 1 min, 3 5 min (bits 9 and 14 of presets_header). Leaf, uses r7.
+sl_get:
+    ld    r7, [presets_header]
+    mov   r6, r7
+    shr   r6, 13
+    and   r6, #2
+    shr   r7, 9
+    and   r7, #1
+    or    r6, r7
+    add   r6, #3
+    and   r6, #3
+    ret
+
+; Extra's items: 0..6, and 7 (Doom) when dm_start is there. These keep r7 (ex_norm's word) and use r5,
+; which their callers load next. r6 = item -> r6 = the next one, round
+ex_succ:
+    add   r6, #1
+    call  ex_last
+    cmp   r5, r6
+    blt   .su_0
+    ret
+.su_0:
+    mov   r6, #0
+    ret
+
+ex_up:                        ; r6 = item -> r6 + 1, at most the last
+    call  ex_last
+    cmp   r6, r5
+    beq   .up_ret
+    add   r6, #1
+.up_ret:
+    ret
+
+ex_last:                      ; r5 = the last item (dm_start may be far: both halves of the difference)
+    li    r5, #(((dm_start - ex_ret) & 0xffff) | (((dm_start - ex_ret) >> 16) & 0xffff))
+    cmp   r5, #0
+    beq   .la_6
+    mov   r5, #7
+    ret
+.la_6:
+    mov   r5, #6
+    ret
+
+ex_pre:                       ; Enter on Extra, first: Patches from their first page; item 7 starts Doom
+    mov   r7, #0
+    st    [ex_pg], r7
+    call  ex_norm
+    shr   r7, 7
+    and   r7, #7
+    cmp   r7, #7
+    bne   .pr_ret
+    call  dm_start
+.pr_ret:
+    ret
+.end
+
 .code 0x1a280
 ; tick_10ms (0x0821): r7 = the welcome counter; 0 switches the outputs on. amp_cnt: 10 ms since the last
 ; sound (amp_note: a message to the synthesizer, whoever sent it; 0 while a key is held). The Speaker time
