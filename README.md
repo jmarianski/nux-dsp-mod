@@ -90,8 +90,9 @@ The long-term goal is Doom running on the NEK-100 itself, drawn on its 128x64 LC
   stays until the next full redraw of the main screen.
 - Step 2, `fb_test` (`firmware/fbtest.py`, works on a real NEK-100): the card read from far program memory
   (above 0xffff) with the firmware's own copy routine, then a game loop in the 10 ms tick (a whole frame every
-  50 ms: sweeping line, bouncing box, numbers) with timings on screen. VOL+/VOL- on the main screen starts and
-  stops it. Measured: a whole 128x64 frame (~5000 instructions) renders in ~0.2 ms, a full LCD refresh takes
+  50 ms: sweeping line, bouncing box, numbers) with timings on screen. Extra > DOOM (page 3, extra_menu's item 7,
+  shown only with this patch) starts it, any panel key stops it; while it runs the piano keys steer the box
+  (C3/E3 left/right, C#3 or D#3 up, D3 down) and make no sound. Measured: a whole 128x64 frame (~5000 instructions) renders in ~0.2 ms, a full LCD refresh takes
   ~0.8 ms, so at 20 frames/s a frame has a budget of very roughly 1-2 million instructions.
 
 ```sh

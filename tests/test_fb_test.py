@@ -37,7 +37,7 @@ def built(tmp_path_factory):
     for key, lines, _ in patcher.code_blocks(pats[-1]):
         syms.update(asm.assemble(lines, m.symbols(),
                                  origin=near if key == "fb_test" else far, label_prefix="fb_test", labels_only=True)[1])
-    assert syms["dp_frame"] == far
+    assert syms["dm_start"] == far and syms["dp_cpcard"] == near
     return fbtest, words, syms
 
 
@@ -84,8 +84,8 @@ def test_card_copy_is_init_alls(built):
     assert same((10, 11), (11, 12))                               # mov r1, x9
     assert ours[11:13] == [0xd748, 1024] and fw[16:18] == [0xd748, 0x2c00]       # r7 = count
     assert same((13, 20), (18, 25))                               # ld32 L2,[fp-2]; fix32 L2; mov32 L1,L0; call; ret_pop
-    near = syms["dp_vol"]
-    calls = [words[i] for i in range(near, a - 1) if words[i + 1] == a]
+    far = syms["dm_start"]
+    calls = [words[i] for i in range(far, card - 1) if words[i + 1] == a]
     assert calls == [0xd7c8]  # ccall, as every call of an enter/ret_pop function in the firmware (call crashed)
     card_words = []
     for x in fbtest.splash.pack(fbtest.splash.test_card()):
@@ -174,49 +174,115 @@ def test_now_is_the_clock_in_1024_us(built, us):
     assert s.r[7] == (us >> 10) & 0xFFFF
 
 
-def run_key(fbtest, words, syms, on, msg_type, ev_type, key, vel):
-    """dp_key with a fake frame; returns (jump target, RAM). It ends in a far jmp the simulator does not run."""
-    from nuxdsp import sim
-    R, r3, ev = fbtest.RAM, 0x7000, 0x7100
-    ram = {r3 + 14: msg_type, r3 + 15: ev, ev + 2: 0, ev + 3: ev_type, ev + 4: key, ev + 5: vel,
-           R["dp_on"]: fbtest.DP_MAGIC if on else 0x6b, R["dp_note"]: 7, 0x000b: 55, 0x000c: 1}
-    s = sim.Sim(words, ram)
-    s.r[3] = r3
-    with pytest.raises(sim.SimError) as e:
-        s.call(syms["dp_key"])
-    pc = int(str(e.value).split(" at ")[1], 16)
-    assert words[pc] == 0xd0ce
-    return words[pc + 1], s
+def call_words(a):
+    return [0xd6c8 | a >> 16, a & 0xFFFF]
 
 
-@pytest.mark.parametrize("on", [False, True])
-def test_key_hook_passes_other_messages(built, on):
+def has(words, seq, start=0x100):
+    return any(list(words[i:i + len(seq)]) == seq for i in range(start, len(words) - len(seq)) if words[i] == seq[0])
+
+
+def test_no_hooks_but_the_tick(built):
+    """Notes and panel keys come through nek100-mod's weak symbols; the stock code at the old hooks is intact."""
     fbtest, words, syms = built
-    to, s = run_key(fbtest, words, syms, on, 3, 9, 60, 100)
-    assert to == 0x29ae
+    from nuxdsp import container
+    w0 = container.words(open(FW, "rb").read())
+    assert list(words[0x282f:0x2833]) == list(w0[0x282f:0x2833])
+    assert list(words[0x3864:0x3867]) == list(w0[0x3864:0x3867])
+    assert list(words[0x7ea:0x7ec]) == call_words(syms["dp_tick"])
+
+
+@pytest.mark.parametrize("name", ["dm_start", "dm_icon", "dm_panel", "dm_key"])
+def test_weak_symbols_are_ours(built, name):
+    fbtest, words, syms = built
+    assert syms[name] >= 0x1a280 and has(words, call_words(syms[name]))
+
+
+def test_start_is_pending_until_the_tick(built):
+    fbtest, words, syms = built
+    s = sim_call(words, syms["dm_start"], Watch({fbtest.RAM["dp_on"]: 0x6b}))
+    assert s.rd(fbtest.RAM["dp_on"]) == fbtest.DP_PEND and s.ram.written == {fbtest.RAM["dp_on"]}
+    t = syms["dp_tick"]
+    body = list(words[t:t + 12])
+    assert fbtest.DP_PEND in body and has(words[:t + 12], call_words(syms["dp_go"]), t)
+    assert fbtest.DP_MAGIC in list(words[syms["dp_go"]:syms["dp_go"] + 3])
+
+
+def run_key(fbtest, words, syms, on, ev_type, key, vel):
+    R, ev = fbtest.RAM, 0x7100
+    ram = Watch({ev + 2: 0, ev + 3: ev_type, ev + 4: key, ev + 5: vel,
+                 R["dp_on"]: fbtest.DP_MAGIC if on else 0x6b, R["dp_note"]: 7, 0x000b: 55, 0x000c: 1})
+    from nuxdsp import sim
+
+    class Code(dict):
+        def __missing__(self, k):
+            return words[k] if k < len(words) else 0xFFFF
+
+    s = sim.Sim(Code(), {})
+    s.ram = ram
+    s.r[1], s.r[3], s.r[7] = ev, 0x1234, ev_type
+    s.call(syms["dm_key"])
+    assert s.r[1] == ev and s.r[3] == 0x1234
+    return s
 
 
 @pytest.mark.parametrize("ev_type", [9, 8, 0xb])
-def test_key_hook_passes_everything_while_off(built, ev_type):
+def test_key_passes_everything_while_off(built, ev_type):
     fbtest, words, syms = built
-    to, s = run_key(fbtest, words, syms, False, 0, ev_type, 60, 100)
-    assert to == 0x2833 and s.rd(fbtest.RAM["dp_keys"] + 60) == 0
+    s = run_key(fbtest, words, syms, False, ev_type, 60, 100)
+    assert s.r[7] == ev_type and not s.ram.written
 
 
-def test_key_hook_takes_notes_while_on(built):
+def test_key_takes_notes_while_on(built):
     fbtest, words, syms = built
     R = fbtest.RAM
-    to, s = run_key(fbtest, words, syms, True, 0, 9, 48, 90)
-    assert to == 0x2ca2 and s.rd(R["dp_keys"] + 48) == 90 and s.rd(R["dp_note"]) == 48
+    s = run_key(fbtest, words, syms, True, 9, 48, 90)
+    assert s.r[7] == 0 and s.rd(0x7103) == 0                       # type 0: nobody handles it
+    assert s.rd(R["dp_keys"] + 48) == 90 and s.rd(R["dp_note"]) == 48
     assert s.rd(0x000b) == 0 and s.rd(0x000c) == 0
-    for ev_type, vel in ((8, 64), (9, 0)):             # note off, and note on with velocity 0
-        ram = dict(s.ram)
-        to, s2 = run_key(fbtest, words, syms, True, 0, ev_type, 48, vel)
-        assert to == 0x2ca2 and s2.rd(R["dp_keys"] + 48) == 0 and s2.rd(R["dp_note"]) == 7
-    to, s = run_key(fbtest, words, syms, True, 0, 0xb, 64, 127)   # pedal and other CCs: the firmware's
-    assert to == 0x2833
+    for ev_type, vel in ((8, 64), (9, 0)):                         # note off, and note on with velocity 0
+        s = run_key(fbtest, words, syms, True, ev_type, 48, vel)
+        assert s.r[7] == 0 and s.rd(R["dp_keys"] + 48) == 0 and s.rd(R["dp_note"]) == 7
+    s = run_key(fbtest, words, syms, True, 0xb, 64, 127)           # pedal and other CCs: the firmware's
+    assert s.r[7] == 0xb and not s.ram.written
 
 
-def test_key_hook_replaces_the_firmware_check(built):
+def test_panel_while_off_changes_nothing(built):
+    """key_event zeroes idle_ticks with r6:r7 after us: they must come back 0."""
     fbtest, words, syms = built
-    assert list(words[0x282f:0x2833]) == [0xd0ce, syms["dp_key"], 0x7800, 0x7800]
+    s = sim_call(words, syms["dm_panel"], Watch({fbtest.RAM["dp_on"]: 0x6b}))
+    assert s.r[6] == 0 and s.r[7] == 0 and not s.ram.written
+
+
+def test_panel_while_on_eats_the_key(built):
+    """Real-fp loads and ccall are not simulated: the words. A press stops and redraws; every key becomes 0x7f."""
+    fbtest, words, syms = built
+    a = syms["dm_panel"]
+    body = list(words[a:syms["dm_key"]])
+    i = body.index(0xd2cf)
+    assert body[i:i + 3] == [0xd2cf, 0x0002, 0x0f00]               # ld r7, [fp+2]; cmp r7, #0
+    k = body.index(0xd3cf)
+    assert body[k - 1:k + 2] == [0x077f, 0xd3cf, 0x0003]           # mov r7, #0x7f; st [fp+3], r7
+    assert body[-3:] == [0x0600, 0x0700, 0xd1ca]   # mov r6, #0; mov r7, #0; ret
+    from nuxdsp import fwmap
+    c = body.index(0xd7c8)
+    assert i < c < k and body[c + 1] == fwmap.load().symbols()["draw_screen"]   # ccall draw_screen on a press
+
+
+def test_icon_is_the_skull(built):
+    fbtest, words, syms = built
+    s = sim_call(words, syms["dm_icon"], Watch({}))
+    assert {a - FB: s.rd(a) for a in s.ram.written} == fbtest.skull_bytes()
+    assert all(FB + 2 * 128 + 52 <= a < FB + 5 * 128 and 52 <= (a - FB) % 128 < 76 for a in s.ram.written)
+
+
+def test_extra_menu_offers_doom(built):
+    """extra_menu's item 7 calls dm_start when this patch is in (dm_start is weak there)."""
+    fbtest, words, syms = built
+    from nuxdsp import fwmap, patcher
+    m = fwmap.load()
+    out, report = patcher.build(open(FW, "rb").read(), m, patcher.resolve_patches(DEFAULTS, m))
+    from nuxdsp import container
+    alone = container.words(out)
+    call = [0xd6c8 | syms["dm_start"] >> 16, syms["dm_start"] & 0xFFFF]
+    assert any(list(words[i:i + 2]) == call for i in range(0x100, len(words) - 1) if words[i] == call[0])
