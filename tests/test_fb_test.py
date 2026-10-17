@@ -1,8 +1,8 @@
 """Build fb_test into the official firmware and run its far renderer under nek100-mod's ISA simulator.
 
 Needs ../nek100-mod and the official NEK100_DSP_V1.0.7.bin (DOOM_PIANO_FW or ../nek100-re/orig); skipped otherwise.
-The firmware's copy routine (0x7638) is not simulated: the test does its job (far data -> RAM) from the image,
-so the far addresses and word counts in the bank-0 code are checked separately. Our ISA model only.
+The firmware's copy routine (0x7638) is not simulated: the call that copies the card is checked word for word
+against init_all's (0x4928). The font and tables come from simulating dp_init. Our ISA model only.
 """
 import os
 import sys
@@ -22,7 +22,7 @@ FB = 0x662a
 def built(tmp_path_factory):
     sys.path.insert(0, MOD)
     sys.path.insert(0, os.path.join(ROOT, "firmware"))
-    from nuxdsp import container, fwmap, patcher
+    from nuxdsp import asm, container, fwmap, patcher
     import fbtest
 
     patch = tmp_path_factory.mktemp("p") / "fb_test.patch"
@@ -33,24 +33,12 @@ def built(tmp_path_factory):
     words = container.words(out)
     far = int([l for l in report if l.startswith("fb_test#2")][0].split()[2].split("..")[0], 16)
     near = int([l for l in report if l.startswith("fb_test ") and "code" in l][0].split()[2].split("..")[0], 16)
-    return fbtest, words, near, far
-
-
-def copies(words, near):
-    """The (bank:address, RAM destination, count) of each `call 0x7638` in dp_vol, from the li's before it."""
-    out, regs, a = [], {}, near
-    while a < near + 0x60:
-        x = words[a]
-        if (x & 0xF8FF) == 0xD048:  # li rR, #imm16
-            regs[(x >> 8) & 7] = words[a + 1]
-            a += 2
-            continue
-        if x == 0xD6C8 and words[a + 1] == 0x7638:
-            out.append(((regs[4] << 16) | regs[5], regs[2], regs[7]))
-            a += 2
-            continue
-        a += 2 if x in (0xD6C8, 0xD6C9, 0xD7C8) else 1
-    return out
+    syms = {}
+    for key, lines, _ in patcher.code_blocks(pats[-1]):
+        syms.update(asm.assemble(lines, m.symbols(),
+                                 origin=near if key == "fb_test" else far, label_prefix="fb_test", labels_only=True)[1])
+    assert syms["dp_frame"] == far
+    return fbtest, words, syms
 
 
 class Watch(dict):
@@ -65,10 +53,10 @@ class Watch(dict):
 
 
 def allowed(fbtest, a):
-    return FB <= a < FB + 1024 or a == 0x6a50 or fbtest.RAM["dp_on"] <= a <= fbtest.RAM["dp_ad"]
+    return FB <= a < FB + 1024 or a == 0x6a50 or fbtest.RAM["dp_on"] <= a < fbtest.RAM["dp_tab"]
 
 
-def sim_frame(fbtest, words, far, ram):
+def sim_call(words, addr, ram):
     from nuxdsp import sim
 
     class Code(dict):
@@ -77,21 +65,41 @@ def sim_frame(fbtest, words, far, ram):
 
     s = sim.Sim(Code(), {})
     s.ram = ram  # Sim copies its argument; keep ours (Watch) to see every write
-    s.call(far)
+    s.call(addr)
     return s
 
 
-def test_far_copies_point_at_our_data(built):
-    fbtest, words, near, far = built
-    (card_src, card_dst, card_n), (data_src, data_dst, data_n) = copies(words, near)
-    assert card_src > 0xFFFF and data_src > 0xFFFF  # really far
-    assert (card_dst, card_n) == (FB, 1024)
-    card = []
-    for w in fbtest.splash.pack(fbtest.splash.test_card()):
-        card += [w & 0xFF, w >> 8]
-    assert list(words[card_src:card_src + 1024]) == card
-    assert data_dst == fbtest.RAM["dp_tab"]
-    assert data_dst + data_n == fbtest.RAM["dp_fnt"] + 3 * len(fbtest.GLYPHS)
+def test_card_copy_is_init_alls(built):
+    """dp_cpcard = 0x4928 with our pointer, destination and count; the card is at that pointer."""
+    fbtest, words, syms = built
+    from nuxdsp import container
+    w0 = container.words(open(FW, "rb").read())
+    a, card = syms["dp_cpcard"], syms["dp_card"]
+    ours, fw = list(words[a:a + 20]), list(w0[0x4928:0x4941])
+    same = lambda o, f: ours[o[0]:o[1]] == fw[f[0]:f[1]]
+    assert same((0, 2), (0, 2))                                   # enter #4
+    assert ours[2:4] == [0xf8d0 | card >> 16, card & 0xffff] and fw[2:4] == [0xf8d1, 0x2cf7]  # li32 L0, program ptr
+    assert same((4, 8), (4, 8))                                   # st [fp-1], r0; st [fp-2], r1
+    assert ours[8:10] == [0xd048, FB] and fw[8:11] == [0xd148, 0x3a2a, 0x8001]  # r0 = RAM destination
+    assert same((10, 11), (11, 12))                               # mov r1, x9
+    assert ours[11:13] == [0xd748, 1024] and fw[16:18] == [0xd748, 0x2c00]       # r7 = count
+    assert same((13, 20), (18, 25))                               # ld32 L2,[fp-2]; fix32 L2; mov32 L1,L0; call; ret_pop
+    card_words = []
+    for x in fbtest.splash.pack(fbtest.splash.test_card()):
+        card_words += [x & 0xFF, x >> 8]
+    assert list(words[card:card + 1024]) == card_words
+
+
+def test_init_writes_tables_and_font(built):
+    fbtest, words, syms = built
+    s = sim_call(words, syms["dp_init"], Watch({}))
+    R = fbtest.RAM
+    tab, div = fbtest.table_words()
+    assert [s.rd(R["dp_tab"] + i) for i in range(len(tab))] == tab
+    assert [s.rd(R["dp_div"] + i) for i in range(len(div))] == div
+    font = fbtest.font_words()
+    assert [s.rd(R["dp_fnt"] + i) for i in range(len(font))] == font
+    assert all(R["dp_tab"] <= a < R["dp_fnt"] + len(font) for a in s.ram.written)
 
 
 def model(fbtest, ram):
@@ -119,17 +127,16 @@ def model(fbtest, ram):
 
 @pytest.mark.parametrize("y", [20, 23, 56 - 1, 0 + 1])
 def test_frame_renders_box_line_and_numbers(built, y):
-    fbtest, words, near, far = built
-    (_, _, _), (data_src, data_dst, data_n) = copies(words, near)
+    fbtest, words, syms = built
     R = fbtest.RAM
-    ram = {data_dst + i: words[data_src + i] for i in range(data_n)}  # what 0x7638 does in dp_vol
+    ram = dict(sim_call(words, syms["dp_init"], {}).ram)
     ram.update({R["dp_lx"]: 5, R["dp_x"]: 40, R["dp_dx"]: 1, R["dp_y"]: y, R["dp_dy"]: 0xFFFF if y > 50 else 1,
                 R["dp_sec"]: 123, R["dp_d"]: 1000, R["dp_b"]: 4567, R["dp_l"]: 32000, 0x6a50: 0x8000})
     ram = {k: v for k, v in ram.items()}
     dy = -1 if y > 50 else 1
     before = dict(ram)
     before[R["dp_dy"]] = dy
-    s = sim_frame(fbtest, words, far, Watch(ram))
+    s = sim_call(words, syms["dp_frame"], Watch(ram))
     fb = [s.rd(FB + i) for i in range(1024)]
     assert all(allowed(fbtest, a) for a in s.ram.written)
     assert fb == model(fbtest, before)
@@ -140,13 +147,13 @@ def test_frame_renders_box_line_and_numbers(built, y):
 def test_frame_terminates_on_power_on_leftovers(built):
     """init_all fills RAM 0x632a..0x6629 with leftovers of the ramdata copy (0x2c00 words from 0x12cf7 to
     0x3a2a); the first build hung on them. The renderer must finish whatever dp_* holds."""
-    fbtest, words, near, far = built
+    fbtest, words, syms = built
     orig = open(FW, "rb").read()
     from nuxdsp import container
     w0 = container.words(orig)
     ram = {a: w0[0x12cf7 + a - 0x3a2a] for a in range(0x6500, 0x6600)}
     ram[0x6a50] = 0
-    s = sim_frame(fbtest, words, far, Watch(ram))
+    s = sim_call(words, syms["dp_frame"], Watch(ram))
     assert s.steps < 100000
     bad = sorted(a for a in s.ram.written if not allowed(fbtest, a))
     assert not bad, "writes outside the framebuffer and dp_*: " + " ".join("%#x" % a for a in bad[:8])

@@ -3,14 +3,16 @@
 
 VOL+ / VOL- on the main screen starts (and the next press stops) the test:
 
-1. Far data. The 128x64 test card (splash.py) and a 3x5 font live above 0xffff. They are copied to RAM with the
-   firmware's own program-memory copy routine 0x7638, called exactly as init_all does it for the glyph data
-   (0x4928: r4:r5 = bank:address of the source, r2 = RAM destination, r3 = x9, r7 = word count). The card shows
-   for 3 s: if it looks right, far data reads work.
+1. Far data. The 128x64 test card (splash.py) lives above 0xffff and is copied to the framebuffer with the
+   firmware's own program-memory copy routine 0x7638, word for word as init_all calls it (0x4928: li32 of a
+   program pointer, through the stack frame, ld32 + fix32 into L2 = source, L1 = RAM address : x9, r7 = count).
+   The card shows for 3 s: if it looks right, far data reads work. (The first try loaded r4:r5 = bank:address
+   with plain li's and no fix32: the card stayed blank and so did the font copied the same way.)
+   The font and the number tables do not depend on it: far code writes them into RAM as immediates.
 2. Benchmarks, once, then the game loop. 100 frames rendered back to back (R) and 100 forced LCD refreshes (L),
    timed with the hardware counter the main loop reads (RAM 0x295a; units not known yet, hence the D line).
-3. Game loop: every tick (10 ms) a whole frame is rendered into the framebuffer: cleared, a sweeping line, a
-   bouncing 8x8 box and four numbers:
+3. Game loop: every FRAME_TICKS ticks (50 ms) a whole frame is rendered into the framebuffer: cleared, a sweeping
+   line, a bouncing 8x8 box and four numbers:
        S  seconds counted in ticks (compare with a stopwatch: do ticks keep real time while we draw?)
        D  counter units per 100 ticks (= per second if ticks keep time: gives the counter's unit)
        R  counter units for 100 frames rendered back to back
@@ -44,10 +46,11 @@ DIVS = [10000, 1000, 100, 10, 1]
 
 RAM = dict(dp_on=0x6500, dp_t=0x6501, dp_tk=0x6502, dp_sec=0x6503, dp_c0=0x6504, dp_d=0x6505, dp_b=0x6506,
            dp_l=0x6507, dp_n=0x6508, dp_x=0x6509, dp_dx=0x650a, dp_y=0x650b, dp_dy=0x650c, dp_lx=0x650d,
-           dp_i=0x650e, dp_k=0x650f, dp_v=0x6510, dp_ad=0x6511,
-           dp_tab=0x6518, dp_div=0x6520, dp_fnt=0x6530)  # copied from far: tab 8, div 10, font 42 -> 0x6518..0x655a
+           dp_i=0x650e, dp_k=0x650f, dp_v=0x6510, dp_ad=0x6511, dp_fr=0x6512,
+           dp_tab=0x6518, dp_div=0x6520, dp_fnt=0x6530)  # written by dp_init: tab 8, div 10, font 42 -> ..0x655a
 COUNTER = 0x295a
 DP_MAGIC = 0x600D
+FRAME_TICKS = 5  # 20 frames/s
 
 
 def font_words():
@@ -85,6 +88,8 @@ def patch():
     pad = RAM["dp_fnt"] - RAM["dp_tab"] - len(tab) - len(div)
     assert pad >= 0 and RAM["dp_div"] == RAM["dp_tab"] + len(tab)
     data = tab + div + [0] * pad + font_words()
+    init = "\n".join("    %s r7, #%#06x\n    st    [%#06x], r7" % ("mov  " if v < 0x100 else "li   ", v, RAM["dp_tab"] + i)
+                     for i, v in enumerate(data) if i < len(tab) + len(div) or i >= len(tab) + len(div) + pad)
     equs = "\n".join(".equ %s, %#06x" % kv for kv in list(RAM.items()) + [("DP_MAGIC", DP_MAGIC)])
     line_down = "\n".join("    add   r1, #128\n    st    [r1+0], r6" for _ in range(7))
     return f""".patch fb_test
@@ -119,6 +124,7 @@ dp_vol:                                 ; start (card, then the loop) or stop
     st    [dp_b], r7
     st    [dp_l], r7
     st    [dp_lx], r7
+    st    [dp_fr], r7
     mov   r7, #40
     st    [dp_x], r7
     mov   r7, #20
@@ -126,23 +132,27 @@ dp_vol:                                 ; start (card, then the loop) or stop
     mov   r7, #1
     st    [dp_dx], r7
     st    [dp_dy], r7
-    li    r4, #(dp_card >> 16)          ; far -> RAM with the firmware's copy, called as init_all does (0x4928)
-    li    r5, #(dp_card & 0xffff)
-    li    r2, #framebuffer
-    .dw   0x8309                        ; mov r3, x9
-    li    r7, #1024
-    call  0x7638
-    li    r4, #(dp_data >> 16)
-    li    r5, #(dp_data & 0xffff)
-    li    r2, #dp_tab
-    .dw   0x8309                        ; mov r3, x9
-    li    r7, #{len(data)}
-    call  0x7638
+    call  dp_init                       ; table, divisors and font: far code storing immediates (known to work)
+    call  dp_cpcard                     ; the card: far data through the firmware's copy routine (the test)
     ld    r7, [0x6a50]                  ; bit 0: the tick sends the framebuffer to the LCD
     mov   r6, #1
     or    r7, r6
     st    [0x6a50], r7
     ret
+
+dp_cpcard:                              ; 1024 words dp_card -> framebuffer, word for word as init_all's 0x4928
+    .dw   0xc04c, 0x0004                ; enter #4
+    .dw   0xf8d0 | (dp_card >> 16), dp_card & 0xffff  ; li32 L0, program pointer (0x4928: f8d1 2cf7)
+    .dw   0xd3c8, 0xffff                ; st [fp-1], r0
+    .dw   0xd3c9, 0xfffe                ; st [fp-2], r1
+    li    r0, #framebuffer
+    .dw   0x8109                        ; mov r1, x9
+    li    r7, #1024
+    .dw   0xfae2, 0xfffe                ; ld32 L2, [fp-2]
+    .dw   0xfaf7                        ; fix32 L2: source
+    .dw   0xf148                        ; mov32 L1, L0: destination r2 = RAM address, r3 = x9
+    call  0x7638
+    .dw   0xd5c8                        ; ret_pop #0
 
 dp_tick:                                ; in place of tick_10ms's ccall lcd_refresh
     ld    r7, [dp_on]
@@ -174,6 +184,13 @@ dp_tick:                                ; in place of tick_10ms's ccall lcd_refr
     .dw   0xaf06                        ; sub r7, r6
     st    [dp_d], r7
 .draw:
+    ld    r7, [dp_fr]                   ; a frame every FRAME_TICKS ticks: at 100 fps the STN LCD shows a pale smear
+    add   r7, #1
+    st    [dp_fr], r7
+    cmp   r7, #{FRAME_TICKS}
+    blt   .refresh
+    mov   r7, #0
+    st    [dp_fr], r7
     call  dp_frame
 .refresh:
     ccall 0x4e75
@@ -387,8 +404,9 @@ dp_frame:
     or    r7, r6
     st    [0x6a50], r7
     ret
-dp_data:                                ; copied to RAM dp_tab..: line table, divisor pairs, padding, font
-{dw(data)}
+dp_init:                                ; far, leaf: line table, divisor pairs and font into RAM dp_tab..
+{init}
+    ret
 dp_card:
 {dw(card)}
 .end
