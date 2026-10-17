@@ -31,17 +31,18 @@
 .equ dp_tab, 0x6518
 .equ dp_div, 0x6520
 .equ dp_fnt, 0x6530
+.equ DP_MAGIC, 0x600d
 
 dp_vol:                                 ; start (card, then the loop) or stop
-    ld    r7, [dp_on]
-    cmp   r7, #0
-    beq   .start
+    ld    r7, [dp_on]                   ; on only while it holds DP_MAGIC: after init_all this RAM holds leftovers
+    li    r6, #DP_MAGIC                 ; of the ramdata copy (0x6b here), which crashed the first build at power-on
+    cmp   r7, r6
+    bne   .start
     mov   r7, #0
     st    [dp_on], r7
     ret
 .start:
-    mov   r7, #1
-    st    [dp_on], r7
+    st    [dp_on], r6
     mov   r7, #0
     st    [dp_t], r7
     st    [dp_tk], r7
@@ -77,8 +78,9 @@ dp_vol:                                 ; start (card, then the loop) or stop
 
 dp_tick:                                ; in place of tick_10ms's ccall lcd_refresh
     ld    r7, [dp_on]
-    cmp   r7, #0
-    beq   .refresh
+    li    r6, #DP_MAGIC
+    cmp   r7, r6
+    bne   .refresh
     ld    r7, [dp_t]
     add   r7, #1
     st    [dp_t], r7
@@ -191,10 +193,12 @@ dp_frame:
     ld    r6, [dp_dx]
     add   r7, r6
     st    [dp_x], r7
-    cmp   r7, #120
-    blt   .x1
-    li    r6, #0xffff
+    cmp   r7, #120                      ; bounce and clamp: the box is drawn at fb + page*128 + x, so x and y
+    blt   .x1                           ; must stay in range whatever the RAM held (the first build wrote far
+    li    r6, #0xffff                   ; outside the framebuffer from power-on leftovers and crashed)
     st    [dp_dx], r6
+    mov   r7, #120
+    st    [dp_x], r7
 .x1:
     cmp   r7, #33
     blt   .x2
@@ -202,6 +206,8 @@ dp_frame:
 .x2:
     mov   r6, #1
     st    [dp_dx], r6
+    mov   r7, #32
+    st    [dp_x], r7
 .x3:
     ld    r7, [dp_y]
     ld    r6, [dp_dy]
@@ -211,6 +217,8 @@ dp_frame:
     blt   .y1
     li    r6, #0xffff
     st    [dp_dy], r6
+    mov   r7, #56
+    st    [dp_y], r7
 .y1:
     cmp   r7, #1
     blt   .y2
@@ -218,6 +226,8 @@ dp_frame:
 .y2:
     mov   r6, #1
     st    [dp_dy], r6
+    mov   r7, #0
+    st    [dp_y], r7
 .y3:
     mov   r6, r7                        ; r6 = y & 7, r7 = page
     and   r6, #7
@@ -347,6 +357,8 @@ dp_frame:
     ld    r5, [dp_v]
     mov   r7, #0
 .dv:
+    cmp   r7, #9                        ; at most 9 per digit, whatever the RAM holds
+    beq   .dd
     cmp   r5, r6
     blt   .dd
     add   r5, r4

@@ -53,6 +53,21 @@ def copies(words, near):
     return out
 
 
+class Watch(dict):
+    """RAM that remembers every address written."""
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.written = set()
+
+    def __setitem__(self, k, v):
+        self.written.add(k)
+        super().__setitem__(k, v)
+
+
+def allowed(fbtest, a):
+    return FB <= a < FB + 1024 or a == 0x6a50 or fbtest.RAM["dp_on"] <= a <= fbtest.RAM["dp_ad"]
+
+
 def sim_frame(fbtest, words, far, ram):
     from nuxdsp import sim
 
@@ -60,7 +75,8 @@ def sim_frame(fbtest, words, far, ram):
         def __missing__(self, k):
             return words[k] if k < len(words) else 0xFFFF
 
-    s = sim.Sim(Code(), ram)
+    s = sim.Sim(Code(), {})
+    s.ram = ram  # Sim copies its argument; keep ours (Watch) to see every write
     s.call(far)
     return s
 
@@ -113,8 +129,24 @@ def test_frame_renders_box_line_and_numbers(built, y):
     dy = -1 if y > 50 else 1
     before = dict(ram)
     before[R["dp_dy"]] = dy
-    s = sim_frame(fbtest, words, far, ram)
+    s = sim_frame(fbtest, words, far, Watch(ram))
     fb = [s.rd(FB + i) for i in range(1024)]
+    assert all(allowed(fbtest, a) for a in s.ram.written)
     assert fb == model(fbtest, before)
     assert s.rd(0x6a50) == 0x8001
     assert s.rd(FB + 1024) == 0
+
+
+def test_frame_terminates_on_power_on_leftovers(built):
+    """init_all fills RAM 0x632a..0x6629 with leftovers of the ramdata copy (0x2c00 words from 0x12cf7 to
+    0x3a2a); the first build hung on them. The renderer must finish whatever dp_* holds."""
+    fbtest, words, near, far = built
+    orig = open(FW, "rb").read()
+    from nuxdsp import container
+    w0 = container.words(orig)
+    ram = {a: w0[0x12cf7 + a - 0x3a2a] for a in range(0x6500, 0x6600)}
+    ram[0x6a50] = 0
+    s = sim_frame(fbtest, words, far, Watch(ram))
+    assert s.steps < 100000
+    bad = sorted(a for a in s.ram.written if not allowed(fbtest, a))
+    assert not bad, "writes outside the framebuffer and dp_*: " + " ".join("%#x" % a for a in bad[:8])
