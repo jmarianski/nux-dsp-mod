@@ -61,7 +61,8 @@ dp_vol:                                 ; start (card, then the loop) or stop
     st    [dp_dx], r7
     st    [dp_dy], r7
     call  dp_init                       ; table, divisors and font: far code storing immediates (known to work)
-    call  dp_cpcard                     ; the card: far data through the firmware's copy routine (the test)
+    ccall dp_cpcard                     ; the card: far data through the firmware's copy routine (the test);
+                                        ; ccall: enter/ret_pop functions are always ccall'ed (919 of 919)
     ld    r7, [0x6a50]                  ; bit 0: the tick sends the framebuffer to the LCD
     mov   r6, #1
     or    r7, r6

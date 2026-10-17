@@ -84,6 +84,9 @@ def test_card_copy_is_init_alls(built):
     assert same((10, 11), (11, 12))                               # mov r1, x9
     assert ours[11:13] == [0xd748, 1024] and fw[16:18] == [0xd748, 0x2c00]       # r7 = count
     assert same((13, 20), (18, 25))                               # ld32 L2,[fp-2]; fix32 L2; mov32 L1,L0; call; ret_pop
+    near = syms["dp_vol"]
+    calls = [words[i] for i in range(near, a - 1) if words[i + 1] == a]
+    assert calls == [0xd7c8]  # ccall, as every call of an enter/ret_pop function in the firmware (call crashed)
     card_words = []
     for x in fbtest.splash.pack(fbtest.splash.test_card()):
         card_words += [x & 0xFF, x >> 8]
