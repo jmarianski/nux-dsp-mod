@@ -232,10 +232,15 @@ dm_icon:                                ; extra_menu draws page 3: the skull in 
     ret
 
 dm_panel:                               ; key_event ([fp+3] key, [fp+2] state, 0 = pressed); r6 = r7 = 0 in and
-    ld    r7, [rc_on]                   ; out. While on, every panel key becomes 0x7f (no handler); a press stops
+    ld    r7, [rc_on]                   ; out. While on, every panel key but VOL+/- becomes 0x7f (no handler); a press stops
     li    r6, #DP_MAGIC                 ; and redraws the screen (Extra)
     cmp   r7, r6
     bne   .po
+    .dw   0xd2cf, 0x0003                ; ld r7, [fp+3]: key; 8 / 9 = VOL+ / VOL- (param_change +1 / -1): theirs
+    cmp   r7, #8
+    beq   .po
+    cmp   r7, #9
+    beq   .po
     .dw   0xd2cf, 0x0002                ; ld r7, [fp+2]: state
     cmp   r7, #0
     bne   .pe
