@@ -28,7 +28,9 @@ def m():
     m.sim.ram = Watch({a: 0xBEEF for a in range(ray.RAM[0], ray.RAM[1])})
     m.call("__cc_init")
     m.call("rc_start")
-    m.call("rc_tick")                         # stage 0: the self-test
+    for _ in range(1 + 2 * 32 + 1):           # diagnostics, their 64 markers, then the self-test
+        m.call("rc_tick")
+    assert m.sim.rd(m.r.symbols["stage"]) == 2
     return m
 
 

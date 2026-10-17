@@ -12,7 +12,6 @@ extern unsigned framebuffer[];                 /* 0x662a: 8 pages x 128 columns,
 
 #define W 128
 #define H 64
-#define FRAME_TICKS 5
 #define MAPN 16
 
 /* keys: bit k = MIDI note 47 + k held */
@@ -138,14 +137,27 @@ void cast(int x)
     column(x, top, top + h, side);
 }
 
-void render(void)
+void view(void)
 {
-    int x;
     rdx = icos(pa);
     rdy = isin(pa);
     rpx = fmul(-rdy, 170);                      /* camera plane, 0.66 = a 66 degree view */
     rpy = fmul(rdx, 170);
-    for (x = 0; x < W; x++) cast(x);
+}
+
+#define PARTS 8                                 /* a frame is drawn over 8 ticks, 16 columns each */
+
+void render_part(int c)
+{
+    int x;
+    for (x = c * (W / PARTS); x < (c + 1) * (W / PARTS); x++) cast(x);
+}
+
+void render(void)
+{
+    int c;
+    view();
+    for (c = 0; c < PARTS; c++) render_part(c);
 }
 
 void digit(int x, int page, int d)
@@ -173,7 +185,7 @@ void move(int dx, int dy)
     if (!wall(px >> 8, ny >> 8)) py = ny;
 }
 
-void frame(void)
+void steer(void)
 {
     int dirx, diry, sp;
     if (held & (1 << K_LEFT)) pa = pa - 4;
@@ -186,7 +198,11 @@ void frame(void)
     if (held & (1 << K_BACK)) move(-fmul(dirx, sp), -fmul(diry, sp));
     if (held & (1 << K_STRAFE_L)) move(fmul(diry, sp), -fmul(dirx, sp));
     if (held & (1 << K_STRAFE_R)) move(-fmul(diry, sp), fmul(dirx, sp));
-    render();
+    view();
+}
+
+void finish(void)
+{
     number(0, 0, dt, 3);                        /* last frame's time, ~ms */
     if (lj) digit(124, 7, lj);                  /* the ljmp test came back */
     if (!st_ok) {
@@ -195,6 +211,14 @@ void frame(void)
     LCD_FLAG = LCD_FLAG | 1;
     nframe++;
     trace(0x400 + (nframe & 0xff));
+}
+
+void frame(void)                                /* all of it at once (the simulator's tests) */
+{
+    int c;
+    steer();
+    for (c = 0; c < PARTS; c++) render_part(c);
+    finish();
 }
 
 unsigned sth;
@@ -220,6 +244,51 @@ int selftest(void)
     return sth;
 }
 
+/* Diagnostics, sent to the host before the game: dv[0..15] raw results of single instructions (asm, ray.py's
+ * adiag), dv[16..] C operations, each a word that the simulator computes too (ray.py --diag). */
+#define NDV 32
+unsigned dv[NDV];
+int dn;
+void adiag(void);                               /* asm (ray.py) */
+int va, vb, vc;
+unsigned vu;
+
+void cdiag(void)
+{
+    va = 1234; vb = 567; vc = 3; vu = 60000;
+    dv[16] = va * vb;
+    dv[17] = vu / vb;
+    dv[18] = -va / 7;
+    dv[19] = -va % vb;
+    dv[20] = -va >> 3;
+    dv[21] = -va >> vc;
+    dv[22] = fmul(-300, 500);
+    dv[23] = isin(100);
+    dv[24] = va < vb;
+    dv[25] = -va < vb;
+    dv[26] = vu < vb;
+    dv[27] = (unsigned)vb < vu;
+    dv[28] = inv(-700);
+    dv[29] = vu % vb;
+    dv[30] = selftest();
+    dv[31] = 0x1234;
+}
+
+int send_dv(void)                               /* one marker a tick: 0x2000 | (k & 15) << 8 | high, then 0x3000 | ... | low */
+{
+    if (dn < 2 * NDV) {
+        if (dn & 1) trace(0x3000 | (dn >> 1 & 15) << 8 | (dv[dn >> 1] & 255));
+        else trace(0x2000 | (dn >> 1 & 15) << 8 | dv[dn >> 1] >> 8);
+        dn++;
+        return 0;
+    }
+    st_val = selftest();
+    st_ok = st_val == SELFTEST_EXPECT;
+    trace(0x300 + st_ok);
+    ticks = 0;
+    return 1;
+}
+
 void rc_start(void)
 {
     px = 384;
@@ -231,22 +300,29 @@ void rc_start(void)
 void rc_tick(void)
 {
     if (stage == 0) {                           /* one step per tick, each followed by a marker */
-        st_val = selftest();
-        st_ok = st_val == SELFTEST_EXPECT;
-        trace(0x300 + st_ok);
+        adiag();
+        cdiag();
+        dn = 0;
         stage = 1;
         return;
     }
-    if (drew) {                                 /* the clock moved past the frame drawn last tick */
+    if (stage == 1) {
+        if (send_dv()) stage = 2;
+        return;
+    }
+    if (drew) {                                 /* the clock moved past the part drawn last tick */
         dt = now() - t0;
         drew = 0;
     }
+    t0 = now();
+    drew = 1;
+    if (ticks == 0) steer();
+    trace(0x500 + ticks);                       /* part ticks starts */
+    render_part(ticks);
     ticks++;
-    if (ticks >= FRAME_TICKS) {
+    if (ticks == PARTS) {
+        finish();
         ticks = 0;
-        t0 = now();
-        frame();
-        drew = 1;
     }
 }
 
