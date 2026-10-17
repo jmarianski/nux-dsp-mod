@@ -46,6 +46,8 @@ def format_insn(a, x, lit, fmt_target, var_name):
         return "%-5s r%d, %s" % (op, dst, s), None
     if op in ("shl", "shr"):
         return "%-5s r%d, %d" % (op, args[0], args[1]), None
+    if op == "mul":
+        return "mul   r%d" % args[0], None
     if op == "ldc":
         return "ldc   r%d, [r1+%d]" % args, None
     if op in ("ld", "st"):

@@ -30,6 +30,7 @@ variable `X` lives at file word `ramdata_start + X`.
 | `and rD, rS` | `9(D+8)0S` | | C |
 | `or rD, rS` | `aD0S` | | C |
 | `sub rD, rS` | `a(D+8)0S` | rD -= rS (doom-piano's timings use it) | C |
+| `mul rS` | `d4c8+S` | r7 = r7 * rS, the low 16 bits (C: 0x1234 * 0x5678 gave 0x0060; no register r0..r6 gets the high word); one word (C); the length rule (is_two_words) still takes two, kept so that the disassembly and the builds stay as they were; the assembler and the simulator know | C |
 | `shl rN, k` / `shr rN, k` | `fN9k` / `fNdk` | k = 1..15 (`fN90` is `st [abs]`); shr is logical | C |
 | `ldc rR, [r1+k]` | `dR9k` | read **program memory** (tables, patch data), k = 0..15 | C |
 | `ld rR, [r1+k]` / `st [r1+k], rR` | `cR9k` / `c(R+8)9k` | k = 0..15 | C |

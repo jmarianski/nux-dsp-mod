@@ -39,7 +39,7 @@ class Sim:
             if self.steps > max_steps:
                 raise SimError("step limit (loop?) at %#x" % pc)
             x = self.code[pc]
-            lit = self.code[pc + 1] if isa.is_two_words(x) else None
+            lit = self.code[pc + 1] if isa.is_two_words(x) and (x & 0xFFF8) != 0xD4C8 else None   # mul: one word (C)
             d = isa.decode(x, lit)
             if d is None:
                 raise SimError("unknown instruction %04x at %#x" % (x, pc))
@@ -53,6 +53,8 @@ class Sim:
                 continue
             if op == "sub":
                 r[a[0]] = (r[a[0]] - r[a[1][1]]) & 0xFFFF
+            elif op == "mul":
+                r[7] = (r[7] * r[a[0]]) & 0xFFFF
             elif op in ("mov", "cmp", "add", "and", "or"):
                 dst, src = a
                 v = r[src[1]] if isinstance(src, tuple) else (src & 0xFF)

@@ -150,6 +150,9 @@ def encode_op(op, rest, pc, symbols):
         v = ops[1][1]
         need(0 <= v <= 255, "imm8 out of range: %d (imm8 is zero-extended, C: no negative values; use li + a register)" % v)
         return isa.encode(op, (reg(ops[0]), v & 0xFF))
+    if op == "mul":
+        need(kinds == ("reg",), "mul rS (r7 = r7 * rS, low 16 bits)")
+        return isa.encode(op, (reg(ops[0]),))
     if op == "sub":
         need(kinds == ("reg", "reg"), "sub rD, rS (register form only)")
         return isa.encode(op, (reg(ops[0]), ("r", reg(ops[1]))))
