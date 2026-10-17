@@ -50,7 +50,16 @@ def smul32():
 
 def fmul():
     f = "fmul__f"
-    return (_signed_in(f, "fm") + WORK1 + [f"st    [{f}+1], r1"] + _um32(f + "+0", "fm")
+    # |b| <= 256 (sines, small factors): |a| = ah * 256 + al, and ah * |b|, al * |b| both fit 16 bits unsigned, so
+    # (|a| * |b|) >> 8 = ah * |b| + ((al * |b|) >> 8) exactly, with two multiplies.
+    fast = ([f"ld    r5, [{f}+1]", "mov   r1, #0"] + _abs("r5", "fq", 1)
+            + ["li    r6, #257", "cmp   r5, r6", "blt   .fqa", "jmp   .fqw", ".fqa:", f"ld    r4, [{f}+0]"]
+            + _abs("r4", "fq", 2)
+            + WORK1 + ["mov   r7, r4", "and   r7, #255", "mul   r5", "shr   r7, 8", "mov   r6, r7",
+               "mov   r7, r4", "shr   r7, 8", "mul   r5", "add   r7, r6",
+               "mov   r6, r1", "and   r6, #1", "cmp   r6, #0", "beq   .fqp",
+               "mov   r6, #0", "sub   r6, r7", "mov   r7, r6", ".fqp:", "ret", ".fqw:"])
+    return fast + (_signed_in(f, "fm") + WORK1 + [f"st    [{f}+1], r1"] + _um32(f + "+0", "fm")
             + ["shr   r1, 8", "shl   r7, 8", "or    r7, r1",
                f"ld    r6, [{f}+1]", "and   r6, #1", "cmp   r6, #0", "beq   .fmp",
                "mov   r6, #0", "sub   r6, r7", "mov   r7, r6", ".fmp:", "ret"])
@@ -79,7 +88,30 @@ def _md_sign(k):
             "mov   r7, #0", "sub   r7, r5", "ret", f".mdp{k}:", "mov   r7, r5", "ret"]
 
 
-FUNCTIONS = {"umul32": umul32, "smul32": smul32, "fmul": fmul, "muldiv": muldiv}
+def screen_y():
+    """Fast path of screen_y(h, s) = 32 - clamp((h - eye) * s >> 13, +-1000) for |h - eye| < 256 and s < 0x8000:
+    with s = sh * 256 + sl, X = |d| * s = (A + Bh) * 256 + Bl where A = |d| * sh, B = |d| * sl = Bh * 256 + Bl, all
+    16-bit; floor(X / 8192) = (A + Bh) >> 5, rounded up for negative d when the low 13 bits are not zero (the C's
+    arithmetic shift floors). Otherwise falls through into the C below it (the full product)."""
+    f = "screen_y__f"
+    return ([f"ld    r4, [{f}+1]", "li    r6, #0x8000", "cmp   r4, r6", "blt   .sya", "jmp   .syw", ".sya:",
+             f"ld    r7, [{f}+0]", "ld    r6, [eye]", "sub   r7, r6", "mov   r1, #0",
+             "li    r6, #0x8000", "cmp   r7, r6", "blt   .syb", "mov   r6, #0", "sub   r6, r7", "mov   r7, r6",
+             "mov   r1, #1", ".syb:",
+             "li    r6, #256", "cmp   r7, r6", "blt   .syc", "jmp   .syw", ".syc:", "mov   r5, r7"] + WORK1 + [
+             "mov   r7, r4", "and   r7, #255", "mul   r5",                    # B = |d| * sl
+             "mov   r6, r7", "and   r6, #255", f"st    [{f}+0], r6",          # Bl (h is not needed any more)
+             "shr   r7, 8", "mov   r6, r7",                                   # Bh
+             "mov   r7, r4", "shr   r7, 8", "mul   r5", "add   r7, r6",       # A' = |d| * sh + Bh
+             "mov   r4, r7", "shr   r4, 5",                                   # m = A' >> 5
+             "cmp   r1, #0", "beq   .syd",
+             "and   r7, #31", f"ld    r6, [{f}+0]", "or    r7, r6", "cmp   r7, #0", "beq   .syd", "add   r4, #1",
+             ".syd:", "li    r6, #1001", "cmp   r4, r6", "blt   .sye", "li    r4, #1000", ".sye:",
+             "cmp   r1, #0", "beq   .syf", "mov   r7, r4", "add   r7, #32", "ret",
+             ".syf:", "mov   r7, #32", "sub   r7, r4", "ret", ".syw:"])
+
+
+FUNCTIONS = {"umul32": umul32, "smul32": smul32, "fmul": fmul, "muldiv": muldiv, "screen_y": screen_y}
 
 
 def insert(src):
