@@ -67,21 +67,21 @@ int wall(int x, int y)
 
 unsigned now(void) { return (CLOCK_HI << 6) | (CLOCK_LO >> 10); }   /* ~1.024 ms units */
 
+unsigned span(int lo, int hi)                   /* rows lo..hi-1 of one page (8 rows) */
+{
+    if (lo < 0) lo = 0;
+    if (hi > 8) hi = 8;
+    if (lo >= hi) return 0;
+    return (0xff << lo) & (0xff >> (8 - hi));
+}
+
 void column(int x, int top, int bot, int side)
 {
-    int p, lo, hi;
-    unsigned m, pat;
+    int p;
+    unsigned pat;
     pat = 0xff;
     if (side) pat = (x & 1) ? 0x55 : 0xaa;
-    for (p = 0; p < 8; p++) {
-        lo = top - p * 8;
-        hi = bot - p * 8;
-        if (lo < 0) lo = 0;
-        if (hi > 8) hi = 8;
-        m = 0;
-        if (lo < hi) m = ((0xff << lo) & (0xff >> (8 - hi))) & pat;
-        framebuffer[p * W + x] = m;
-    }
+    for (p = 0; p < 8; p++) framebuffer[p * W + x] = span(top - p * 8, bot - p * 8) & pat;
 }
 
 /* One column, split in pieces so that every jump stays short (ljmp is not confirmed on the device). */
@@ -274,11 +274,17 @@ void cdiag(void)
     dv[31] = 0x1234;
 }
 
-int send_dv(void)                               /* one marker a tick: 0x2000 | (k & 15) << 8 | high, then 0x3000 | ... | low */
+int dv_marker(int n)                            /* 0x2000 | (k & 15) << 8 | high, then 0x3000 | ... | low */
+{
+    int k = n >> 1;
+    if (n & 1) return 0x3000 | (k & 15) << 8 | (dv[k] & 255);
+    return 0x2000 | (k & 15) << 8 | dv[k] >> 8;
+}
+
+int send_dv(void)                               /* one marker a tick */
 {
     if (dn < 2 * NDV) {
-        if (dn & 1) trace(0x3000 | (dn >> 1 & 15) << 8 | (dv[dn >> 1] & 255));
-        else trace(0x2000 | (dn >> 1 & 15) << 8 | dv[dn >> 1] >> 8);
+        trace(dv_marker(dn));
         dn++;
         return 0;
     }

@@ -8,7 +8,7 @@ Extras: __asm("line") as a statement, extern variables and functions resolved by
 other patch code).
 
 The machine model is the one confirmed on the instrument (nek100-mod docs/ISA.md and nek100-re FINDINGS):
-ld/st [abs] and [r1+k], li/addi, mov/cmp/add/and/or/sub, shl/shr by constants, beq/bne/blt (signed), jmp,
+ld/st [abs] and [r1+k], li/addi, mov/cmp/add/and/or/sub, shl/shr by constants, beq/bne/blt (unsigned, as the device: signed compares are biased by 0x8000), jmp,
 call/ret, plus ljmp (d0ce, absolute within the 64K bank; strong hypothesis from the firmware's bank 1 code).
 
 ABI (our own; the stack and enter/ret_pop are left alone):
@@ -1055,8 +1055,7 @@ class Gen:
             self.i("shr   r7, %d" % v)
         else:
             ln, le = self.label(), self.label()
-            self.i("cmp   r7, #0")
-            self.i("blt   %s" % ln)
+            self.negative(ln)
             self.i("shr   r7, %d" % v)
             self.i("jmp   %s" % le)
             self.put(ln)
@@ -1067,6 +1066,13 @@ class Gen:
             self.i("sub   r7, r6")
             self.put(le)
 
+    def negative(self, lab):
+        """Jump to lab if r7 < 0 (cmp compares unsigned: test bit 15); uses r4."""
+        self.i("mov   r4, r7")
+        self.i("shr   r4, 15")
+        self.i("cmp   r4, #0")
+        self.i("bne   %s" % lab)
+
     def div_const(self, v, signed):
         """r7 /= v, v a power of two (signed: rounds toward zero, as C)."""
         k = v.bit_length() - 1
@@ -1076,8 +1082,7 @@ class Gen:
             self.i("shr   r7, %d" % k)
             return
         lp = self.label()
-        self.i("cmp   r7, #0")
-        self.i("blt   %s" % lp)
+        self.negative(lp)
         self.i("jmp   %s_" % lp)
         self.put(lp)
         self.addc(7, v - 1)
@@ -1274,9 +1279,9 @@ class Gen:
             unsigned = ta.unsigned or tb.unsigned or ta.is_ptr() or tb.is_ptr()
             op = e.op
             a, b = self.p.fold(e.a), self.p.fold(e.b)
-            if op in ("==", "!=") or not unsigned:
+            if op in ("==", "!=") or unsigned:          # cmp compares unsigned
                 self.expr(a, d)
-                if b.kind == "num" and b.val < 256 and (op in ("==", "!=") or True):
+                if b.kind == "num" and 0 <= b.val < 256:
                     swap = op in (">", "<=")
                     if swap:
                         self.li(6, b.val)
@@ -1287,7 +1292,7 @@ class Gen:
                     self.right_to_r6(b, d)
                     swap = op in (">", "<=")
                     self.i("cmp   r6, r7" if swap else "cmp   r7, r6")
-            else:  # unsigned: both biased by 0x8000, then the signed comparison
+            else:  # signed: both biased by 0x8000, then the unsigned comparison
                 self.expr(a, d)
                 self.right_to_r6(b, d)
                 self.i("addi  r7, #0x8000")
@@ -1480,8 +1485,9 @@ def relax(items, long_jumps=True):
                 rel = addr[lab] - (br + 1)
                 if not -128 <= rel <= 127:
                     if not long_jumps:
-                        raise CError("jump to %s out of short reach (%d words): split the function (long jumps off)"
-                                     % (lab, rel))
+                        fn = [x[1] for x in items[:n] if x[0] == "l" and not x[1].startswith(".")]
+                        raise CError("%s: jump to %s out of short reach (%d words): split the function "
+                                     "(long jumps off)" % (fn[-1] if fn else "?", lab, rel))
                     long.add(n)
                     grew = True
         if not grew:
@@ -1535,7 +1541,6 @@ __mul:                                  ; r7 = r7 * r6 (low 16 bits); uses r4, r
 """,
     "__udiv": """
 __udiv:                                 ; r7 = r7 / r6, r5 = r7 % r6, unsigned (r6 = 0: r7 = 0xffff); uses r1, r4
-    addi  r6, #0x8000                   ; the divisor biased: unsigned compares as signed
     mov   r5, #0
     mov   r4, #16
 .ud_l:
@@ -1550,28 +1555,24 @@ __udiv:                                 ; r7 = r7 / r6, r5 = r7 % r6, unsigned (
     ld    r1, [__rt0]
     cmp   r1, #0
     bne   .ud_s
-    mov   r1, r5
-    addi  r1, #0x8000
-    cmp   r1, r6
+    cmp   r5, r6
     blt   .ud_n
 .ud_s:
-    mov   r1, r5                        ; r5 -= divisor (= (r5 + 0x8000) - biased divisor)
-    addi  r1, #0x8000
-    sub   r1, r6
-    mov   r5, r1
+    sub   r5, r6
     add   r7, #1
 .ud_n:
     addi  r4, #0xffff
     cmp   r4, #0
     bne   .ud_l
-    addi  r6, #0x8000
     ret
 """,
     "__div": """
 __div:                                  ; r7 = r7 / r6, r5 = r7 % r6, signed as C (toward zero); uses r1, r4
     mov   r1, #0                        ; bit 0: negate the quotient, bit 1: the remainder
-    cmp   r7, #0
-    blt   .dv_na
+    mov   r4, r7                        ; (cmp compares unsigned: the sign is bit 15)
+    shr   r4, 15
+    cmp   r4, #0
+    bne   .dv_na
     jmp   .dv_a
 .dv_na:
     mov   r4, r7
@@ -1579,8 +1580,10 @@ __div:                                  ; r7 = r7 / r6, r5 = r7 % r6, signed as 
     sub   r7, r4
     mov   r1, #3
 .dv_a:
-    cmp   r6, #0
-    blt   .dv_nb
+    mov   r4, r6
+    shr   r4, 15
+    cmp   r4, #0
+    bne   .dv_nb
     jmp   .dv_b
 .dv_nb:
     mov   r4, r6
@@ -1645,8 +1648,10 @@ __sar:                                  ; r7 >>= r6 (r6 & 31), arithmetic; uses 
 .sa_l:
     cmp   r6, #0
     beq   .sa_d
-    cmp   r7, #0
-    blt   .sa_n
+    mov   r4, r7
+    shr   r4, 15
+    cmp   r4, #0
+    bne   .sa_n
     shr   r7, 1
     jmp   .sa_e
 .sa_n:
