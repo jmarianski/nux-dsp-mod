@@ -84,6 +84,7 @@
         }
         const i = pc - start;
         if (this.profile) this.profile[i]++;      /* optional: instructions executed per program word */
+        if (this.watch && this.watch[pc]) this.watch[pc](this, stack);   /* optional: a hook on entry to an address */
         const o = i >= 0 && i < op.length ? op[i] : 0;
         const a = A[i], b = B[i];
         let nxt = pc + 1;

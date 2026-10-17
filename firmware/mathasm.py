@@ -65,19 +65,48 @@ def fmul():
                "mov   r6, #0", "sub   r6, r7", "mov   r7, r6", ".fmp:", "ret"])
 
 
+def _um8(p):
+    """r1:r7 (lo:hi) = r4 * r5 for r5 < 256: two multiplies (ah * b and al * b both fit 16 bits). Uses r6."""
+    return ["mov   r7, r4", "and   r7, #255", "mul   r5", "mov   r1, r7",
+            "mov   r7, r4", "shr   r7, 8", "mul   r5",
+            "mov   r6, r7", "shl   r6, 8", "add   r1, r6", "shr   r7, 8", "cmp   r1, r6",
+            f"blt   .{p}c", f"jmp   .{p}n", f".{p}c:", "add   r7, #1", f".{p}n:"]
+
+
+def _md_steps(n, k):
+    """n steps of the shift-subtract division: r4 = remainder (< r1), r5 = dividend bits on top, quotient below."""
+    out = []
+    for i in range(n):
+        out += ["mov   r6, r5", "shr   r6, 15", "shl   r4, 1", "or    r4, r6", "shl   r5, 1",
+                "cmp   r4, r1", f"blt   .md{k}s{i}", "sub   r4, r1", "add   r5, #1", f".md{k}s{i}:"]
+    return out
+
+
 def muldiv():
+    """a * b / c toward zero, saturated to +-32767. Only the quotient bits it needs: the quotient is below 2^n
+    exactly when (product >> n) < |c|, so for n = 0, 4, 8, 12 it starts there and runs n steps (E1M1's quotients
+    are mostly 4..10 bits; half of the column ones are 0). A factor below 256 multiplies in two steps."""
     f = "muldiv__f"
     out = [f"ld    r7, [{f}+2]", "cmp   r7, #0", "bne   .mdgo", "ret", ".mdgo:"]
-    out += _signed_in(f, "md") + ["ld    r6, [work]", "add   r6, #3", "st    [work], r6"]
+    out += _signed_in(f, "md") + ["ld    r6, [work]", "add   r6, #2", "st    [work], r6"]
     out += [f"ld    r7, [{f}+2]", "li    r6, #0x8000", "cmp   r7, r6", "blt   .mdc",
             "mov   r6, #0", "sub   r6, r7", "mov   r7, r6", "add   r1, #1", ".mdc:",
             f"st    [{f}+2], r7", f"st    [{f}+1], r1"]                    # f+2 = |c|, f+1 = negatives
-    out += _um32(f + "+0", "md")
+    # the product: a factor below 256 goes in r5 and takes two multiplies
+    out += ["li    r6, #256", "cmp   r5, r6", "blt   .mdsm", "cmp   r4, r6", "blt   .mdsw"]
+    out += _um32(f + "+0", "md") + ["jmp   .mdpr", ".mdsw:", "mov   r6, r4", "mov   r4, r5", "mov   r5, r6",
+                                     ".mdsm:"] + _um8("mdq") + [".mdpr:"]
     out += ["mov   r4, r7", "mov   r5, r1", f"ld    r1, [{f}+2]",           # rem:q = product, r1 = |c|
             "cmp   r4, r1", "blt   .mdok", "li    r5, #0x7fff"] + _md_sign("x") + [".mdok:"]
-    for k in range(16):                                                     # rem < |c| <= 0x8000: no carry out
-        out += ["mov   r6, r5", "shr   r6, 15", "shl   r4, 1", "or    r4, r6", "shl   r5, 1",
-                "cmp   r4, r1", f"blt   .mds{k}", "sub   r4, r1", "add   r5, #1", f".mds{k}:"]
+    # quotient 0: product < |c|
+    out += ["cmp   r4, #0", "bne   .md4", "cmp   r5, r1", "blt   .mdz", "jmp   .md4", ".mdz:", "mov   r7, #0", "ret"]
+    for n, nxt in ((4, ".md8"), (8, ".md12"), (12, ".md16")):
+        here = ".md%d" % n
+        out += [here + ":", "mov   r6, r4", f"shr   r6, {n}", "cmp   r6, #0", f"bne   {here}x",
+                "mov   r6, r4", f"shl   r6, {16 - n}", "mov   r7, r5", f"shr   r7, {n}", "or    r6, r7",
+                "cmp   r6, r1", f"blt   {here}go", f"{here}x:", f"ljmp  {nxt}", f"{here}go:",
+                "mov   r4, r6", f"shl   r5, {16 - n}"] + _md_steps(n, n) + _md_sign(str(n))
+    out += [".md16:"] + _md_steps(16, 16)                                   # rem < |c| <= 0x8000: no carry out
     out += ["li    r6, #0x8000", "cmp   r5, r6", "blt   .mdsg", "li    r5, #0x7fff", ".mdsg:"] + _md_sign("")
     return out
 

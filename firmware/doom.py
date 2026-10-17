@@ -64,7 +64,7 @@ def assets():
     return {"sprites": sprites, "font": font}
 
 
-def compile_doom(m=None, silent_audio=False):
+def compile_doom(m=None, silent_audio=False, far=None):
     m = m or doommap.Map()
     # The fixed explicit stack must cover the deepest front-to-back BSP path.
     def depth(n):
@@ -73,7 +73,7 @@ def compile_doom(m=None, silent_audio=False):
         raise ValueError("map exceeds the 32-word BSP stack")
     x, y, a = m.start()
     bx, by, bw, bh = m.block_info
-    pre = (f"#define SILENT_AUDIO {int(silent_audio)}\n"
+    pre = (f"#define SILENT_AUDIO {int(silent_audio)}\n#define FAR {far or doommap.FAR}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"
            + f"#define BLOCK_X {bx}\n#define BLOCK_Y {by}\n#define BLOCK_W {bw}\n#define BLOCK_H {bh}\n"
            + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define PICKUP_N {len(getattr(m, 'pickups', []))}\n"
