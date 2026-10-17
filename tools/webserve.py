@@ -10,22 +10,28 @@ import http.server
 import os
 import sys
 import traceback
+import threading
+from urllib.parse import urlsplit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
 GAME = os.path.join(WEB, "build", "game.json")
+BUILDS = {"/build/game.json": (GAME, "doom"), "/build/ray.json": (os.path.join(WEB, "build", "ray.json"), "ray")}
+BUILD_LOCK = threading.Lock()
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 
 def sources():
-    pats = ["firmware/*.c", "firmware/*.py", "cc/*.py", "tools/webbuild.py", "tools/wad.py", "tools/doommap.py"]
+    pats = ["firmware/*.c", "firmware/*.py", "cc/*.py", "tools/webbuild.py", "tools/wad.py", "tools/doommap.py",
+            "tools/budget.py", "tools/walltex.py", "tools/playthrough.py", "wad/*.WAD",
+            "../nek100-mod/nuxdsp/*.py", "../nek100-mod/nuxdsp/*.toml"]
     return [p for pat in pats for p in glob.glob(os.path.join(ROOT, pat))]
 
 
-def stale():
-    if not os.path.exists(GAME):
+def stale(out=GAME):
+    if not os.path.exists(out):
         return True
-    t = os.path.getmtime(GAME)
+    t = os.path.getmtime(out)
     return any(os.path.getmtime(p) > t for p in sources())
 
 
@@ -34,14 +40,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*a, directory=WEB, **k)
 
     def do_GET(self):
-        if self.path.split("?")[0] == "/build/game.json" and stale():
+        build = BUILDS.get(urlsplit(self.path).path)
+        if build:
             try:
-                import importlib
-                for name in ("p16cc", "ray", "webbuild"):
-                    if name in sys.modules:
-                        importlib.reload(sys.modules[name])
-                import webbuild
-                webbuild.main([GAME])
+                with BUILD_LOCK:
+                    out, engine = build
+                    if stale(out):
+                        import importlib
+                        importlib.invalidate_caches()
+                        for name in ("nuxdsp.isa", "nuxdsp.asm", "nuxdsp.sim", "nuxdsp.fwmap", "p16cc", "wad",
+                                     "walltex", "doommap", "fbtest", "ray", "doom", "budget", "playthrough", "webbuild"):
+                            if name in sys.modules:
+                                importlib.reload(sys.modules[name])
+                        import webbuild
+                        webbuild.main(["--engine", engine, out])
             except Exception:
                 msg = traceback.format_exc()
                 print(msg, file=sys.stderr)
@@ -59,5 +71,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8017
+    # First request rebuilds even if the dependency set changed since the previous server run.
+    for out, _ in BUILDS.values():
+        if os.path.exists(out):
+            os.utime(out, (0, 0))
     print("http://localhost:%d/" % port)
     http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

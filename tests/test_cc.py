@@ -15,6 +15,18 @@ ORG = 0x1a280
 RAM = (0x6440, 0x6500)
 
 
+def test_isolated_task_leaf_does_not_share_static_scratch():
+    import p16cc
+    src = "int worker(int a) { int b = a + 1; return b * a; } int key(int n, int v) { return (1 << n) | v; }"
+    r = p16cc.compile_c(src, isolated=("key",))
+    start, size = r.frames["key"]
+    for name, (other, count) in r.frames.items():
+        if name != "key":
+            assert start + size <= other or other + count <= start
+    with pytest.raises(p16cc.CError, match="defined leaf"):
+        p16cc.compile_c("int helper(int a) { return a; } int key(int a) { return helper(a); }", isolated=("key",))
+
+
 def build(src, externs=None, ram=RAM):
     import p16cc
     from nuxdsp import asm

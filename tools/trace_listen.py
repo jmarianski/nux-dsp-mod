@@ -14,7 +14,8 @@ import time
 
 import mido
 
-NAMES = {0x100: "__cc_init done"}
+NAMES = {0x100: "__cc_init done", 0x600: "Doom callback returned",
+         0x601: "Doom main loop starts", 0x602: "Doom game logic starts", 0x603: "Doom render slice starts"}
 
 
 DV = {"k": 0, "hi": 0}

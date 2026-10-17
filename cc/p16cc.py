@@ -20,7 +20,7 @@ ABI (our own; the stack and enter/ret_pop are left alone):
   * Generated code uses r1, r4, r5, r6, r7 and keeps r0, r2, r3 (asm glue must keep what its caller needs).
   * Globals and frames are RAM words in [ram_start, ram_end); __cc_init zeroes the globals and stores their
     initializers (call it once before anything else).
-Multiplication, division and variable shifts are runtime routines (__mul, __udiv, __div, ...).
+Multiplication uses the device's mul instruction (low 16 bits). Division and variable shifts use runtime routines.
 
 Usage: p16cc.py FILE.c [-o OUT.asm] [--ram START:END]
 """
@@ -58,9 +58,27 @@ def preprocess(src):
     """Comments out, object-like #define expanded (by the lexer), other directives rejected."""
     src = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group().count("\n"), src, flags=re.S)
     src = re.sub(r"//[^\n]*", "", src)
-    defines, out = {}, []
+    defines, out, live = {}, [], [True]          # live: one entry per open #if, True while its lines count
     for line in src.split("\n"):
         s = line.strip()
+        c = re.match(r"#\s*(if|ifdef|ifndef|else|endif)\b\s*(.*)$", s)
+        if c:
+            kind, cond = c.groups()
+            if kind == "endif":
+                if len(live) == 1:
+                    raise CError("#endif without #if")
+                live.pop()
+            elif kind == "else":
+                if len(live) == 1:
+                    raise CError("#else without #if")
+                live[-1] = not live[-1] and live[-2]
+            else:
+                live.append(live[-1] and pp_true(kind, cond, defines))
+            out.append("")
+            continue
+        if not live[-1]:
+            out.append("")
+            continue
         if s.startswith("#"):
             m = re.match(r"#\s*define\s+([A-Za-z_]\w*)(\s+(.*))?$", s)
             if m and not s[m.end(1):].startswith("("):
@@ -72,7 +90,24 @@ def preprocess(src):
                 continue
             raise CError("unsupported directive: %s" % s)
         out.append(line)
+    if len(live) != 1:
+        raise CError("#if without #endif")
     return "\n".join(out), defines
+
+
+def pp_true(kind, cond, defines):
+    """#ifdef NAME, #ifndef NAME, #if EXPR: EXPR uses integers, defined names, ! && || == != ( )."""
+    name = cond.strip()
+    if kind == "ifdef":
+        return name in defines
+    if kind == "ifndef":
+        return name not in defines
+    expr = re.sub(r"[A-Za-z_]\w*", lambda m: defines.get(m.group(), "0") or "0", cond)
+    expr = expr.replace("&&", " and ").replace("||", " or ")
+    expr = re.sub(r"!(?!=)", " not ", expr)
+    if not re.fullmatch(r"[\s\w()=!<>+\-*]*", expr):
+        raise CError("unsupported #if: %s" % cond)
+    return bool(eval(expr, {"__builtins__": {}}))
 
 
 def lex(src):
@@ -1002,8 +1037,7 @@ class Gen:
             self.i("or    r7, r6")
             self.i("sub   r7, r5")
         elif op == "*":
-            self.rt.add("__mul")
-            self.i("call  __mul")
+            self.i("mul   r6")
         elif op in ("/", "%"):
             name = "__udiv" if unsigned else "__div"
             self.rt.add(name)
@@ -1025,8 +1059,7 @@ class Gen:
         bits = [k for k in range(16) if v >> k & 1]
         if len(bits) > 4:
             self.li(6, v)
-            self.rt.add("__mul")
-            self.i("call  __mul")
+            self.i("mul   r6")
             return
         if len(bits) == 1:
             self.i("shl   r7, %d" % bits[0])
@@ -1681,7 +1714,7 @@ class Result:
         return "\n".join(self.lines) + "\n"
 
 
-def compile_c(src, ram=(0x6440, 0x6500), long_jumps=True):
+def compile_c(src, ram=(0x6440, 0x6500), long_jumps=True, isolated=()):
     p = Parser(lex(src)).program()
     g = Gen(p)
     funcs = [f for f in p.order if f.defined]
@@ -1722,13 +1755,26 @@ def compile_c(src, ram=(0x6440, 0x6500), long_jumps=True):
     def size(f):
         return f.nlocal + f.ntemp
 
+    # Interrupt/task entry leaves may run while an ordinary static frame is live.
+    # They own disjoint scratch RAM; callees would need their own reentrancy policy.
+    for name in isolated:
+        if name not in byname or byname[name].calls:
+            raise CError("isolated entry must be a defined leaf: " + name)
     frames, top = {}, gend
     for f in funcs:
+        if f.name in isolated:
+            continue
         b = gend + place(f.name)
         frames[f.name] = (b, size(f))
         symbols[f.name + "__f"] = b
         symbols[f.name + "__t"] = b + f.nlocal
         top = max(top, b + size(f))
+    for name in isolated:
+        f = byname[name]
+        frames[name] = (top, size(f))
+        symbols[name + "__f"] = top
+        symbols[name + "__t"] = top + f.nlocal
+        top += size(f)
     if top > ram[1]:
         raise CError("RAM: %d words needed, %d available (%#x..%#x)" % (top - ram[0], ram[1] - ram[0], ram[0], ram[1]))
 

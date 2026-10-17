@@ -4,10 +4,14 @@ engine (firmware/doom.c), so that frames can be looked at before the C code exis
 
 Map words (all 16-bit, coordinates in map units):
     vertex   x, y
-    node     x, y, dx, dy, right child, left child      (child bit 15: a subsector)
+    node     x, y, dx, dy, right child, left child, right bbox[4], left bbox[4]
+             child bit 15: a subsector; bbox order: top, bottom, left, right (14 words total)
     subsec   first seg, seg count, sector
-    seg      v1, v2, front sector, back sector (0xffff: one-sided), flags (bit 0: v1 is a corner of the linedef)
+    seg      v1, v2, front sector, back sector (0xffff: one-sided), flags (corner bit 0, surface offset in bits 1..15)
     sector   floor, ceiling, light
+    collision x1, y1, x2, y2, front sector, back sector (0xffff: blocking)
+    blockmap  cell offsets, then lists of collision-line indices terminated by 0xffff
+    walltex   per-seg surface references, 32x32 tiles compressed to column ink intervals, six-word surface descriptors
 
 Screen: 128 x 64, focal length 64 (90 degrees across), the horizon on row 32. Angles 0..255 for a full turn,
 counterclockwise from east as in Doom, sin/cos 8.8 from a 65-entry table.
@@ -21,11 +25,40 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wad  # noqa: E402
+import walltex  # noqa: E402
 
 W, H = 128, 64
 NEAR = 17                                       # S = 2^19 / z stays a positive 16-bit number
 EYE = 41
 SIN = [round(256 * math.sin(i * math.pi / 128)) for i in range(65)]
+
+
+def collision_grid(lines):
+    """Conservative 128-unit cells. A line belongs to every cell in its bounding box.
+
+    Extra candidates at diagonals are rejected by the runtime box/line test. Build
+    our own index so collision coverage does not depend on an IWAD's BLOCKMAP quirks.
+    All offsets address 16-bit words in far memory; nothing is kept in target RAM.
+    """
+    ox = min(min(l[0], l[2]) for l in lines) // 128 * 128
+    oy = min(min(l[1], l[3]) for l in lines) // 128 * 128
+    width = (max(max(l[0], l[2]) for l in lines) - ox) // 128 + 1
+    height = (max(max(l[1], l[3]) for l in lines) - oy) // 128 + 1
+    cells = [[] for _ in range(width * height)]
+    for i, (x1, y1, x2, y2, *_rest) in enumerate(lines):
+        for y in range((min(y1, y2) - oy) // 128, (max(y1, y2) - oy) // 128 + 1):
+            for x in range((min(x1, x2) - ox) // 128, (max(x1, x2) - ox) // 128 + 1):
+                cells[y * width + x].append(i)
+    words, lists = [0] * len(cells), {}
+    for k, cell in enumerate(cells):
+        key = tuple(cell)
+        if key not in lists:
+            lists[key] = len(words)
+            words.extend([*cell, 0xffff])
+        words[k] = lists[key]
+    if len(words) > 65535:
+        raise ValueError("collision blockmap exceeds 16-bit offsets")
+    return (ox, oy, width, height), words
 
 
 class Map:
@@ -39,16 +72,82 @@ class Map:
         self.sides = rec("SIDEDEFS", "<hh8s8s8sH")      # ... sector
         self.sectors = [(f, c, l) for f, c, _, _, l, _, _ in rec("SECTORS", "<hh8s8sHHH")]
         self.things = rec("THINGS", "<hhHHH")
-        self.nodes = [(x, y, dx, dy, r, l) for x, y, dx, dy, *_, r, l in rec("NODES", "<hhhh8h HH".replace(" ", ""))]
+        raw_nodes = rec("NODES", "<hhhh8hHH")
+        self.nodes = [(x, y, dx, dy, r, l) for x, y, dx, dy, *_, r, l in raw_nodes]
+        self.bounds = [tuple(n[4:12]) for n in raw_nodes]  # right then left: top, bottom, left, right
         self.segs = []
+        self.wall_surfaces = {}
         for v1, v2, ang, line, side, off in rec("SEGS", "<HHhHHh"):
             ld = self.lines[line]
             front = self.sides[ld[5 + side]][5]
             other = ld[5 + (side ^ 1)]
             back = self.sides[other][5] if other != 0xFFFF and ld[2] & 4 else 0xFFFF
+            sd = self.sides[ld[5 + side]]
+            a, b = self.vertices[v1], self.vertices[v2]
+            length = math.isqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
+            surfaces = {}
+            for slot, field, anchor in (("middle", 4, 2 if ld[2] & 16 else 0),
+                                        ("upper", 2, 0 if ld[2] & 8 else 1),
+                                        ("lower", 3, 0 if ld[2] & 16 else 3)):
+                texture_name = sd[field].rstrip(b"\0").decode("ascii")
+                if texture_name != "-" and (slot != "middle" or back == 0xffff):
+                    surfaces[slot] = (walltex.material(texture_name, ld[3] == 1 and slot == "upper"),
+                                      sd[0] + off, sd[0] + off + length, sd[1], anchor)
+            if surfaces:
+                self.wall_surfaces[len(self.segs)] = surfaces
             self.segs.append((v1, v2, front, back, 1 if off == 0 else 0))
+        self.wall_textures = {name: walltex.image(name)
+                              for name in sorted({s[0] for surfaces in self.wall_surfaces.values() for s in surfaces.values()})}
         self.subsecs = [(first, n, self.segs[first][2]) for n, first in rec("SSECTORS", "<HH")]
         self.root = len(self.nodes) - 1
+        self.collision = []
+        for v1, v2, flags, _special, _tag, right, left in self.lines:
+            front = self.sides[right][5] if right != 0xffff else self.sides[left][5]
+            back = self.sides[left][5] if left != 0xffff and flags & 4 and not flags & 1 else 0xffff
+            self.collision.append((*self.vertices[v1], *self.vertices[v2], front, back))
+        self.block_info, self.blockmap = collision_grid(self.collision)
+        self.prepare_game(rec("SECTORS", "<hh8s8sHHH"))
+
+    def prepare_game(self, raw_sectors):
+        """Easy E1M1 demo: four monsters, persistent pickups, doors and two floor specials."""
+        neighbors = [set() for _ in self.sectors]
+        for line in self.lines:
+            if line[5] != 0xffff and line[6] != 0xffff:
+                a, b = self.sides[line[5]][5], self.sides[line[6]][5]
+                neighbors[a].add(b); neighbors[b].add(a)
+        dynamic = {}
+        for line in self.lines:
+            if line[3] == 1:
+                sec = self.sides[line[6]][5]
+                dynamic[sec] = (sec, self.sectors[sec][1], min(self.sectors[n][1] for n in neighbors[sec]) - 4, 0)
+        for line in self.lines:
+            if line[3] in (36, 88):
+                for sec, raw in enumerate(raw_sectors):
+                    if raw[6] == line[4]:
+                        floors = [self.sectors[n][0] for n in neighbors[sec]]
+                        target = max(floors) + 8 if line[3] == 36 else min(floors)
+                        dynamic[sec] = (sec, self.sectors[sec][0], target, 1 if line[3] == 36 else 2)
+        self.dynamics = list(dynamic.values())
+        self.sector_slots = {d[0]: (i, d[3]) for i, d in enumerate(self.dynamics)}
+        self.actions = []
+        for i, line in enumerate(self.lines):
+            action = 0
+            if line[3] == 1:
+                action = self.sector_slots[self.sides[line[6]][5]][0] + 1
+            elif line[3] in (36, 88):
+                sec = next(s for s, raw in enumerate(raw_sectors) if raw[6] == line[4])
+                action = self.sector_slots[sec][0] + 1
+            elif line[3] == 11:
+                action = 255
+            self.actions.append(action)
+        # kind 1 zombie, 2 imp. State stays in RAM; original spawn records stay far.
+        self.enemies = [(x, y, 2 if kind == 3001 else 1) for x, y, _a, kind, flags in self.things
+                        if kind in (3001, 3004) and flags & 1 and not flags & 16]
+        kinds = {2011: 3, 2012: 4, 2014: 5, 2015: 6, 2007: 7, 2048: 8, 2008: 7, 2049: 8, 2001: 9}
+        self.pickups = [(x, y, kinds[kind]) for x, y, _a, kind, flags in self.things
+                        if kind in kinds and flags & 1 and not flags & 16]
+        if len(self.enemies) > 4 or len(self.pickups) > 64 or len(self.dynamics) > 8:
+            raise ValueError("demo limits exceeded (4 enemies, 64 pickups, 8 moving sectors)")
 
     def start(self):
         for x, y, a, t, _ in self.things:
@@ -60,8 +159,20 @@ class Map:
         """-> {table: [words]} in the layout above."""
         u = lambda v: v & 0xFFFF
         flat = lambda rows: [u(v) for r in rows for v in r]
-        return {"vertices": flat(self.vertices), "nodes": flat(self.nodes), "subsecs": flat(self.subsecs),
-                "segs": flat(self.segs), "sectors": flat(self.sectors)}
+        sectors = [list(s) for s in self.sectors]
+        for sec, (slot, kind) in getattr(self, "sector_slots", {}).items():
+            sectors[sec][2] |= ((slot + 1) << 8) | (0x1000 if kind else 0)
+        lines = [list(l) for l in self.collision]
+        for i, action in enumerate(getattr(self, "actions", [])):
+            lines[i][4] |= action << 8
+        textures, offsets = walltex.pack(self)
+        segs = [(*seg[:4], seg[4] | offsets.get(i, 0) << 1) for i, seg in enumerate(self.segs)]
+        nodes = [(*node, *self.bounds[i]) for i, node in enumerate(self.nodes)]
+        return {"vertices": flat(self.vertices), "nodes": flat(nodes), "subsecs": flat(self.subsecs),
+                "segs": flat(segs), "sectors": flat(sectors), "collision": flat(lines), "walltex": [u(v) for v in textures],
+                "blockmap": self.blockmap, "sine": SIN,
+                "entities": flat(getattr(self, "enemies", []) + getattr(self, "pickups", [])),
+                "dynamics": flat(getattr(self, "dynamics", []))}
 
 
 # -- the C engine's integer helpers
@@ -109,6 +220,30 @@ def find_sector(m, x, y):
     return m.subsecs[n & 0x7FFF][2]
 
 
+def position_floor(m, x, y, z):
+    """Player radius 16, height 56, maximum step 24; None if the position is blocked.
+
+    Reference deliberately scans every linedef, independently of the C broad phase.
+    Bounding-box crossings use exact integer cross products, including slanted walls.
+    """
+    ox, oy, width, height = m.block_info
+    if x - 16 < ox or y - 16 < oy or x + 16 >= ox + width * 128 or y + 16 >= oy + height * 128:
+        return None
+    floor, ceiling, _ = m.sectors[find_sector(m, x, y)]
+    for x1, y1, x2, y2, front, back in m.collision:
+        if x + 16 <= min(x1, x2) or x - 16 >= max(x1, x2) or y + 16 <= min(y1, y2) or y - 16 >= max(y1, y2):
+            continue
+        sides = {(cy - y1) * (x2 - x1) >= (y2 - y1) * (cx - x1)
+                 for cx in (x - 16, x + 16) for cy in (y - 16, y + 16)}
+        if len(sides) < 2:
+            continue
+        if back == 0xffff:
+            return None
+        floor = max(floor, m.sectors[front][0], m.sectors[back][0])
+        ceiling = min(ceiling, m.sectors[front][1], m.sectors[back][1])
+    return floor if floor - z <= 24 and ceiling - floor >= 56 and ceiling - z >= 56 else None
+
+
 def shade(light, s):
     """-> 0..3: how bright a wall column is drawn (light level and distance)."""
     b = (light - 128 >> 4) + min(s >> 9, 8)
@@ -151,13 +286,17 @@ class Renderer:
     def seg(self, k):
         m = self.m
         v1, v2, front, back, corner = m.segs[k]
+        surfaces = m.wall_surfaces.get(k, {})
+        clip1, clip2 = 0, 16384
         x1, z1 = self.view(v1)
         x2, z2 = self.view(v2)
         if z1 < NEAR and z2 < NEAR:
             return
         if z1 < NEAR:
+            clip1 = muldiv(NEAR - z1, 16384, z2 - z1)
             x1 += muldiv(x2 - x1, NEAR - z1, z2 - z1); z1 = NEAR
         elif z2 < NEAR:
+            clip2 -= muldiv(NEAR - z2, 16384, z1 - z2)
             x2 += muldiv(x1 - x2, NEAR - z2, z1 - z2); z2 = NEAR
         sx1 = 64 + clamp(muldiv(x1, 64, z1), -16000, 16000)
         sx2 = 64 + clamp(muldiv(x2, 64, z2), -16000, 16000)
@@ -166,6 +305,17 @@ class Renderer:
         s1, s2 = muldiv(8192, 64, z1), muldiv(8192, 64, z2)
         ff, fc, fl = m.sectors[front]
         bf, bc = (m.sectors[back][:2] if back != 0xFFFF else (0, 0))
+        def texture_column(slot, x, s):
+            surface = surfaces.get(slot)
+            if not surface:
+                return None
+            name, u1, u2, yo, anchor = surface
+            image = m.wall_textures[name]
+            du = u2 - u1
+            cu1, cu2 = u1 + muldiv(du, clip1, 16384), u1 + muldiv(du, clip2, 16384)
+            u = cu1 + muldiv(cu2 - cu1, muldiv(x - sx1, s2, sx2 - sx1), s)
+            texture_top = (fc, bc + len(image) * 4, ff + len(image) * 4, bf)[anchor] + yo
+            return image, (u >> 2) & (len(image[0]) - 1), texture_top, s, name not in ("door", "switch", "exit")
         y = lambda h, s: 32 - clamp(mulsh(h - self.eye, s, 13), -1000, 1000)
         for x in range(max(sx1, 0), min(sx2, W)):
             top, bot = self.top[x], self.bot[x]
@@ -176,28 +326,51 @@ class Renderer:
             sh = shade(fl, s)
             edge = corner and x == sx1
             if back == 0xFFFF:
-                self.wall(x, yc, yf, top, bot, sh, edge)
+                self.wall(x, yc, yf, top, bot, sh, edge, texture_column("middle", x, s))
                 self.top[x], self.bot[x] = H, 0
                 self.open -= 1
                 continue
             ybc, ybf = y(bc, s), y(bf, s)
             if bc < fc:
-                self.wall(x, yc, ybc, top, bot, sh, edge)
+                self.wall(x, yc, ybc, top, bot, sh, edge, texture_column("upper", x, s))
             if bf > ff:
-                self.wall(x, ybf, yf, top, bot, sh, edge)
+                self.wall(x, ybf, yf, top, bot, sh, edge, texture_column("lower", x, s))
             nt, nb = max(top, yc, ybc), min(bot, yf, ybf)
             if bc <= bf or nt >= nb:
                 nt, nb = H, 0
                 self.open -= 1
             self.top[x], self.bot[x] = nt, nb
 
-    def wall(self, x, a, b, top, bot, sh, edge):
+    def wall(self, x, a, b, top, bot, sh, edge, texture=None):
         """Rows a..b-1 of column x, within the window top..bot-1: edges solid, inside the pattern."""
         lo, hi = max(a, top), min(b, bot)
         if edge:
             return                              # a black line where walls meet
+        if texture and lo < hi:
+            image, u, texture_top, s, fill = texture
+            for y in range(lo, hi):
+                if fill and not x & 1 and not y & 1:
+                    self.fb[y][x] = 1
+            if s >= 1024:
+                v = texture_top - self.eye + muldiv(lo - 32, 8192, s)
+                tile = texture_top - (v >> 7) * 128
+                project = lambda h: 32 - clamp(((h - self.eye) * s) >> 13, -1000, 1000)
+                for _ in range(6):
+                    if project(tile) >= hi:
+                        break
+                    row = 0
+                    while row < len(image):
+                        if not image[row][u]:
+                            row += 1; continue
+                        start = row
+                        while row < len(image) and image[row][u]:
+                            row += 1
+                        for y in range(max(lo, project(tile - start * 4)), min(hi, project(tile - row * 4))):
+                            self.fb[y][x] = 1
+                    tile -= 128
         for y in range(lo, hi):
-            if y == a or y == b - 1 or PATTERN[sh](x, y):
+            ink = False if texture else PATTERN[sh](x, y)
+            if y == a or y == b - 1 or ink:
                 self.fb[y][x] = 1
 
 

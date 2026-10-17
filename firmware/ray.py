@@ -63,7 +63,11 @@ def data_c(expect):
 
 
 def compile_ray(expect):
-    return p16cc.compile_c(data_c(expect) + open(os.path.join(HERE, "ray.c")).read(), RAM, long_jumps=False)
+    with open(os.path.join(HERE, "ray.c")) as f:
+        src = f.read()
+    with open(os.path.join(HERE, "music.c")) as f:
+        src = src.replace("/* MUSIC_SOURCE: inserted by ray.py / doom.py, shared by both engines. */", f.read())
+    return p16cc.compile_c(data_c(expect) + src, RAM, long_jumps=False)
 
 
 class Machine:

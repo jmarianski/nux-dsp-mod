@@ -25,6 +25,9 @@
       this.fp = 0x7000;
       this.flags = 0;
       this.steps = 0;
+      this.maxCallbackSteps = {};
+      this.maxCallDepth = 0;
+      this.writeGuard = null;
       this.natives = natives || {};
       this.nativeAt = {};
       for (const [addr, name] of Object.entries(prog.natives)) this.nativeAt[+addr] = name;
@@ -32,7 +35,7 @@
     }
 
     rd(a) { return this.ram[a & 0xffff]; }
-    wr(a, v) { this.ram[a & 0xffff] = v; }
+    wr(a, v) { if (this.writeGuard) this.writeGuard(a & 0xffff); this.ram[a & 0xffff] = v; }
     sym(name) { return this.prog.symbols[name]; }
     get(name, k = 0) { return this.ram[this.prog.symbols[name] + k]; }
 
@@ -47,9 +50,18 @@
     /* Call an entry point (name or address) with arguments in its static frame; -> r7. */
     call(entry, ...args) {
       const addr = typeof entry === "string" ? this.prog.entry[entry] : entry;
+      if (!Number.isInteger(addr)) throw new P16Error("missing entry: " + entry);
       if (typeof entry === "string" && this.prog.frames[entry] !== undefined)
         args.forEach((v, k) => this.wr(this.prog.frames[entry] + k, v));
-      this.run(addr, 50000000);
+      const before = this.steps;
+      const limit = (this.prog.callback_limits || {})[entry];
+      try { this.run(addr, limit || 50000000); }
+      catch (e) {
+        if (limit && e.message.startsWith("step limit"))
+          throw new P16Error(entry + ": przekroczony budżet " + limit + " instrukcji na wywołanie; " + e.message);
+        throw e;
+      }
+      if (limit) this.maxCallbackSteps[entry] = Math.max(this.maxCallbackSteps[entry] || 0, this.steps - before);
       return this.r[7];
     }
 
@@ -57,13 +69,14 @@
       const ID = this.ids, op = this.op, A = this.a, B = this.b, r = this.r, ram = this.ram, start = this.start;
       const stack = [-1];
       let pc = addr, steps = 0;
-      const RET = ID.ret, SUB = ID.sub, MOV_R = ID.mov_r, MOV_I = ID.mov_i, CMP_R = ID.cmp_r, CMP_I = ID.cmp_i;
+      const RET = ID.ret, SUB = ID.sub, MUL = ID.mul, MOV_R = ID.mov_r, MOV_I = ID.mov_i, CMP_R = ID.cmp_r, CMP_I = ID.cmp_i;
       const ADD_R = ID.add_r, ADD_I = ID.add_i, AND_R = ID.and_r, AND_I = ID.and_i, OR_R = ID.or_r;
       const SHL = ID.shl, SHR = ID.shr, LDC = ID.ldc, LD_ABS = ID.ld_abs, LD_R1 = ID.ld_r1, LD_FP = ID.ld_fp;
       const ST_ABS = ID.st_abs, ST_R1 = ID.st_r1, ST_FP = ID.st_fp, LI = ID.li, ADDI = ID.addi;
       const JMP = ID.jmp, BEQ = ID.beq, BNE = ID.bne, BLT = ID.blt, LJMP = ID.ljmp, CALL = ID.call;
       let flags = this.flags;
       const fp = this.fp;
+      const guard = this.writeGuard;
       for (;;) {
         if (++steps > maxSteps) {
           this.steps += steps;
@@ -79,6 +92,7 @@
             if (pc < 0) { this.flags = flags; this.steps += steps; return; }
             continue;
           case SUB: r[a] = r[a] - r[b]; break;
+          case MUL: r[7] = Math.imul(r[7], r[a]); break;
           case MOV_R: r[a] = r[b]; break;
           case MOV_I: r[a] = b; break;
           case CMP_R: flags = r[a] > r[b] ? 1 : r[a] < r[b] ? -1 : 0; break;
@@ -94,9 +108,9 @@
           case LD_ABS: r[a] = ram[b]; nxt = pc + 2; break;
           case LD_R1: r[a] = ram[(r[1] + b) & 0xffff]; break;
           case LD_FP: r[a] = ram[(fp + b) & 0xffff]; break;
-          case ST_ABS: ram[b] = r[a]; nxt = pc + 2; break;
-          case ST_R1: ram[(r[1] + b) & 0xffff] = r[a]; break;
-          case ST_FP: ram[(fp + b) & 0xffff] = r[a]; break;
+          case ST_ABS: if (guard) guard(b); ram[b] = r[a]; nxt = pc + 2; break;
+          case ST_R1: { const dst = (r[1] + b) & 0xffff; if (guard) guard(dst); ram[dst] = r[a]; break; }
+          case ST_FP: { const dst = (fp + b) & 0xffff; if (guard) guard(dst); ram[dst] = r[a]; break; }
           case LI: r[a] = b; nxt = pc + 2; break;
           case ADDI: r[a] = r[a] + b; nxt = pc + 2; break;
           case JMP: nxt = b; break;
@@ -115,6 +129,7 @@
               nxt = pc + 2;
             } else {
               stack.push(pc + 2);
+              if (stack.length > this.maxCallDepth) this.maxCallDepth = stack.length;
               nxt = b;
             }
             break;
