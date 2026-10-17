@@ -6,6 +6,8 @@
     0x400 + n     frame n drawn (mod 256)        0x500 + c    render part c (0..7) starts
     0x2000 | (k & 15) << 8 | hi, then 0x3000 | (k & 15) << 8 | lo   diagnostic word dv[k], k counted from
                   __cc_init (compare: firmware/ray.py --diag)
+    0x700 + n     Doom: frames done (mod 256), every 64 callbacks
+    0x800 + b, then 0x1000 | sum   music words read so far (b * 256) and their checksum, compared with the WAD
 
 Usage: uv run python tools/trace_listen.py [PORT-SUBSTRING]
 """
@@ -19,6 +21,26 @@ NAMES = {0x100: "__cc_init done", 0x600: "Doom callback returned",
 
 
 DV = {"k": 0, "hi": 0}
+MU = {"b": None, "sums": None}
+
+
+def music_sums():
+    """-> {block: expected 12-bit checksum} of the E1M1 stream as music.c's mword adds it up."""
+    try:
+        sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
+        import wad
+        words = wad.mus_stream(wad.Wad().lump("D_E1M1"))
+    except Exception:
+        return {}
+    out, total = {}, 0
+    for cnt, w in enumerate(words):
+        total = (total + (w ^ cnt)) & 0xFFFF
+        if (cnt + 1) % 256 == 0:
+            out[(cnt + 1) >> 8] = total & 0xFFF
+        if cnt % 2 == 0 and w & 255 == 255:
+            out[(cnt + 2) >> 8] = None              # the loop restarts here: no block past it
+            break
+    return out
 
 
 def describe(v):
@@ -40,6 +62,17 @@ def describe(v):
         return "self-test %s" % ("OK" if v == 0x301 else "DIFFERENT")
     if 0x400 <= v < 0x500:
         return "frame %d" % (v - 0x400)
+    if 0x700 <= v < 0x800:
+        return "frames done %d" % (v - 0x700)
+    if 0x800 <= v < 0x1000:
+        MU["b"] = v - 0x800
+        return "music words %d" % (MU["b"] * 256)
+    if v & 0xF000 == 0x1000:
+        if MU["sums"] is None:
+            MU["sums"] = music_sums()
+        want = MU["sums"].get(MU["b"])
+        verdict = "?" if want is None else "OK" if want == v & 0xFFF else "BAD (expected %#05x)" % want
+        return "music checksum %#05x %s" % (v & 0xFFF, verdict)
     return NAMES.get(v, "")
 
 

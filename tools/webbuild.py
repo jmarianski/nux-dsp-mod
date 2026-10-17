@@ -137,12 +137,12 @@ def build_doom(m=None, silent_audio=False):
     wanted = ["__cc_init", "rc_start", "rc_tick", "rc_key", "frame", "mu_stop", "mu_restart", "umul32", "smul32", "fmul", "muldiv",
               "can_move", "move_player", "steer", "sector_at", "game_tick", "use_game", "fire_game", "ray_clear",
               "dynamic_tick", "pickup_tick", "damage", "game_init", "read_sector", "audio_restart", "ray_fraction",
-              "frame_begin", "frame_work"]
+              "frame_begin", "frame_work", "bsp_work", "pickup_draw_work", "enemy_draw_work", "draw_overlay", "bsp_step"]
     result = dict(program(r, wanted), name="doom", label="E1M1 · demo", far=far, fr_init=init)
     # Engineering limits on decoded C/P16 work, including startup. Host natives
     # and device firmware/RTOS time still require a hardware measurement.
     # The earlier device-tested raycaster peaks at 134294 decoded instructions/tick.
-    result["callback_limits"] = {"__cc_init": 10000, "rc_start": 50000, "rc_tick": 1000000, "rc_key": 2000}
+    result["callback_limits"] = {"__cc_init": 10000, "rc_start": 50000, "rc_tick": 136000, "rc_key": 2000}
     result["hardware_timing_verified"] = False
     result["silent_audio"] = silent_audio
     result["status"] = "hardware-diagnostic"
