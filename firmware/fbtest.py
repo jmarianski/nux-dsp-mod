@@ -423,6 +423,10 @@ dp_frame:
 .kl:
     add   r7, r6
     st    [dp_x], r7
+    mov   r6, r7                        ; below 0 (bit 15; cmp is unsigned): to the left edge
+    shr   r6, 15
+    cmp   r6, #0
+    bne   .x2
     cmp   r7, #120                      ; bounce and clamp: the box is drawn at fb + page*128 + x, so x and y
     blt   .x1                           ; must stay in range whatever the RAM held (the first build wrote far
     li    r6, #0xffff                   ; outside the framebuffer from power-on leftovers and crashed)
@@ -456,6 +460,10 @@ dp_frame:
 .ku:
     add   r7, r6
     st    [dp_y], r7
+    mov   r6, r7                        ; below 0: to the top
+    shr   r6, 15
+    cmp   r6, #0
+    bne   .y2
     cmp   r7, #56
     blt   .y1
     li    r6, #0xffff

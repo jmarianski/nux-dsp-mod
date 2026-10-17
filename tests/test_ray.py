@@ -82,3 +82,11 @@ def test_walls_stop_the_player(m):
         m.call("frame")
     m.call("rc_key", 51, 0)
     assert m.sim.rd(s["px"]) >= 256
+
+
+def test_asm_diagnostics_match_the_device():
+    """dv[0..15] as the piano sent them (2026-10-17): the simulator must agree, cmp/blt unsigned included."""
+    import ray
+    device = [0x0000, 0x0000, 0x0001, 0x0001, 0x0002, 0x0fff, 0x0001, 0x00f0,
+              0x8002, 0x1234, 0x5678, 0x9abc, 0xffff, 0x0002, 0x0f03, 0x0010]
+    assert ray.diag_expected()[:16] == device
