@@ -28,64 +28,19 @@ unsigned held, nframe, ticks;
 unsigned windows[128], stack[32], sp, open_columns;
 unsigned map_hi[13], map_lo[13], buf[6];
 unsigned prod_hi, prod_lo;
+unsigned work;                                  /* frame_work's budget counter, ~64 instructions a unit */
 int move_x, move_y, move_floor, move_ceiling;
 int vx, vz;
 
 /* GAME_SOURCE: inserted by doom.py. */
 
-/* Full unsigned product from four hardware 8x8 multiplies, carrying between words. */
-void umul32(unsigned a, unsigned b)
-{
-    unsigned t, lo, hi, add, old;
-    lo = (a & 255) * (b & 255);
-    hi = (a >> 8) * (b >> 8);
-    t = (a >> 8) * (b & 255);
-    add = t << 8; old = lo; lo += add;
-    hi += (t >> 8) + (lo < old);
-    t = (a & 255) * (b >> 8);
-    add = t << 8; old = lo; lo += add;
-    prod_hi = hi + (t >> 8) + (lo < old);
-    prod_lo = lo;
-}
-
-void smul32(int a, int b)
-{
-    int neg = (a < 0) != (b < 0);
-    umul32(a < 0 ? -a : a, b < 0 ? -b : b);
-    if (neg) {
-        prod_hi = ~prod_hi + (prod_lo == 0);
-        prod_lo = -prod_lo;
-    }
-}
-
-int fmul(int a, int b)                           /* (a*b)/256, toward zero */
-{
-    int neg = (a < 0) != (b < 0);
-    unsigned q;
-    umul32(a < 0 ? -a : a, b < 0 ? -b : b);
-    q = (prod_lo >> 8) | (prod_hi << 8);
-    return neg ? -q : q;
-}
-
-int muldiv(int a, int b, int c)                  /* signed 32/16, toward zero, saturated */
-{
-    unsigned rem, q, den, carry;
-    int n, neg;
-    if (!c) return 0;
-    neg = ((a < 0) != (b < 0)) != (c < 0);
-    den = c < 0 ? -c : c;
-    umul32(a < 0 ? -a : a, b < 0 ? -b : b);
-    if (prod_hi >= den) return neg ? -32767 : 32767;
-    rem = prod_hi; q = prod_lo;
-    for (n = 0; n < 16; n++) {
-        carry = rem >> 15;
-        rem = (rem << 1) | (q >> 15);
-        q = q << 1;
-        if (carry || rem >= den) { rem -= den; q++; }
-    }
-    if (q > 32767u) q = 32767;
-    return neg ? -q : q;
-}
+/* The arithmetic is three quarters of a frame, so it is hand-written P16 (firmware/mathasm.py, inserted by
+ * doom.py): four hardware 8x8 multiplies per 32-bit product, an unrolled 32/16 division. Semantics as the C it
+ * replaced (git history), checked against Python in tests/test_mathasm.py. */
+void umul32(unsigned a, unsigned b) { /* ASM umul32 */ }   /* prod_hi:prod_lo = a * b */
+void smul32(int a, int b) { /* ASM smul32 */ }             /* prod_hi:prod_lo = a * b, signed */
+int fmul(int a, int b) { /* ASM fmul */ return 0; }       /* (a*b)/256, toward zero */
+int muldiv(int a, int b, int c) { /* ASM muldiv */ return 0; }   /* a*b/c, toward zero, saturated to +-32767 */
 
 int isin(int a)
 {
@@ -106,6 +61,7 @@ void readmap(int table, unsigned at, int count)
     fr_hi = map_hi[table] + (fr_lo < map_lo[table]);
     fr_dst = (unsigned)buf; fr_n = count; fr_mode = 0;
     farcopy();
+    work++;
 }
 
 void read_sector(unsigned k)
@@ -224,7 +180,6 @@ unsigned span(int lo, int hi)
 }
 
 int col, top, bot, sh, edge;
-int col_cost;                                   /* frame_work's price of the last column */
 void wall_page(int p, int a, int b, int lo, int hi)
 {
     unsigned bits;
@@ -245,7 +200,7 @@ void wall(int a, int b)
     if (edge) return;
     lo = a > top ? a : top; hi = b < bot ? b : bot;
     if (lo >= hi) return;
-    col_cost += (hi - lo) >> 2;
+    work += (hi - lo) >> 2;
     for (p = lo >> 3; p <= (hi - 1) >> 3; p++) wall_page(p, a, b, lo, hi);
 }
 
@@ -264,8 +219,8 @@ void load_material(unsigned material)
 void material_column(unsigned material, int s)
 {
     int u, n;
-    col_cost += 3;
-    if (cached_material != material) { load_material(material); col_cost += 3; }
+    work++;
+    if (cached_material != material) { load_material(material); work += 2; }
     u = tex_u1 + muldiv(tex_u2 - tex_u1, muldiv(col - sx1, s2, sx2 - sx1), s);
     n = tex_base + ((u >> 2) & tex_width) * 9;
     readmap(12, n, 6); tex_count = buf[0];
@@ -280,7 +235,7 @@ void material_column(unsigned material, int s)
 void texture_run(int tile, int run, int lo, int hi)
 {
     int a, b, p;
-    col_cost++;
+    work++;
     a = screen_y(tile - (tex_runs[run] & 255) * 4, tex_scale);
     b = screen_y(tile - (tex_runs[run] >> 8) * 4, tex_scale);
     if (a < lo) a = lo; if (b > hi) b = hi;
@@ -318,7 +273,7 @@ void draw_column(void)
     if (top >= bot) return;
     s = s1 + muldiv(s2 - s1, col - sx1, sx2 - sx1);
     yc = screen_y(fc, s); yf = screen_y(ff, s);
-    col_cost = 3;                               /* wall() adds the rows it draws */
+    work += 2;
     sh = shade(fl, s); edge = corner && col == sx1;
     tex_on = 0;
     if (back_sector == 0xffff) {
@@ -401,7 +356,7 @@ void bsp_work(void)
 {
     unsigned n, side, front, back;
     while (col < render_end && (windows[col] & 0x8000)) col++;
-    if (col < render_end && open_columns) { col_cost = -1; draw_column(); col++; return; }
+    if (col < render_end && open_columns) { draw_column(); col++; return; }
     if (render_seg < render_last && open_columns) {
         seg_data(render_seg++);
         col = render_end = 0;
@@ -420,30 +375,22 @@ void bsp_work(void)
     }
 }
 
-#define FRAME_BUDGET 96
+/* A tick's share of the frame, in work units of ~64 instructions: the asm arithmetic and the map reads count
+ * themselves, the rest is a base price per operation (calibrated on E1M1 with tools/profile.cjs). The piano keeps
+ * up with ~130k instructions a tick (the raycaster); beyond that the firmware falls behind on keys and the LCD. */
+#define FRAME_BUDGET 1000
 
-int bsp_step(void)                              /* one BSP operation -> its price */
-{
-    int cost = render_seg < render_last ? 8 : 14;
-    col_cost = 0;
-    bsp_work();
-    if (col_cost > 0) return col_cost;
-    if (col_cost < 0) return 4;
-    return cost;
-}
+unsigned tick_start;                            /* work when this tick began: logic and render share the budget */
 
 void frame_work(void)
 {
-    int k, cost;
     render_context = 1;
-    /* Costs in units of ~512 decoded instructions (measured on E1M1). The device keeps up with ~130k a tick
-     * (the raycaster); beyond that the firmware falls behind on keys and the LCD and never catches up. */
-    for (k = 0; k < FRAME_BUDGET && render_state; k += cost) {
-        cost = 34;
-        if (render_state == 1) cost = bsp_step();
-        else if (render_state == 2) { cost = render_kind ? 7 : 1; pickup_draw_work(); }
-        else if (render_state == 3) { cost = render_kind ? 12 : 1; enemy_draw_work(); }
-        else if (render_state == 4) { draw_overlay(); render_state = 5; }
+    while (render_state && work - tick_start < FRAME_BUDGET) {
+        work += 2;
+        if (render_state == 1) bsp_work();
+        else if (render_state == 2) { if (render_kind) work += 60; pickup_draw_work(); }
+        else if (render_state == 3) { if (render_kind) work += 60; enemy_draw_work(); }
+        else if (render_state == 4) { draw_overlay(); render_state = 5; work += 270; }
         else { nframe++; LCD_FLAG = LCD_FLAG | 1; render_state = 0; }
     }
     render_context = 0;
@@ -453,7 +400,7 @@ void frame_work(void)
 void frame(void)
 {
     frame_begin();
-    while (render_state) frame_work();
+    while (render_state) { tick_start = work; frame_work(); }
 }
 
 /* Doom-sized player box: radius 16, height 56, maximum step 24. Each attempted
@@ -574,13 +521,14 @@ void rc_tick(void)
     if (ticks >= 3) {
         ticks = 0; callback_stage = 2;
         if (nframe < 3 || callback_count < 64) trace(0x602);
+        tick_start = work;
         game_tick(); logic_epoch++;
-    } else {
-        callback_stage = 3;
-        if (nframe < 3 || callback_count < 64) trace(0x603);
-        if (!render_state) frame_begin();
-        frame_work();
-    }
+        work += 200;                            /* logic's uncounted part (~18k instructions) */
+    } else tick_start = work;
+    callback_stage = 3;                         /* the rest of the tick's budget renders */
+    if (nframe < 3 || callback_count < 64) trace(0x603);
+    if (!render_state) frame_begin();
+    frame_work();
     callback_stage = 0;
     if (nframe < 3 || callback_count < 64) trace(0x600);
     else if (!(callback_count & 63)) trace(0x700 | (nframe & 255));   /* frames done, every 64 callbacks */

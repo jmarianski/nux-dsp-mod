@@ -89,6 +89,7 @@ def program(r, wanted, extra_lines=()):
         "code": {"start": lo, "op": op, "a": a, "b": b},
         "natives": {str(v): k for k, v in natives.items()},
         "entry": {k: labels[k] for k in wanted},
+        "functions": {k: v for k, v in labels.items() if not k.startswith(".") and lo <= v < hi},
         "frames": {k: r.frames[k][0] for k in wanted if k in r.frames},
         "symbols": {k: v for k, v in r.symbols.items() if "__" not in k},
         "mmio": MMIO,
@@ -137,7 +138,7 @@ def build_doom(m=None, silent_audio=False):
     wanted = ["__cc_init", "rc_start", "rc_tick", "rc_key", "frame", "mu_stop", "mu_restart", "umul32", "smul32", "fmul", "muldiv",
               "can_move", "move_player", "steer", "sector_at", "game_tick", "use_game", "fire_game", "ray_clear",
               "dynamic_tick", "pickup_tick", "damage", "game_init", "read_sector", "audio_restart", "ray_fraction",
-              "frame_begin", "frame_work", "bsp_work", "pickup_draw_work", "enemy_draw_work", "draw_overlay", "bsp_step"]
+              "frame_begin", "frame_work", "bsp_work", "pickup_draw_work", "enemy_draw_work", "draw_overlay"]
     result = dict(program(r, wanted), name="doom", label="E1M1 · demo", far=far, fr_init=init)
     # Engineering limits on decoded C/P16 work, including startup. Host natives
     # and device firmware/RTOS time still require a hardware measurement.
