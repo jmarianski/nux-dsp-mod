@@ -29,8 +29,8 @@
 .equ dp_v, 0x6510
 .equ dp_ad, 0x6511
 .equ dp_fr, 0x6512
-.equ dp_tab, 0x6518
-.equ dp_div, 0x6520
+.equ dp_tab, 0x6514
+.equ dp_div, 0x651e
 .equ dp_fnt, 0x6530
 .equ DP_MAGIC, 0x600d
 
@@ -107,7 +107,7 @@ dp_tick:                                ; in place of tick_10ms's ccall lcd_refr
     ld    r7, [dp_sec]
     add   r7, #1
     st    [dp_sec], r7
-    ld    r7, [0x295a]
+    ld    r7, [0x6d78]
     ld    r6, [dp_c0]
     st    [dp_c0], r7
     .dw   0xaf06                        ; sub r7, r6
@@ -126,7 +126,7 @@ dp_tick:                                ; in place of tick_10ms's ccall lcd_refr
     ret
 
 dp_bench:                               ; R: 100 frames back to back, L: 100 refreshes of the whole LCD
-    ld    r7, [0x295a]
+    ld    r7, [0x295b]
     st    [dp_c0], r7
     mov   r7, #100
     st    [dp_n], r7
@@ -138,11 +138,11 @@ dp_bench:                               ; R: 100 frames back to back, L: 100 ref
     st    [dp_n], r7
     cmp   r7, #0
     bne   .r
-    ld    r7, [0x295a]
+    ld    r7, [0x295b]
     ld    r6, [dp_c0]
     .dw   0xaf06                        ; sub r7, r6
     st    [dp_b], r7
-    ld    r7, [0x295a]
+    ld    r7, [0x295b]
     st    [dp_c0], r7
     mov   r7, #100
     st    [dp_n], r7
@@ -158,11 +158,11 @@ dp_bench:                               ; R: 100 frames back to back, L: 100 ref
     st    [dp_n], r7
     cmp   r7, #0
     bne   .l
-    ld    r7, [0x295a]
+    ld    r7, [0x295b]
     ld    r6, [dp_c0]
     .dw   0xaf06                        ; sub r7, r6
     st    [dp_l], r7
-    ld    r7, [0x295a]
+    ld    r7, [0x6d78]
     st    [dp_c0], r7
     ret
 .end
@@ -385,7 +385,7 @@ dp_frame:
     ld    r7, [dp_i]
     add   r7, #1
     st    [dp_i], r7
-    cmp   r7, #4
+    cmp   r7, #5
     bne   .line
     ld    r7, [0x6a50]
     mov   r6, #1
@@ -394,41 +394,45 @@ dp_frame:
     ret
 dp_init:                                ; far, leaf: line table, divisor pairs and font into RAM dp_tab..
     mov   r7, #0x000a
-    st    [0x6518], r7
+    st    [0x6514], r7
     li    r7, #0x6503
-    st    [0x6519], r7
+    st    [0x6515], r7
     mov   r7, #0x000b
-    st    [0x651a], r7
+    st    [0x6516], r7
     li    r7, #0x6505
-    st    [0x651b], r7
+    st    [0x6517], r7
     mov   r7, #0x000c
-    st    [0x651c], r7
+    st    [0x6518], r7
     li    r7, #0x6506
-    st    [0x651d], r7
+    st    [0x6519], r7
     mov   r7, #0x000d
-    st    [0x651e], r7
+    st    [0x651a], r7
     li    r7, #0x6507
-    st    [0x651f], r7
+    st    [0x651b], r7
+    mov   r7, #0x000e
+    st    [0x651c], r7
+    li    r7, #0x295a
+    st    [0x651d], r7
     li    r7, #0x2710
-    st    [0x6520], r7
+    st    [0x651e], r7
     li    r7, #0xd8f0
-    st    [0x6521], r7
+    st    [0x651f], r7
     li    r7, #0x03e8
-    st    [0x6522], r7
+    st    [0x6520], r7
     li    r7, #0xfc18
-    st    [0x6523], r7
+    st    [0x6521], r7
     mov   r7, #0x0064
-    st    [0x6524], r7
+    st    [0x6522], r7
     li    r7, #0xff9c
-    st    [0x6525], r7
+    st    [0x6523], r7
     mov   r7, #0x000a
-    st    [0x6526], r7
+    st    [0x6524], r7
     li    r7, #0xfff6
-    st    [0x6527], r7
+    st    [0x6525], r7
     mov   r7, #0x0001
-    st    [0x6528], r7
+    st    [0x6526], r7
     li    r7, #0xffff
-    st    [0x6529], r7
+    st    [0x6527], r7
     mov   r7, #0x001f
     st    [0x6530], r7
     mov   r7, #0x0011
@@ -513,6 +517,12 @@ dp_init:                                ; far, leaf: line table, divisor pairs a
     st    [0x6558], r7
     mov   r7, #0x0010
     st    [0x6559], r7
+    mov   r7, #0x001f
+    st    [0x655a], r7
+    mov   r7, #0x0004
+    st    [0x655b], r7
+    mov   r7, #0x001b
+    st    [0x655c], r7
     ret
 dp_card:
     .dw 0x00ff, 0x0001, 0x00fd, 0x00fd, 0x00fd, 0x00fd, 0x00fd, 0x00fd

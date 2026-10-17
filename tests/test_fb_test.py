@@ -119,7 +119,7 @@ def model(fbtest, ram):
             fb[(yy >> 3) * 128 + x + c] |= 1 << (yy & 7)
     font = fbtest.font_words()
     for i, (letter, var) in enumerate(fbtest.LINES):
-        text = letter + "%05d" % ram[fbtest.RAM[var]]
+        text = letter + "%05d" % ram.get(fbtest.address(var), 0)
         for j, ch in enumerate(text):
             g = fbtest.GLYPHS.index(ch)
             for c in range(3):
