@@ -26,20 +26,27 @@ def describe(v):
 
 
 def main():
-    want = sys.argv[1] if len(sys.argv) > 1 else ""
-    while True:
-        names = [n for n in mido.get_input_names() if "Through" not in n and want.lower() in n.lower()]
-        if names:
-            break
-        print("waiting for the piano's MIDI port...", flush=True)
-        time.sleep(1)
-    print("listening on", names[0], flush=True)
+    want = (sys.argv[1] if len(sys.argv) > 1 else "NEK").lower()
     t0 = time.time()
-    with mido.open_input(names[0]) as port:
-        for msg in port:
-            if msg.type == "control_change" and msg.channel == 15:
-                v = msg.control << 7 | msg.value
-                print("%8.3f  %#06x  %s" % (time.time() - t0, v, describe(v)), flush=True)
+    while True:                                 # the port goes away with every restart of the piano: reopen it
+        names = [n for n in mido.get_input_names() if want in n.lower()]
+        if not names:
+            time.sleep(0.5)
+            continue
+        print("%8.3f  listening on %s" % (time.time() - t0, names[0]), flush=True)
+        with mido.open_input(names[0]) as port:
+            last = time.time()
+            while True:
+                for msg in port.iter_pending():
+                    if msg.type == "control_change" and msg.channel == 15:
+                        v = msg.control << 7 | msg.value
+                        print("%8.3f  %#06x  %s" % (time.time() - t0, v, describe(v)), flush=True)
+                time.sleep(0.005)
+                if time.time() - last > 1:
+                    last = time.time()
+                    if names[0] not in mido.get_input_names():
+                        print("%8.3f  port gone" % (time.time() - t0), flush=True)
+                        break
 
 
 if __name__ == "__main__":
