@@ -5,3 +5,4 @@ __pycache__/
 *.wad
 build/
 *.bin
+wad/

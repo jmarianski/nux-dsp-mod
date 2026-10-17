@@ -21,6 +21,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "cc"))
+sys.path.insert(0, os.path.join(HERE, "..", "tools"))
 import fbtest  # noqa: E402  (the skull icon, the digits font)
 import p16cc  # noqa: E402
 
@@ -43,7 +44,8 @@ MAP = [
     "################",
 ]
 RC_ON, RC_R1, RC_TW, RC_TR, RC_PD, RC_RING = 0x6430, 0x6431, 0x6432, 0x6433, 0x6434, 0x6435  # ring: 16 words
-RAM = (0x6445, 0x662a)
+FC_S = 0x6445                                   # 3 words: r0, r2, r3 around farcopy and synth
+RAM = (0x6448, 0x662a)
 DP_MAGIC, DP_PEND = 0x600D, 0x600E
 ORG = 0x1a280
 
@@ -69,7 +71,8 @@ class Machine:
 
     def __init__(self, result):
         from nuxdsp import asm, fwmap, sim
-        syms = dict(fwmap.load().symbols(), ljtest=0x1f000, trace=0x1f000)   # the glue's: a bare ret here
+        syms = dict(fwmap.load().symbols(), ljtest=0x1f000, trace=0x1f000, farcopy=0x1f000, synth=0x1f000,
+                    fr_init=0x1f000)   # the glue's: a bare ret here
         words, self.labels = asm.assemble(result.lines + ADIAG.splitlines(), syms, origin=ORG, label_prefix="ray")
         words[0x1f000] = 0xD1CA
         self.r = result
@@ -237,6 +240,7 @@ dm_panel:                               ; key_event ([fp+3] key, [fp+2] state, 0
     cmp   r7, #0
     bne   .pe
     st    [rc_on], r7
+    call  mu_stop                       ; C keeps r0, r2, r3
     ld    r7, [screen]
     push  r7
     ccall draw_screen
@@ -287,6 +291,32 @@ ljtest:                                 ; C8 in the game: is d0ce an absolute ju
 .lj_t:
     mov   r7, #1
     st    [lj], r7
+    ret
+
+farcopy:                                ; C: fr_n words, program fr_hi:fr_lo -> RAM fr_dst (fr_mode: the pointer's layout)
+    st    [fc_s0], r0
+    st    [fc_s2], r2
+    st    [fc_s3], r3
+    ccall fr_copy0
+    ld    r0, [fc_s0]
+    ld    r2, [fc_s2]
+    ld    r3, [fc_s3]
+    ret
+
+synth:                                  ; C: r7 = CIN << 8 | status, r6 = d1 << 8 | d2 -> synth_send, as the firmware
+    st    [fc_s0], r0                   ; pushes them (data first)
+    st    [fc_s2], r2
+    st    [fc_s3], r3
+    push  r6
+    push  r7
+    ccall 0x1330
+    ld    r0, [fc_s0]
+    ld    r2, [fc_s2]
+    ld    r3, [fc_s3]
+    ret
+
+fr_init:                                ; the far addresses for C
+{fr_init}
     ret
 
 rc_tickh:                               ; in place of tick_10ms's ccall lcd_refresh
@@ -351,12 +381,64 @@ rc_tickh:                               ; in place of tick_10ms's ccall lcd_refr
 """
 
 
+FR_COPY0 = """
+fr_copy0:                               ; as init_all's 0x4928 and dp_cpcard, the pointer from RAM instead of li32
+    .dw   0xc04c, 0x0004                ; enter #4
+    ld    r7, [fr_mode]
+    cmp   r7, #0
+    bne   .fc_sw
+    ld    r7, [fr_lo]                   ; layout 0: [fp-1] = low (r0 after li32 L0), [fp-2] = high (r1)
+    .dw   0xd3cf, 0xffff                ; st [fp-1], r7
+    ld    r7, [fr_hi]
+    .dw   0xd3cf, 0xfffe                ; st [fp-2], r7
+    jmp   .fc_go
+.fc_sw:
+    ld    r7, [fr_hi]                   ; layout 1: swapped
+    .dw   0xd3cf, 0xffff
+    ld    r7, [fr_lo]
+    .dw   0xd3cf, 0xfffe
+.fc_go:
+    ld    r0, [fr_dst]
+    .dw   0x8109                        ; mov r1, x9
+    ld    r7, [fr_n]
+    .dw   0xfae2, 0xfffe                ; ld32 L2, [fp-2]
+    .dw   0xfaf7                        ; fix32 L2: source
+    .dw   0xf148                        ; mov32 L1, L0: destination r2 = RAM address, r3 = x9
+    call  0x7638
+    .dw   0xd5c8                        ; ret_pop #0
+"""
+PAD = [0x28000 - 0x1f000, 0x3f000 - 0x28008]    # after our code and data (~0x1e000): pattern 1 near 0x27000-0x28000,
+                                                # pattern 2 near 0x3e000-0x3f000 (the partition ends at 0x40000)
+
+
+def pattern(k):
+    return [(0x1357 * (k + 1) + 0x0f1d * i) & 0xFFFF for i in range(8)]
+
+
+def dw(words):
+    return "\n".join("    .dw   " + ", ".join("%#06x" % w for w in words[i:i + 8]) for i in range(0, len(words), 8))
+
+
+def music():
+    import wad
+    return wad.mus_stream(wad.Wad().lump("D_E1M1"))
+
+
 def patch():
     expect = expected_selftest()
     r = compile_ray(expect)
     icon = "\n".join("    mov   r7, #%#04x\n    st    [%#06x], r7" % (b, 0x662a + a)
                      for a, b in sorted(fbtest.skull_bytes().items()))
     body = "\n".join(r.lines)
+    init = []
+    for k in range(3):
+        for half, sh in (("hi", ">> 16"), ("lo", "& 0xffff")):
+            init += ["    li    r7, #(fr_pat%d %s)" % (k, sh), "    st    [pt_%s+%d], r7" % (half, k)]
+    for half, sh in (("shi", ">> 16"), ("slo", "& 0xffff")):
+        init += ["    li    r7, #(mu_data %s)" % sh, "    st    [mu_%s], r7" % half]
+    data = "fr_pat0:\n" + dw(pattern(0)) + "\nmu_data:\n" + dw(music())
+    high = ("\n.code 0x1a280\n" + dw([0xffff] * PAD[0]) + "\nfr_pat1:\n" + dw(pattern(1)) + "\n"
+            + dw([0xffff] * PAD[1]) + "\nfr_pat2:\n" + dw(pattern(2)) + "\n.end\n")
     return f""".patch doom_ray
 .title "doom-piano: Extra > DOOM, a raycaster in C on the LCD (keys move, a panel key leaves)"
 .requires extra_menu touch_off
@@ -376,10 +458,18 @@ def patch():
 .equ rc_ring, {RC_RING:#06x}
 .equ DP_MAGIC, {DP_MAGIC:#06x}
 .equ DP_PEND, {DP_PEND:#06x}
-{GLUE.format(icon=icon, adiag=ADIAG)}
+.equ fc_s0, {FC_S:#06x}
+.equ fc_s2, {FC_S + 1:#06x}
+.equ fc_s3, {FC_S + 2:#06x}
+{GLUE.format(icon=icon, adiag=ADIAG, fr_init=chr(10).join(init))}
 {body}
+{data}
 .end
-"""
+
+.code
+{FR_COPY0}
+.end
+{high}"""
 
 
 def diag_expected():

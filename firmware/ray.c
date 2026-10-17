@@ -250,26 +250,120 @@ int selftest(void)
 unsigned dv[NDV];
 int dn;
 void adiag(void);                               /* asm (ray.py) */
-int va, vb, vc;
-unsigned vu;
+/* Far reads (asm farcopy: fr_n words from program address fr_hi:fr_lo to RAM fr_dst through the firmware's copy
+ * 0x7638). The pointer's two halves go to the stack frame in an order not known yet: fr_mode 0 or 1, tried on test
+ * patterns (word i of pattern k = 0x1357 * (k + 1) + 0x0f1d * i) right after our code (0), at 0x28000 (1) and at
+ * 0x3f000 (2), near the end of the 512 KB partition. */
+unsigned fr_dst, fr_hi, fr_lo, fr_n, fr_mode;
+void farcopy(void);                             /* asm (ray.py) */
+void fr_init(void);                             /* asm: pt_hi/pt_lo and mu_shi/mu_slo */
+void synth(int status, int data);               /* asm: synth_send(CIN << 8 | status, d1 << 8 | d2) */
+unsigned pt_hi[3], pt_lo[3];
+unsigned fbuf[16];
+int fmode;                                      /* the layout that read pattern 0 right, -1 none */
+
+int far_test(int k, int mode)                   /* -> how many of the 8 words came right */
+{
+    int i, n;
+    for (i = 0; i < 16; i++) fbuf[i] = 0xdead;
+    fr_dst = (unsigned)fbuf;
+    fr_hi = pt_hi[k];
+    fr_lo = pt_lo[k];
+    fr_n = 8;
+    fr_mode = mode;
+    farcopy();
+    n = 0;
+    for (i = 0; i < 8; i++) if (fbuf[i] == 0x1357 * (k + 1) + 0x0f1d * i) n++;
+    return n;
+}
+
+/* Music: the stream of tools/wad.py (two words an event: wait << 8 | status, d1 << 8 | d2; 0x00ff = again) */
+unsigned mu_shi, mu_slo, mu_hi, mu_lo, mu_wait;
+unsigned mbuf[16];
+int mu_i, mu_ok;
+
+unsigned mword(void)
+{
+    if (mu_i >= 16) {
+        fr_dst = (unsigned)mbuf;
+        fr_hi = mu_hi;
+        fr_lo = mu_lo;
+        fr_n = 16;
+        fr_mode = fmode;
+        farcopy();
+        mu_lo += 16;
+        if (mu_lo < 16) mu_hi++;
+        mu_i = 0;
+    }
+    return mbuf[mu_i++];
+}
+
+void mu_restart(void)
+{
+    mu_hi = mu_shi;
+    mu_lo = mu_slo;
+    mu_i = 16;
+    mu_wait = 0;
+}
+
+void mu_tick(void)
+{
+    unsigned w0, w1, st;
+    int n;
+    if (!mu_ok) return;
+    if (mu_wait) {
+        mu_wait--;
+        if (mu_wait) return;
+    }
+    for (n = 0; n < 64; n++) {
+        w0 = mword();
+        w1 = mword();
+        st = w0 & 255;
+        if (st == 255) {
+            mu_restart();
+            return;
+        }
+        if (st) synth((st >> 4) << 8 | st, w1);
+        mu_wait = w0 >> 8;
+        if (mu_wait) return;
+    }
+}
+
+void mu_stop(void)                              /* a panel key leaves the game: all notes off */
+{
+    int c;
+    mu_ok = 0;
+    for (c = 0; c < 16; c++) {
+        synth(0x0bb0 | c, 123 << 8);
+        synth(0x0bb0 | c, 120 << 8);
+    }
+}
 
 void cdiag(void)
 {
-    va = 1234; vb = 567; vc = 3; vu = 60000;
-    dv[16] = va * vb;
-    dv[17] = vu / vb;
-    dv[18] = -va / 7;
-    dv[19] = -va % vb;
-    dv[20] = -va >> 3;
-    dv[21] = -va >> vc;
-    dv[22] = fmul(-300, 500);
-    dv[23] = isin(100);
-    dv[24] = va < vb;
-    dv[25] = -va < vb;
-    dv[26] = vu < vb;
-    dv[27] = (unsigned)vb < vu;
-    dv[28] = inv(-700);
-    dv[29] = vu % vb;
+    fr_init();
+    dv[16] = far_test(0, 0);
+    dv[17] = fbuf[0];
+    dv[18] = far_test(0, 1);
+    dv[19] = fbuf[0];
+    fmode = -1;
+    if (dv[16] == 8) fmode = 0;
+    else if (dv[18] == 8) fmode = 1;
+    dv[20] = 0xeeee; dv[21] = 0xeeee; dv[22] = 0xeeee; dv[23] = 0xeeee;
+    if (fmode >= 0) {
+        dv[20] = far_test(1, fmode);
+        dv[21] = fbuf[0];
+        dv[22] = far_test(2, fmode);
+        dv[23] = fbuf[0];
+        mu_restart();
+        mu_ok = 1;
+    }
+    dv[24] = fmode;
+    dv[25] = mu_shi;
+    dv[26] = mu_slo;
+    dv[27] = pt_hi[2];
+    dv[28] = pt_lo[2];
+    dv[29] = pt_hi[0];
     dv[30] = selftest();
     dv[31] = 0x1234;
 }
@@ -316,6 +410,7 @@ void rc_tick(void)
         if (send_dv()) stage = 2;
         return;
     }
+    mu_tick();
     if (drew) {                                 /* the clock moved past the part drawn last tick */
         dt = now() - t0;
         drew = 0;
