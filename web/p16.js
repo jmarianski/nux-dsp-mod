@@ -83,6 +83,7 @@
           throw new P16Error("step limit (loop?) at 0x" + pc.toString(16));
         }
         const i = pc - start;
+        if (this.profile) this.profile[i]++;      /* optional: instructions executed per program word */
         const o = i >= 0 && i < op.length ? op[i] : 0;
         const a = A[i], b = B[i];
         let nxt = pc + 1;

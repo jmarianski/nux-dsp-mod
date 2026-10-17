@@ -11,6 +11,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "tools"))
 sys.path.insert(0, str(HERE.parent / "cc"))
 import doommap
+import mathasm
 import p16cc
 
 RAM = (0x6448, 0x662a)
@@ -80,6 +81,7 @@ def compile_doom(m=None, silent_audio=False):
     src = (HERE / "doom.c").read_text().replace(
         "/* MUSIC_SOURCE: inserted by ray.py / doom.py, shared by both engines. */", (HERE / "music.c").read_text())
     src = src.replace("/* GAME_SOURCE: inserted by doom.py. */", (HERE / "game.c").read_text())
+    src = mathasm.insert(src)
     return p16cc.compile_c(pre + src, RAM, long_jumps=False, isolated=("rc_key",))
 
 
