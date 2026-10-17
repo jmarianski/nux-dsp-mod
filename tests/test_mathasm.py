@@ -17,7 +17,8 @@ SCRIPT = r"""
 const fs=require('fs');const {P16,rayNatives}=require(process.argv[2]);
 const p=JSON.parse(fs.readFileSync(process.argv[3]));const cases=JSON.parse(fs.readFileSync(process.argv[4]));
 const m=new P16(p,rayNatives());m.call('__cc_init');
-const out=cases.map(([f,a,b,c])=>{const r=m.call(f,a&65535,b&65535,c&65535);
+const out=cases.map(([f,a,b,c])=>{if(f==='screen_y')m.wr(m.sym('eye'),c&65535);
+  const r=f==='screen_y'?m.call(f,a&65535,b&65535):m.call(f,a&65535,b&65535,c&65535);
   return f==='umul32'||f==='smul32'?[m.get('prod_hi'),m.get('prod_lo')]:[r&65535];});
 console.log(JSON.stringify(out));
 """
@@ -35,6 +36,9 @@ def expected(f, a, b, c):
     if f == "smul32":
         v = (a * b) & 0xFFFFFFFF
         return [v >> 16, v & 0xFFFF]
+    if f == "screen_y":
+        q = max(-1000, min(1000, ((a - c) * b) >> 13))
+        return [(32 - q) & 0xFFFF]
     if f == "fmul":
         return [trunc_div(a * b, 256) & 0xFFFF]
     if not c:
@@ -52,7 +56,13 @@ def test_math_matches_python(tmp_path):
     cases = []
     for _ in range(600):
         a, b, c = vals(), vals(), vals()
-        cases += [["umul32", a & 0xFFFF, b & 0xFFFF, 0], ["smul32", a, b, 0], ["fmul", a, b, 0], ["muldiv", a, b, c]]
+        small = rnd.randint(-256, 256)
+        cases += [["umul32", a & 0xFFFF, b & 0xFFFF, 0], ["smul32", a, b, 0], ["fmul", a, b, 0], ["muldiv", a, b, c],
+                  ["fmul", a, small, 0]]
+    for _ in range(1500):                       # screen_y(h, s) with eye: near and far heights, scales up to NEAR's
+        eye = rnd.randint(-200, 300)
+        h = eye + (rnd.randint(-255, 255) if rnd.random() < 0.8 else rnd.randint(-2000, 2000))
+        cases.append(["screen_y", h, rnd.choice([0, 1, 8191, 8192, 30840, 32767, rnd.randint(0, 32767)]), eye])
     prog = tmp_path / "game.json"
     prog.write_text(json.dumps(webbuild.build_doom()))
     (tmp_path / "cases.json").write_text(json.dumps(cases))

@@ -161,7 +161,8 @@ int project(void)
 int screen_y(int h, int s)
 {
     int q;
-    smul32(h - eye, s);
+    /* ASM screen_y */
+    smul32(h - eye, s);                         /* |h - eye| >= 256: the full product */
     q = (prod_lo >> 13) | (prod_hi << 3);  /* arithmetic product >> 13 */
     return 32 - clamp(q, -1000, 1000);
 }
@@ -209,8 +210,8 @@ void load_material(unsigned material)
     int u, du, anchor;
     readmap(12, material, 6);
     tex_base = buf[0]; u = buf[1]; du = (int)buf[2] - u;
-    tex_u1 = u + muldiv(du, clip_u1, 16384);
-    tex_u2 = u + muldiv(du, clip_u2, 16384);
+    tex_u1 = clip_u1 ? u + muldiv(du, clip_u1, 16384) : u;               /* clipped by the near plane: rare */
+    tex_u2 = clip_u2 != 16384 ? u + muldiv(du, clip_u2, 16384) : u + du;
     tex_width = buf[4] & 127; tex_height = buf[4] >> 8; tex_fill = buf[4] & 128; anchor = buf[5];
     tex_top = (anchor == 1 ? bc + tex_height * 4 : anchor == 2 ? ff + tex_height * 4 : anchor == 3 ? bf : fc) + (int)buf[3];
     cached_material = material;
@@ -221,6 +222,8 @@ void material_column(unsigned material, int s)
     int u, n;
     work++;
     if (cached_material != material) { load_material(material); work += 2; }
+    tex_on = 1; tex_scale = s;
+    if (s < 1024) return;                       /* far: texture_runs draws no detail, the fill needs no column */
     u = tex_u1 + muldiv(tex_u2 - tex_u1, muldiv(col - sx1, s2, sx2 - sx1), s);
     n = tex_base + ((u >> 2) & tex_width) * 9;
     readmap(12, n, 6); tex_count = buf[0];
@@ -378,7 +381,7 @@ void bsp_work(void)
 /* A tick's share of the frame, in work units of ~64 instructions: the asm arithmetic and the map reads count
  * themselves, the rest is a base price per operation (calibrated on E1M1 with tools/profile.cjs). The piano keeps
  * up with ~130k instructions a tick (the raycaster); beyond that the firmware falls behind on keys and the LCD. */
-#define FRAME_BUDGET 1000
+#define FRAME_BUDGET 1200
 
 unsigned tick_start;                            /* work when this tick began: logic and render share the budget */
 

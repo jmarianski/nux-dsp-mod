@@ -49,6 +49,23 @@ const table = (self, total, div, unit) => {
   }
 };
 
+/* Calls of the costly helpers by calling function: the execution count of each call instruction. */
+function callSites(div, unit) {
+  const CALL = p.ops.indexOf('call');
+  const owner = pc => { let f = fns[0][0]; for (const [n, a] of fns) { if (a > pc) break; f = n; } return f; };
+  for (const callee of ['muldiv', 'screen_y', 'fmul', 'smul32', 'readmap']) {
+    const at = p.functions[callee], sites = {};
+    if (at === undefined) continue;
+    for (let i = 0; i < p.code.op.length; i++)
+      if (p.code.op[i] === CALL && p.code.b[i] === at && m.profile[i]) {
+        const o = owner(p.code.start + i);
+        sites[o] = (sites[o] || 0) + m.profile[i];
+      }
+    console.log('calls of ' + callee + ':', Object.entries(sites).sort((a, b) => b[1] - a[1])
+      .map(([f, n]) => f + ' ' + Math.round(n / div)).join(', '), unit);
+  }
+}
+
 if (framesMode) {
   const views = [[m.get('px'), m.get('py'), m.get('pa')], [1056, -3400, 64], [1200, -3200, 0], [2000, -2900, 128]];
   const s0 = m.steps;
@@ -59,6 +76,7 @@ if (framesMode) {
   const total = m.steps - s0;
   console.log('renderer alone:', Math.round(total / views.length), 'instructions a frame');
   table(bySelf(m.profile), total, views.length, '/frame');
+  callSites(views.length, '/frame');
   process.exit(0);
 }
 
@@ -99,3 +117,4 @@ console.log(`  firmware: farcopy ${Math.round(fw.farcopy / seconds)}/s (${Math.r
             `synth ${Math.round(fw.synth / seconds)}/s - their own cost on the piano is not counted here`);
 console.log('by function (self):');
 table(bySelf(m.profile), total, seconds, '/s');
+callSites(seconds, '/s');
