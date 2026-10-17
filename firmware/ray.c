@@ -30,6 +30,8 @@ extern unsigned framebuffer[];                 /* 0x662a: 8 pages x 128 columns,
 int px, py, pa;                 /* player: 8.8 cells, angle */
 unsigned held;
 int ticks, drew, t0, dt, st_val, st_ok, nframe;
+int lj;                                         /* the ljmp test (C8): 1 = came back */
+void ljtest(void);                              /* asm (ray.py) */
 
 int isin(int a)
 {
@@ -81,43 +83,67 @@ void column(int x, int top, int bot, int side)
     }
 }
 
+/* One column, split in pieces so that every jump stays short (ljmp is not confirmed on the device). */
+int rdx, rdy, rpx, rpy;                         /* view direction and camera plane of this frame */
+int mx, my, sx, sy, side;
+unsigned ddx, ddy, sdx, sdy;
+
+unsigned inv(int r)                             /* 1 / |r| in 8.8, at most 0x7fff */
+{
+    unsigned a, d;
+    a = r < 0 ? -r : r;
+    if (a < 3) return 0x7fff;
+    d = 65535u / a;
+    if (d > 0x7fff) d = 0x7fff;
+    return d;
+}
+
+void setup(int rx, int ry)
+{
+    mx = px >> 8;
+    my = py >> 8;
+    ddx = inv(rx);
+    ddy = inv(ry);
+    if (rx < 0) { sx = -1; sdx = fmul(px & 255, ddx); }
+    else { sx = 1; sdx = fmul(256 - (px & 255), ddx); }
+    if (ry < 0) { sy = -1; sdy = fmul(py & 255, ddy); }
+    else { sy = 1; sdy = fmul(256 - (py & 255), ddy); }
+}
+
+void dda(void)
+{
+    int n;
+    side = 0;
+    for (n = 0; n < 40; n++) {
+        if (sdx < sdy) { sdx += ddx; mx += sx; side = 0; }
+        else { sdy += ddy; my += sy; side = 1; }
+        if (wall(mx, my)) return;
+    }
+}
+
+void cast(int x)
+{
+    int cam, h, top;
+    unsigned perp;
+    cam = x * 4 - 256;
+    setup(rdx + fmul(rpx, cam), rdy + fmul(rpy, cam));
+    dda();
+    perp = side ? sdy - ddy : sdx - ddx;
+    if (perp < 256) h = H;
+    else h = 16384u / perp;
+    if (h > H) h = H;
+    top = (H - h) >> 1;
+    column(x, top, top + h, side);
+}
+
 void render(void)
 {
-    int x, dirx, diry, plx, ply, cam, rx, ry, mx, my, sx, sy, side, n, h, top;
-    unsigned ddx, ddy, sdx, sdy, perp, ax, ay;
-    dirx = icos(pa);
-    diry = isin(pa);
-    plx = fmul(-diry, 170);                     /* camera plane, 0.66 = a 66 degree view */
-    ply = fmul(dirx, 170);
-    for (x = 0; x < W; x++) {
-        cam = x * 4 - 256;
-        rx = dirx + fmul(plx, cam);
-        ry = diry + fmul(ply, cam);
-        mx = px >> 8;
-        my = py >> 8;
-        ax = rx < 0 ? -rx : rx;
-        ay = ry < 0 ? -ry : ry;
-        ddx = ax ? 65535u / ax : 0x7fff;
-        ddy = ay ? 65535u / ay : 0x7fff;
-        if (ddx > 0x7fff) ddx = 0x7fff;
-        if (ddy > 0x7fff) ddy = 0x7fff;
-        if (rx < 0) { sx = -1; sdx = fmul(px & 255, ddx); }
-        else { sx = 1; sdx = fmul(256 - (px & 255), ddx); }
-        if (ry < 0) { sy = -1; sdy = fmul(py & 255, ddy); }
-        else { sy = 1; sdy = fmul(256 - (py & 255), ddy); }
-        side = 0;
-        for (n = 0; n < 40; n++) {
-            if (sdx < sdy) { sdx += ddx; mx += sx; side = 0; }
-            else { sdy += ddy; my += sy; side = 1; }
-            if (wall(mx, my)) break;
-        }
-        perp = side ? sdy - ddy : sdx - ddx;
-        if (perp < 256) h = H;
-        else h = 16384u / perp;
-        if (h > H) h = H;
-        top = (H - h) >> 1;
-        column(x, top, top + h, side);
-    }
+    int x;
+    rdx = icos(pa);
+    rdy = isin(pa);
+    rpx = fmul(-rdy, 170);                      /* camera plane, 0.66 = a 66 degree view */
+    rpy = fmul(rdx, 170);
+    for (x = 0; x < W; x++) cast(x);
 }
 
 void digit(int x, int page, int d)
@@ -160,6 +186,7 @@ void frame(void)
     if (held & (1 << K_STRAFE_R)) move(-fmul(diry, sp), fmul(dirx, sp));
     render();
     number(0, 0, dt, 3);                        /* last frame's time, ~ms */
+    if (lj) digit(124, 7, lj);                  /* the ljmp test came back */
     if (!st_ok) {
         number(0, 1, st_val, 5);
     }
@@ -167,20 +194,27 @@ void frame(void)
     nframe++;
 }
 
+unsigned sth;
+int sta;
+
+void st_step(int i)
+{
+    sth = sth * 31 + (unsigned)i;
+    sth = sth ^ (sth >> 5);
+    sta = sta * 3 / 7 + i * 13 - sta % 11;
+    sth += (unsigned)sta;
+    sth += fmul(sta, i * 37);
+    sth += (unsigned)(sta >> 2);
+    sth += isin(i * 7) + (unsigned)(i << 9) / 3;
+}
+
 int selftest(void)
 {
-    unsigned h = 1;
-    int i, a = -1234;
-    for (i = 0; i < 40; i++) {
-        h = h * 31 + (unsigned)i;
-        h = h ^ (h >> 5);
-        a = a * 3 / 7 + i * 13 - a % 11;
-        h += (unsigned)a;
-        h += fmul(a, i * 37);
-        h += (unsigned)(a >> 2);
-        h += isin(i * 7) + (unsigned)(i << 9) / 3;
-    }
-    return h;
+    int i;
+    sth = 1;
+    sta = -1234;
+    for (i = 0; i < 40; i++) st_step(i);
+    return sth;
 }
 
 void rc_start(void)
@@ -211,6 +245,7 @@ void rc_tick(void)
 void rc_key(int note, int vel)
 {
     int k = note - 47;
+    if (note == 108 && vel) ljtest();           /* C8 */
     if (k < 0 || k > 15) return;
     if (vel) held = held | (1 << k);
     else held = held & ~(1 << k);
