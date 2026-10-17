@@ -160,3 +160,11 @@ def test_frame_terminates_on_power_on_leftovers(built):
     assert s.steps < 100000
     bad = sorted(a for a in s.ram.written if not allowed(fbtest, a))
     assert not bad, "writes outside the framebuffer and dp_*: " + " ".join("%#x" % a for a in bad[:8])
+
+
+@pytest.mark.parametrize("us", [0, 1023, 1024, 1_000_000, 0x8000FFFF, 0xFFFFFFFF])
+def test_now_is_the_clock_in_1024_us(built, us):
+    fbtest, words, syms = built
+    ram = {fbtest.CLOCK: us & 0xFFFF, fbtest.CLOCK + 1: us >> 16}
+    s = sim_call(words, syms["dp_now"], ram)
+    assert s.r[7] == (us >> 10) & 0xFFFF
