@@ -2,7 +2,8 @@
 """Generate ray.patch: the raycaster (ray.c, compiled by cc/p16cc.py) on the NEK-100's LCD.
 
 Extra > DOOM (extra_menu's item 7) starts it, any panel key stops it. Keys (as the desktop bridge):
-C3 / E3 turn, C#3 or D#3 forward, D3 back, B2 / F3 strafe. Top-left: the last frame's time in ~ms; a
+C3 / E3 turn, C#3 or D#3 forward, D3 back, B2 / F3 strafe. C8: the ljmp test (a "1" bottom right
+if d0ce jumps within bank 1; the first build, with ljmp in the self-test, crashed on Enter). Top-left: the last frame's time in ~ms; a
 second number under it means the C self-test (computed here in the simulator) gave another value on the
 device.
 
@@ -60,7 +61,7 @@ def data_c(expect):
 
 
 def compile_ray(expect):
-    return p16cc.compile_c(data_c(expect) + open(os.path.join(HERE, "ray.c")).read(), RAM)
+    return p16cc.compile_c(data_c(expect) + open(os.path.join(HERE, "ray.c")).read(), RAM, long_jumps=False)
 
 
 class Machine:
@@ -68,8 +69,9 @@ class Machine:
 
     def __init__(self, result):
         from nuxdsp import asm, fwmap, sim
-        syms = fwmap.load().symbols()
+        syms = dict(fwmap.load().symbols(), ljtest=0x1f000)      # the glue's ljtest: a bare ret here
         words, self.labels = asm.assemble(result.lines, syms, origin=ORG, label_prefix="ray")
+        words[0x1f000] = 0xD1CA
         self.r = result
 
         class Code(dict):
@@ -160,6 +162,16 @@ dm_key:                                 ; touch_off: r1 = event ([+3] type 9 on 
     st    [0x000b], r7                  ; idle_ticks = 0, as the firmware does for a note
     st    [0x000c], r7
     st    [r1+3], r7
+    ret
+
+ljtest:                                 ; C8 in the game: is d0ce an absolute jump within bank 1? Coming back sets
+    ljmp  .lj_t                         ; lj = 1 (shown bottom right); a crash says it is not
+    mov   r7, #2
+    st    [lj], r7
+    ret
+.lj_t:
+    mov   r7, #1
+    st    [lj], r7
     ret
 
 rc_tickh:                               ; in place of tick_10ms's ccall lcd_refresh
