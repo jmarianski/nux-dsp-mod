@@ -24,27 +24,9 @@
     call  vel_hook
 .end
 
-.code
-; in task_key_events: same result as the replaced code (r1 = event, r7 = event type),
-; with note-on velocity replaced when Touch = OFF
-vel_hook:
-    ld    r1, [fp+15]
-    ld    r7, [r1+3]          ; event type
-    cmp   r7, #9              ; note on?
-    bne   .done
-    ld    r7, [touch]
-    cmp   r7, #5              ; OFF?
-    bne   .restore
-    ld    r7, [r1+5]          ; velocity
-    cmp   r7, #0              ; 0 = note off, keep it
-    beq   .restore
-    mov   r7, #OFF_VELOCITY
-    st    [r1+5], r7
-.restore:
-    ld    r7, [r1+3]
-.done:
-    ret
+.weak dm_key tf_ret           ; doom-piano: gets r1 = event, r7 = type; keeps r1, r3; r7 = the type to go on with
 
+.code
 ; send_internal_cc(cc, value): never send 5 to the MCU, OFF uses the LIGHT2 curve there
 cc_fix:
     ld    r7, [fp+7]          ; cc
@@ -89,5 +71,29 @@ touch_store_pos:
     and   r7, #0xff
 .store:
     st    [touch], r7
+    ret
+.end
+
+.code 0x1a280
+; in task_key_events: same result as the replaced code (r1 = event, r7 = event type),
+; with note-on velocity replaced when Touch = OFF
+vel_hook:
+    ld    r1, [fp+15]
+    ld    r7, [r1+3]          ; event type
+    cmp   r7, #9              ; note on?
+    bne   .done
+    ld    r7, [touch]
+    cmp   r7, #5              ; OFF?
+    bne   .restore
+    ld    r7, [r1+5]          ; velocity
+    cmp   r7, #0              ; 0 = note off, keep it
+    beq   .restore
+    mov   r7, #OFF_VELOCITY
+    st    [r1+5], r7
+.restore:
+    ld    r7, [r1+3]
+.done:
+    call  dm_key              ; doom-piano, if there: may take the note (type 0: nothing handles it)
+tf_ret:
     ret
 .end
