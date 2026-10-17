@@ -95,7 +95,8 @@ python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin ../doom-piano/build/NEK100_DSP_fbs
 python3 -m nuxdsp flash ../doom-piano/build/NEK100_DSP_fbsplash.bin   # piano in update mode
 ```
 
-On the main screen, VOL+ or VOL- then shows the test card instead of redrawing the volume number. Built files contain
+On the main screen, VOL+ or VOL- then shows the test card instead of redrawing the volume number (works on a
+real NEK-100: the image stays until the next full redraw of the main screen). Built files contain
 NUX code: keep them local (`build/` is ignored). Flash the official file to go back.
 
 ## Development
