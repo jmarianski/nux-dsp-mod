@@ -4,6 +4,72 @@ Play **Doom on a piano**. Any MIDI keyboard over USB works (made with a NUX NEK-
 piano keys and pedals become a virtual keyboard, so every Doom source port sees them like a real one.
 *[Polski poniżej](#po-polsku).*
 
+## Local browser simulator (NEK-100 LCD)
+
+```sh
+python3 tools/webserve.py
+```
+
+Open **http://localhost:8017/**. No Python packages are needed for the server/compiler; keep the sibling
+`../nek100-mod` checkout and your local shareware `wad/DOOM1.WAD`. The default view is **E1M1**: the original
+map's BSP geometry rendered by `firmware/doom.c`, with gameplay in `firmware/game.c`, compiled for the piano's
+P16 CPU and executed in JavaScript. The canvas is the same 128×64, one-bit framebuffer. The **playable E1M1 demo**
+uses the original easy-difficulty monster/item placement: four enemies, pickups, pistol/shotgun, doors, a lift,
+health/ammo HUD, death/restart and the exit switch. The selector retains the earlier test raycaster.
+
+- Arrow keys / WASD: turn and move; Q/E: strafe.
+- **Space**: fire; **F**: doors/switches; **Shift**: run. Reach the E1M1 exit switch and press F to win.
+- **Enter** restarts after death or winning. Piano: C5 fire, D5 use, E5 run, B0 restart.
+- Stand close to a door and face it, then tap **F / D5**; it lifts upwards. **M / Mapa** opens a browser-only
+  map: current player arrow, live enemies, yellow doors and a fixed route from spawn to the first soldier.
+- **R / Przeładuj**: recompile changed sources and restart. Build errors appear in the log; fix the code and retry.
+- **Włącz MIDI**: select the piano as output for E1M1 music through its own synthesizer over USB, or as input
+  for piano-key movement. No browser synthesizer is included. This does not flash firmware.
+- Pause, reload, MIDI disconnection and hiding the tab release controls/silence notes as appropriate.
+
+The server binds only to localhost. `web/build/` contains generated WAD-derived data and stays out of git.
+To build without the server: `python3 tools/webbuild.py` (or `--engine ray` for the test raycaster).
+E1M1 currently needs 474 of the target's 482 free C RAM words, leaving 8 words; the reserved 24 words of firmware
+glue and 1024-word framebuffer are counted separately. Pixel parity of geometry with the Python reference is
+tested at nineteen viewpoints plus three door opening heights. Native firmware services are simulated,
+so browser performance does not predict device timing. The earlier build was flashed and froze after its first
+frame. The current diagnostic build spreads rendering across callbacks, allows up to one million P16 instructions
+per tick in the emulator, and emits USB stage markers to investigate that hardware failure. Its device behavior
+still needs checking.
+
+The demo deliberately simplifies Doom: original one-bit silhouettes, direct chase/ranged enemy AI, hitscan attacks,
+one shared ammo pool, doors that stay open, instant vertical snapping on steps, plain floors/ceilings. It uses
+E1M1 only. Music and temporary MIDI sound effects play through the piano; no browser synthesizer is included.
+Walls use original, simple 32×32 one-bit tiles selected by the WAD's material names: metal panels, masonry,
+ribbed supports, computer faces, steps, doors, switches and exit signs. Their world coordinates and clipping
+are shared by both targets; doors have large frames/handles and the pattern moves with the panel. These are
+simplified patterns, rather than full Doom textures. The tile column buffer holds up to eight ink intervals;
+compressed columns and surface descriptors live in program memory. The navigation map adds no target RAM or firmware data.
+
+### Memory gates and a local firmware build
+
+```sh
+python3 tools/builddemo.py
+python3 tools/playthrough.py
+node tools/playthrough.cjs web/p16.js build/linked-game.json build/route.json
+```
+
+`builddemo.py` requires the local official `../NEK100_DSP_V1.0.7.bin`, builds the patch with the target's normal
+patches, verifies checksums and enforces the target far pool and the entire 0x40000-word / 512 KiB partition.
+It writes the firmware, exact memory report and an emulator program decoded from the linked firmware into
+ignored `build/`. Nothing is flashed. The last command replays the entire level using that actual artifact's
+instructions and far addresses, with a guard on every RAM write. The recorded run finished with all 4 enemies
+defeated, 62 health, 32 ammo and a maximum call depth of 13. Replay drives the actual start/key/tick callbacks and
+enforces each callback's instruction budget. Host-native firmware services remain outside that count.
+`build/memory-budget.json` is the current size report.
+
+To prepare a private hardware package, run `.venv/bin/python tools/packdemo.py`. It runs the full tests, builds
+and replays the exact linked demo, then verifies a diagnostic ZIP under ignored `build/packages/`. The package includes
+the target's six default patches and their parameter values, the local Windows updater, Polish instructions,
+checksums, and recovery images with the same defaults without Doom plus the official DSP firmware. The
+saved Default preset remains the startup preset (slot 1); the package updates only DSP. It never flashes or
+uploads anything. The official updater/DLL must already be present in the parent NUX update directory.
+
 ## Quick start (Linux)
 
 ```sh
@@ -115,6 +181,12 @@ Built files contain NUX code: keep them local (`build/` is ignored). Flash the o
 ```sh
 uv run pytest
 ```
+
+The BSP/game tests require the local WAD and Node; they skip if either is missing. The linked-firmware replay
+also requires the official local firmware. Tests reject RAM/ROM overflow and overlapping code/data, characterize
+collision/doors/combat/pickups/restart, and replay a complete E1M1 win. Optional real-browser checks,
+with the server running and Playwright installed: `node tools/webcheck.cjs`. Set `PLAYWRIGHT_MODULE` to an
+existing Playwright installation if needed. These checks use mocked MIDI and save `build/webcheck.png`.
 
 ---
 

@@ -42,7 +42,7 @@ process.stdout.write(JSON.stringify(out));
 def web(tmp_path_factory):
     import webbuild
     d = tmp_path_factory.mktemp("web")
-    webbuild.main([str(d / "game.json")])
+    webbuild.main(["--engine", "ray", str(d / "game.json")])
     (d / "run.js").write_text(NODE)
     out = subprocess.run(["node", str(d / "run.js"), os.path.join(ROOT, "web", "p16.js"), str(d / "game.json")],
                          capture_output=True, text=True, check=True).stdout
@@ -73,3 +73,9 @@ def test_frames_match_the_python_simulator(web):
     # the top-left number is the fps counter, which only the emulator's clock moved
     diff = [k for k in range(1024) if fb[k] != web["fb"][k] and not (k < 12)]
     assert not diff, diff[:8]
+
+
+def test_hardware_multiply_is_one_word():
+    import webbuild
+    op, a, b, n = webbuild.decode_word({0: 0xd4ce, 1: 0xd1ca}, 0)
+    assert (webbuild.OPS[op], a, n) == ("mul", 6, 1)
