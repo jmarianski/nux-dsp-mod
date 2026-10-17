@@ -94,6 +94,10 @@ The long-term goal is Doom running on the NEK-100 itself, drawn on its 128x64 LC
   shown only with this patch) starts it, any panel key stops it; while it runs the piano keys steer the box
   (C3/E3 left/right, C#3 or D#3 up, D3 down) and make no sound. Measured: a whole 128x64 frame (~5000 instructions) renders in ~0.2 ms, a full LCD refresh takes
   ~0.8 ms, so at 20 frames/s a frame has a budget of very roughly 1-2 million instructions.
+- Step 3, `doom_ray` (`firmware/ray.c`, compiled by `cc/p16cc.py`, our C compiler for the DSP): a raycaster on the
+  LCD, started from Extra > DOOM. C3/E3 turn, C#3 or D#3 forward, D3 back, B2/F3 strafe, any panel key leaves.
+  Top-left: the last frame's time in ~ms (a second number = the C self-test failed on the device).
+  Build it as below with `firmware/ray.py` and `-p ../doom-piano/firmware/ray.patch` instead of fb_test.
 
 ```sh
 python3 firmware/fbtest.py                       # regenerates firmware/fb_test.patch (our own code + data)
