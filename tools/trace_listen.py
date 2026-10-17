@@ -25,16 +25,29 @@ def describe(v):
     return NAMES.get(v, "")
 
 
+def ports():
+    try:
+        return mido.get_input_names()
+    except Exception:                           # rtmidi, while a port comes or goes
+        return []
+
+
 def main():
     want = (sys.argv[1] if len(sys.argv) > 1 else "NEK").lower()
     t0 = time.time()
     while True:                                 # the port goes away with every restart of the piano: reopen it
-        names = [n for n in mido.get_input_names() if want in n.lower()]
+        names = [n for n in ports() if want in n.lower()]
         if not names:
             time.sleep(0.5)
             continue
         print("%8.3f  listening on %s" % (time.time() - t0, names[0]), flush=True)
-        with mido.open_input(names[0]) as port:
+        try:
+            port = mido.open_input(names[0])
+        except Exception as e:
+            print("%8.3f  cannot open: %s" % (time.time() - t0, e), flush=True)
+            time.sleep(0.5)
+            continue
+        with port:
             last = time.time()
             while True:
                 for msg in port.iter_pending():
@@ -44,7 +57,7 @@ def main():
                 time.sleep(0.005)
                 if time.time() - last > 1:
                     last = time.time()
-                    if names[0] not in mido.get_input_names():
+                    if not any(want in n.lower() for n in ports()):
                         print("%8.3f  port gone" % (time.time() - t0), flush=True)
                         break
 
