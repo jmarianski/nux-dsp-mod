@@ -18,7 +18,10 @@ VOL+ / VOL- on the main screen starts (and the next press stops) the test:
        D  clock per 100 ticks (976 if ticks keep time; the previous build showed 16960 = 1e6 mod 65536 in us)
        R  100 frames rendered back to back, plus up to 10 ms of the tick (resolution 10 ms)
        L  100 refreshes of the whole LCD (8 pages), likewise
-       K  RAM 0x295a: clock units per timer interrupt (10000 us on the device)
+       N  the last key pressed (MIDI number)
+   While it runs the keys do not sound: task_key_events hands note on/off to us (dp_keys[key] = velocity) and the
+   box follows C3 (left), E3 (right), C#3/D#3 (up) and D3 (down). The device showed D = 977 (us clock),
+   R = 20, L = 78, and 0x295a = 10000 us per timer interrupt.
 
 Code that calls the firmware stays in bank 0; the renderer is far code and calls nothing (far code here is
 leaf only, as in nek100-mod's battery_percent and extra_menu). RAM 0x6500..0x6560 (unused after init_all).
@@ -41,15 +44,17 @@ FONT_ROWS = {
     "8": ["###", "#.#", "###", "#.#", "###"], "9": ["###", "#.#", "###", "..#", "###"],
     "S": [".##", "#..", ".#.", "..#", "##."], "D": ["##.", "#.#", "#.#", "#.#", "##."],
     "R": ["##.", "#.#", "##.", "#.#", "#.#"], "L": ["#..", "#..", "#..", "#..", "###"],
-    "K": ["#.#", "#.#", "##.", "#.#", "#.#"],
+    "N": ["#.#", "###", "###", "#.#", "#.#"],
 }
-GLYPHS = "0123456789SDRLK"
-LINES = [("S", "dp_sec"), ("D", "dp_d"), ("R", "dp_b"), ("L", "dp_l"), ("K", "SCALE")]
+GLYPHS = "0123456789SDRLN"
+LINES = [("S", "dp_sec"), ("D", "dp_d"), ("R", "dp_b"), ("L", "dp_l"), ("N", "dp_note")]
+KEYS = dict(left=48, right=52, down=50, up=49, up2=51)  # C3, E3, D3, C#3, D#3 (MIDI numbers)
 DIVS = [10000, 1000, 100, 10, 1]
 
 RAM = dict(dp_on=0x6500, dp_t=0x6501, dp_tk=0x6502, dp_sec=0x6503, dp_c0=0x6504, dp_d=0x6505, dp_b=0x6506,
            dp_l=0x6507, dp_n=0x6508, dp_x=0x6509, dp_dx=0x650a, dp_y=0x650b, dp_dy=0x650c, dp_lx=0x650d,
            dp_i=0x650e, dp_k=0x650f, dp_v=0x6510, dp_ad=0x6511, dp_fr=0x6512, dp_c1=0x6513,
+           dp_note=0x6560, dp_keys=0x6580,  # dp_keys: 128 words, velocity of each held key
            dp_tab=0x6514, dp_div=0x651e, dp_fnt=0x6530)  # written by dp_init: tab 10, div 10, font 45 -> ..0x655c
 CLOCK = 0x6d78  # low word of the main loop's 32-bit clock: += IRQ counts * [0x295a] each pass (0x7c9b)
 IRQS = 0x295b   # timer interrupt count, taken and cleared by the main loop (0x7c79); does not move inside a tick
@@ -111,6 +116,9 @@ def patch():
 .hook 0x007ea expect 0xd7c8 0x4e75     ; tick_10ms: ccall lcd_refresh (sends the framebuffer when flagged)
     call  dp_tick
 .end
+.hook 0x0282f expect 0xc7be 0xb702 0xd0ce 0x29ae   ; task_key_events: message type 0 (keys) -> 0x2833, else 0x29ae
+    .dw   0xd0ce, dp_key, 0x7800, 0x7800
+.end
 
 .code
 {equs}
@@ -163,6 +171,45 @@ dp_cpcard:                              ; 1024 words dp_card -> framebuffer, wor
     .dw   0xf148                        ; mov32 L1, L0: destination r2 = RAM address, r3 = x9
     call  0x7638
     .dw   0xd5c8                        ; ret_pop #0
+
+dp_key:                                 ; task_key_events, r3 (asm "fp") = frame-12: while on, notes are ours
+    ld    r7, [fp+14]                   ; message type, as the replaced code
+    cmp   r7, #0
+    beq   .midi
+    .dw   0xd0ce, 0x29ae                ; jmp: other messages
+.midi:
+    ld    r7, [dp_on]
+    li    r6, #DP_MAGIC
+    cmp   r7, r6
+    bne   .theirs
+    ld    r1, [fp+15]                   ; the event: [+3] type (9 on, 8 off), [+4] key, [+5] velocity
+    ld    r7, [r1+3]
+    cmp   r7, #9
+    beq   .key
+    cmp   r7, #8
+    beq   .key
+.theirs:
+    .dw   0xd0ce, 0x2833                ; jmp: the firmware's own handling (touch_off hooks it there)
+.key:
+    ld    r6, [r1+5]                    ; velocity, 0 = released
+    cmp   r7, #8
+    bne   .on
+    mov   r6, #0
+.on:
+    ld    r7, [r1+4]
+    and   r7, #0x7f
+    cmp   r6, #0
+    beq   .store
+    st    [dp_note], r7
+.store:
+    li    r1, #dp_keys
+    add   r1, r7
+    st    [r1+0], r6                    ; dp_keys[key] = velocity
+    li    r1, #0x000b                   ; idle_ticks = 0, as the firmware does for a note (no sleep while playing)
+    mov   r7, #0
+    st    [r1+0], r7
+    st    [r1+1], r7
+    .dw   0xd0ce, 0x2ca2                ; jmp: the common end (frees the message), the synthesizer never sees it
 
 dp_tick:                                ; in place of tick_10ms's ccall lcd_refresh
     ld    r7, [dp_on]
@@ -297,7 +344,18 @@ dp_frame:
     st    [r1+0], r6
 {line_down}
     ld    r7, [dp_x]                    ; the box bounces in x 32..120, y 0..56
-    ld    r6, [dp_dx]
+    mov   r6, #0                        ; dx from the keys: C3 left, E3 right, 2 px a frame
+    ld    r5, [dp_keys + {KEYS["right"]}]
+    cmp   r5, #0
+    beq   .kr
+    add   r6, #2
+.kr:
+    ld    r5, [dp_keys + {KEYS["left"]}]
+    cmp   r5, #0
+    beq   .kl
+    li    r5, #0xfffe
+    add   r6, r5
+.kl:
     add   r7, r6
     st    [dp_x], r7
     cmp   r7, #120                      ; bounce and clamp: the box is drawn at fb + page*128 + x, so x and y
@@ -317,7 +375,20 @@ dp_frame:
     st    [dp_x], r7
 .x3:
     ld    r7, [dp_y]
-    ld    r6, [dp_dy]
+    mov   r6, #0                        ; dy: D3 down, C#3 or D#3 up
+    ld    r5, [dp_keys + {KEYS["down"]}]
+    cmp   r5, #0
+    beq   .kd
+    add   r6, #2
+.kd:
+    ld    r5, [dp_keys + {KEYS["up"]}]
+    ld    r4, [dp_keys + {KEYS["up2"]}]
+    or    r5, r4
+    cmp   r5, #0
+    beq   .ku
+    li    r5, #0xfffe
+    add   r6, r5
+.ku:
     add   r7, r6
     st    [dp_y], r7
     cmp   r7, #56
@@ -441,6 +512,15 @@ dp_frame:
     ret
 dp_init:                                ; far, leaf: line table, divisor pairs and font into RAM dp_tab..
 {init}
+    li    r1, #dp_keys                  ; no key held (the RAM holds leftovers after init_all)
+    li    r6, #(dp_keys + 128)
+    mov   r7, #0
+    st    [dp_note], r7
+.kz:
+    st    [r1+0], r7
+    add   r1, #1
+    cmp   r1, r6
+    bne   .kz
     ret
 dp_card:
 {dw(card)}

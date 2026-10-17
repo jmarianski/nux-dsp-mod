@@ -102,7 +102,9 @@ def test_init_writes_tables_and_font(built):
     assert [s.rd(R["dp_div"] + i) for i in range(len(div))] == div
     font = fbtest.font_words()
     assert [s.rd(R["dp_fnt"] + i) for i in range(len(font))] == font
-    assert all(R["dp_tab"] <= a < R["dp_fnt"] + len(font) for a in s.ram.written)
+    assert [s.rd(R["dp_keys"] + k) for k in range(128)] == [0] * 128 and s.rd(R["dp_note"]) == 0
+    assert all(R["dp_tab"] <= a < R["dp_fnt"] + len(font) or a == R["dp_note"] or R["dp_keys"] <= a < R["dp_keys"] + 128
+               for a in s.ram.written)
 
 
 def model(fbtest, ram):
@@ -111,8 +113,11 @@ def model(fbtest, ram):
     lx = (ram[fbtest.RAM["dp_lx"]] + 1) & 127
     for p in range(8):
         fb[p * 128 + lx] = 0xFF
-    x = ram[fbtest.RAM["dp_x"]] + ram[fbtest.RAM["dp_dx"]]
-    y = ram[fbtest.RAM["dp_y"]] + ram[fbtest.RAM["dp_dy"]]
+    held = lambda k: ram.get(fbtest.RAM["dp_keys"] + fbtest.KEYS[k], 0) != 0
+    x = ram[fbtest.RAM["dp_x"]] + 2 * (held("right") - held("left"))
+    y = ram[fbtest.RAM["dp_y"]] + 2 * (held("down") - (held("up") or held("up2")))
+    x = 120 if x >= 120 else 32 if x < 33 else x
+    y = 56 if y >= 56 else 0 if y < 1 else y
     for c in range(8):
         for r in range(8):
             yy = y + r
@@ -128,17 +133,16 @@ def model(fbtest, ram):
     return fb
 
 
-@pytest.mark.parametrize("y", [20, 23, 56 - 1, 0 + 1])
-def test_frame_renders_box_line_and_numbers(built, y):
+@pytest.mark.parametrize("x, y, keys", [(40, 20, ()), (40, 23, ("right", "down")), (60, 55, ("left", "up")),
+                                         (33, 1, ("left", "up2")), (119, 30, ("right",)), (50, 54, ("down",))])
+def test_frame_renders_box_line_and_numbers(built, x, y, keys):
     fbtest, words, syms = built
     R = fbtest.RAM
     ram = dict(sim_call(words, syms["dp_init"], {}).ram)
-    ram.update({R["dp_lx"]: 5, R["dp_x"]: 40, R["dp_dx"]: 1, R["dp_y"]: y, R["dp_dy"]: 0xFFFF if y > 50 else 1,
-                R["dp_sec"]: 123, R["dp_d"]: 1000, R["dp_b"]: 4567, R["dp_l"]: 32000, 0x6a50: 0x8000})
-    ram = {k: v for k, v in ram.items()}
-    dy = -1 if y > 50 else 1
+    ram.update({R["dp_lx"]: 5, R["dp_x"]: x, R["dp_y"]: y, R["dp_sec"]: 123, R["dp_d"]: 1000, R["dp_b"]: 4567,
+                R["dp_l"]: 32000, R["dp_note"]: 60, 0x6a50: 0x8000})
+    ram.update({R["dp_keys"] + fbtest.KEYS[k]: 100 for k in keys})
     before = dict(ram)
-    before[R["dp_dy"]] = dy
     s = sim_call(words, syms["dp_frame"], Watch(ram))
     fb = [s.rd(FB + i) for i in range(1024)]
     assert all(allowed(fbtest, a) for a in s.ram.written)
@@ -168,3 +172,51 @@ def test_now_is_the_clock_in_1024_us(built, us):
     ram = {fbtest.CLOCK: us & 0xFFFF, fbtest.CLOCK + 1: us >> 16}
     s = sim_call(words, syms["dp_now"], ram)
     assert s.r[7] == (us >> 10) & 0xFFFF
+
+
+def run_key(fbtest, words, syms, on, msg_type, ev_type, key, vel):
+    """dp_key with a fake frame; returns (jump target, RAM). It ends in a far jmp the simulator does not run."""
+    from nuxdsp import sim
+    R, r3, ev = fbtest.RAM, 0x7000, 0x7100
+    ram = {r3 + 14: msg_type, r3 + 15: ev, ev + 2: 0, ev + 3: ev_type, ev + 4: key, ev + 5: vel,
+           R["dp_on"]: fbtest.DP_MAGIC if on else 0x6b, R["dp_note"]: 7, 0x000b: 55, 0x000c: 1}
+    s = sim.Sim(words, ram)
+    s.r[3] = r3
+    with pytest.raises(sim.SimError) as e:
+        s.call(syms["dp_key"])
+    pc = int(str(e.value).split(" at ")[1], 16)
+    assert words[pc] == 0xd0ce
+    return words[pc + 1], s
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_key_hook_passes_other_messages(built, on):
+    fbtest, words, syms = built
+    to, s = run_key(fbtest, words, syms, on, 3, 9, 60, 100)
+    assert to == 0x29ae
+
+
+@pytest.mark.parametrize("ev_type", [9, 8, 0xb])
+def test_key_hook_passes_everything_while_off(built, ev_type):
+    fbtest, words, syms = built
+    to, s = run_key(fbtest, words, syms, False, 0, ev_type, 60, 100)
+    assert to == 0x2833 and s.rd(fbtest.RAM["dp_keys"] + 60) == 0
+
+
+def test_key_hook_takes_notes_while_on(built):
+    fbtest, words, syms = built
+    R = fbtest.RAM
+    to, s = run_key(fbtest, words, syms, True, 0, 9, 48, 90)
+    assert to == 0x2ca2 and s.rd(R["dp_keys"] + 48) == 90 and s.rd(R["dp_note"]) == 48
+    assert s.rd(0x000b) == 0 and s.rd(0x000c) == 0
+    for ev_type, vel in ((8, 64), (9, 0)):             # note off, and note on with velocity 0
+        ram = dict(s.ram)
+        to, s2 = run_key(fbtest, words, syms, True, 0, ev_type, 48, vel)
+        assert to == 0x2ca2 and s2.rd(R["dp_keys"] + 48) == 0 and s2.rd(R["dp_note"]) == 7
+    to, s = run_key(fbtest, words, syms, True, 0, 0xb, 64, 127)   # pedal and other CCs: the firmware's
+    assert to == 0x2833
+
+
+def test_key_hook_replaces_the_firmware_check(built):
+    fbtest, words, syms = built
+    assert list(words[0x282f:0x2833]) == [0xd0ce, syms["dp_key"], 0x7800, 0x7800]

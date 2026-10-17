@@ -8,6 +8,9 @@
 .hook 0x007ea expect 0xd7c8 0x4e75     ; tick_10ms: ccall lcd_refresh (sends the framebuffer when flagged)
     call  dp_tick
 .end
+.hook 0x0282f expect 0xc7be 0xb702 0xd0ce 0x29ae   ; task_key_events: message type 0 (keys) -> 0x2833, else 0x29ae
+    .dw   0xd0ce, dp_key, 0x7800, 0x7800
+.end
 
 .code
 .equ dp_on, 0x6500
@@ -30,6 +33,8 @@
 .equ dp_ad, 0x6511
 .equ dp_fr, 0x6512
 .equ dp_c1, 0x6513
+.equ dp_note, 0x6560
+.equ dp_keys, 0x6580
 .equ dp_tab, 0x6514
 .equ dp_div, 0x651e
 .equ dp_fnt, 0x6530
@@ -83,6 +88,45 @@ dp_cpcard:                              ; 1024 words dp_card -> framebuffer, wor
     .dw   0xf148                        ; mov32 L1, L0: destination r2 = RAM address, r3 = x9
     call  0x7638
     .dw   0xd5c8                        ; ret_pop #0
+
+dp_key:                                 ; task_key_events, r3 (asm "fp") = frame-12: while on, notes are ours
+    ld    r7, [fp+14]                   ; message type, as the replaced code
+    cmp   r7, #0
+    beq   .midi
+    .dw   0xd0ce, 0x29ae                ; jmp: other messages
+.midi:
+    ld    r7, [dp_on]
+    li    r6, #DP_MAGIC
+    cmp   r7, r6
+    bne   .theirs
+    ld    r1, [fp+15]                   ; the event: [+3] type (9 on, 8 off), [+4] key, [+5] velocity
+    ld    r7, [r1+3]
+    cmp   r7, #9
+    beq   .key
+    cmp   r7, #8
+    beq   .key
+.theirs:
+    .dw   0xd0ce, 0x2833                ; jmp: the firmware's own handling (touch_off hooks it there)
+.key:
+    ld    r6, [r1+5]                    ; velocity, 0 = released
+    cmp   r7, #8
+    bne   .on
+    mov   r6, #0
+.on:
+    ld    r7, [r1+4]
+    and   r7, #0x7f
+    cmp   r6, #0
+    beq   .store
+    st    [dp_note], r7
+.store:
+    li    r1, #dp_keys
+    add   r1, r7
+    st    [r1+0], r6                    ; dp_keys[key] = velocity
+    li    r1, #0x000b                   ; idle_ticks = 0, as the firmware does for a note (no sleep while playing)
+    mov   r7, #0
+    st    [r1+0], r7
+    st    [r1+1], r7
+    .dw   0xd0ce, 0x2ca2                ; jmp: the common end (frees the message), the synthesizer never sees it
 
 dp_tick:                                ; in place of tick_10ms's ccall lcd_refresh
     ld    r7, [dp_on]
@@ -230,7 +274,18 @@ dp_frame:
     add   r1, #128
     st    [r1+0], r6
     ld    r7, [dp_x]                    ; the box bounces in x 32..120, y 0..56
-    ld    r6, [dp_dx]
+    mov   r6, #0                        ; dx from the keys: C3 left, E3 right, 2 px a frame
+    ld    r5, [dp_keys + 52]
+    cmp   r5, #0
+    beq   .kr
+    add   r6, #2
+.kr:
+    ld    r5, [dp_keys + 48]
+    cmp   r5, #0
+    beq   .kl
+    li    r5, #0xfffe
+    add   r6, r5
+.kl:
     add   r7, r6
     st    [dp_x], r7
     cmp   r7, #120                      ; bounce and clamp: the box is drawn at fb + page*128 + x, so x and y
@@ -250,7 +305,20 @@ dp_frame:
     st    [dp_x], r7
 .x3:
     ld    r7, [dp_y]
-    ld    r6, [dp_dy]
+    mov   r6, #0                        ; dy: D3 down, C#3 or D#3 up
+    ld    r5, [dp_keys + 50]
+    cmp   r5, #0
+    beq   .kd
+    add   r6, #2
+.kd:
+    ld    r5, [dp_keys + 49]
+    ld    r4, [dp_keys + 51]
+    or    r5, r4
+    cmp   r5, #0
+    beq   .ku
+    li    r5, #0xfffe
+    add   r6, r5
+.ku:
     add   r7, r6
     st    [dp_y], r7
     cmp   r7, #56
@@ -437,7 +505,7 @@ dp_init:                                ; far, leaf: line table, divisor pairs a
     st    [0x651b], r7
     mov   r7, #0x000e
     st    [0x651c], r7
-    li    r7, #0x295a
+    li    r7, #0x6560
     st    [0x651d], r7
     li    r7, #0x2710
     st    [0x651e], r7
@@ -545,10 +613,19 @@ dp_init:                                ; far, leaf: line table, divisor pairs a
     st    [0x6559], r7
     mov   r7, #0x001f
     st    [0x655a], r7
-    mov   r7, #0x0004
+    mov   r7, #0x0006
     st    [0x655b], r7
-    mov   r7, #0x001b
+    mov   r7, #0x001f
     st    [0x655c], r7
+    li    r1, #dp_keys                  ; no key held (the RAM holds leftovers after init_all)
+    li    r6, #(dp_keys + 128)
+    mov   r7, #0
+    st    [dp_note], r7
+.kz:
+    st    [r1+0], r7
+    add   r1, #1
+    cmp   r1, r6
+    bne   .kz
     ret
 dp_card:
     .dw 0x00ff, 0x0001, 0x00fd, 0x00fd, 0x00fd, 0x00fd, 0x00fd, 0x00fd
