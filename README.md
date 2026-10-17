@@ -84,20 +84,24 @@ Common options: `--config FILE`, `--port NAME` (part of the MIDI input name), `-
 ## On the piano's own display (work in progress)
 
 The long-term goal is Doom running on the NEK-100 itself, drawn on its 128x64 LCD, as a patch for
-[nek100-mod](../nek100-mod). Step 1 is a full-screen framebuffer test:
+[nek100-mod](../nek100-mod).
+
+- Step 1, `fb_splash` (works on a real NEK-100): a full-screen test card copied into the framebuffer; the image
+  stays until the next full redraw of the main screen.
+- Step 2, `fb_test` (`firmware/fbtest.py`): the card and a font read from far program memory (above 0xffff)
+  with the firmware's own copy routine, then a game loop in the 10 ms tick (a whole frame per tick: sweeping line,
+  bouncing box) with timings on screen. VOL+/VOL- on the main screen starts and stops it.
 
 ```sh
-python3 firmware/splash.py                       # regenerates firmware/fb_splash.patch (our own code + image)
+python3 firmware/fbtest.py                       # regenerates firmware/fb_test.patch (our own code + data)
 cd ../nek100-mod
-python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin ../doom-piano/build/NEK100_DSP_fbsplash.bin \
+python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin ../doom-piano/build/NEK100_DSP_fbtest.bin \
     -p boot_preset -p touch_off -p sustain_in_preset -p version_tag -p octave_per_part -p extra_menu \
-    -p ../doom-piano/firmware/fb_splash.patch
-python3 -m nuxdsp flash ../doom-piano/build/NEK100_DSP_fbsplash.bin   # piano in update mode
+    -p ../doom-piano/firmware/fb_test.patch
+python3 -m nuxdsp flash -y ../doom-piano/build/NEK100_DSP_fbtest.bin   # piano in update mode (needs pyusb)
 ```
 
-On the main screen, VOL+ or VOL- then shows the test card instead of redrawing the volume number (works on a
-real NEK-100: the image stays until the next full redraw of the main screen). Built files contain
-NUX code: keep them local (`build/` is ignored). Flash the official file to go back.
+Built files contain NUX code: keep them local (`build/` is ignored). Flash the official file to go back.
 
 ## Development
 
