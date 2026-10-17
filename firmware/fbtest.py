@@ -9,15 +9,16 @@ VOL+ / VOL- on the main screen starts (and the next press stops) the test:
    The card shows for 3 s: if it looks right, far data reads work. (The first try loaded r4:r5 = bank:address
    with plain li's and no fix32: the card stayed blank and so did the font copied the same way.)
    The font and the number tables do not depend on it: far code writes them into RAM as immediates.
-2. Benchmarks, once, then the game loop. 100 frames rendered back to back (R) and 100 forced LCD refreshes (L),
-   timed in timer interrupts (RAM 0x295b, counted while the main loop waits for us).
+2. Benchmarks, then the game loop. 100 frames rendered back to back (R) and 100 forced LCD refreshes (L), each in
+   one tick and timed across the next main loop pass: the main loop clock (RAM 0x6d78, us) only moves between ticks,
+   when the main loop folds in the timer interrupts (10 ms each) that came meanwhile. Times in units of 1.024 ms.
 3. Game loop: every FRAME_TICKS ticks (50 ms) a whole frame is rendered into the framebuffer: cleared, a sweeping
    line, a bouncing 8x8 box and five numbers:
        S  seconds counted in ticks (compare with a stopwatch: do ticks keep real time while we draw?)
-       D  main loop clock (RAM 0x6d78, low word) per 100 ticks: its unit, if ticks keep time
-       R  timer interrupts during 100 frames rendered back to back
-       L  timer interrupts during 100 refreshes of the whole LCD (8 pages)
-       K  RAM 0x295a, clock units per interrupt (D / K = interrupts per second)
+       D  clock per 100 ticks (976 if ticks keep time; the previous build showed 16960 = 1e6 mod 65536 in us)
+       R  100 frames rendered back to back, plus up to 10 ms of the tick (resolution 10 ms)
+       L  100 refreshes of the whole LCD (8 pages), likewise
+       K  RAM 0x295a: clock units per timer interrupt (10000 us on the device)
 
 Code that calls the firmware stays in bank 0; the renderer is far code and calls nothing (far code here is
 leaf only, as in nek100-mod's battery_percent and extra_menu). RAM 0x6500..0x6560 (unused after init_all).
@@ -48,10 +49,10 @@ DIVS = [10000, 1000, 100, 10, 1]
 
 RAM = dict(dp_on=0x6500, dp_t=0x6501, dp_tk=0x6502, dp_sec=0x6503, dp_c0=0x6504, dp_d=0x6505, dp_b=0x6506,
            dp_l=0x6507, dp_n=0x6508, dp_x=0x6509, dp_dx=0x650a, dp_y=0x650b, dp_dy=0x650c, dp_lx=0x650d,
-           dp_i=0x650e, dp_k=0x650f, dp_v=0x6510, dp_ad=0x6511, dp_fr=0x6512,
+           dp_i=0x650e, dp_k=0x650f, dp_v=0x6510, dp_ad=0x6511, dp_fr=0x6512, dp_c1=0x6513,
            dp_tab=0x6514, dp_div=0x651e, dp_fnt=0x6530)  # written by dp_init: tab 10, div 10, font 45 -> ..0x655c
 CLOCK = 0x6d78  # low word of the main loop's 32-bit clock: += IRQ counts * [0x295a] each pass (0x7c9b)
-IRQS = 0x295b   # low word of the timer interrupt count; the main loop takes it and clears it (0x7c79)
+IRQS = 0x295b   # timer interrupt count, taken and cleared by the main loop (0x7c79); does not move inside a tick
 SCALE = 0x295a  # the multiplier above (not a counter: the first build's D/R/L read it and showed 0)
 DP_MAGIC = 0x600D
 FRAME_TICKS = 5  # 20 frames/s
@@ -168,14 +169,33 @@ dp_tick:                                ; in place of tick_10ms's ccall lcd_refr
     li    r6, #DP_MAGIC
     cmp   r7, r6
     bne   .refresh
-    ld    r7, [dp_t]
+    ld    r7, [dp_t]                    ; ticks since start, up to 303: card 0..299, benchmarks 300..302
+    li    r6, #303
+    cmp   r7, r6
+    blt   .count
+    jmp   .run
+.count:
     add   r7, #1
     st    [dp_t], r7
     li    r6, #300                      ; the card stays 3 s
     cmp   r7, r6
     blt   .refresh
-    bne   .run
-    call  dp_bench                      ; once
+    bne   .b1
+    call  dp_bench_r                    ; each benchmark is timed across the next main loop pass, which folds
+    jmp   .refresh                      ; the timer interrupts that came meanwhile into its clock
+.b1:
+    li    r6, #301
+    cmp   r7, r6
+    bne   .b2
+    call  dp_bench_l
+    jmp   .refresh
+.b2:
+    call  dp_now
+    ld    r6, [dp_c1]
+    .dw   0xaf06                        ; sub r7, r6
+    st    [dp_l], r7
+    call  dp_now
+    st    [dp_c0], r7
 .run:
     ld    r7, [dp_tk]
     add   r7, #1
@@ -187,7 +207,7 @@ dp_tick:                                ; in place of tick_10ms's ccall lcd_refr
     ld    r7, [dp_sec]
     add   r7, #1
     st    [dp_sec], r7
-    ld    r7, [{CLOCK:#06x}]
+    call  dp_now
     ld    r6, [dp_c0]
     st    [dp_c0], r7
     .dw   0xaf06                        ; sub r7, r6
@@ -205,9 +225,18 @@ dp_tick:                                ; in place of tick_10ms's ccall lcd_refr
     ccall 0x4e75
     ret
 
-dp_bench:                               ; R: 100 frames back to back, L: 100 refreshes of the whole LCD
-    ld    r7, [{IRQS:#06x}]
-    st    [dp_c0], r7
+dp_now:                                 ; r7 = the main loop clock in units of 1024 us (~ms), mod 65536
+    ld    r7, [{CLOCK + 1:#06x}]          ; (hi << 6) | (lo >> 10): no carries to handle, differences stay right
+    shl   r7, 6
+    ld    r6, [{CLOCK:#06x}]
+    shr   r6, 10
+    and   r6, #0x3f
+    or    r7, r6
+    ret
+
+dp_bench_r:                             ; 100 frames back to back; R = their time, read at the next tick
+    call  dp_now
+    st    [dp_c1], r7
     mov   r7, #100
     st    [dp_n], r7
 .r:
@@ -218,12 +247,15 @@ dp_bench:                               ; R: 100 frames back to back, L: 100 ref
     st    [dp_n], r7
     cmp   r7, #0
     bne   .r
-    ld    r7, [{IRQS:#06x}]
-    ld    r6, [dp_c0]
+    ret
+
+dp_bench_l:                             ; R done; 100 refreshes of the whole LCD, L read at the next tick
+    call  dp_now
+    ld    r6, [dp_c1]
     .dw   0xaf06                        ; sub r7, r6
     st    [dp_b], r7
-    ld    r7, [{IRQS:#06x}]
-    st    [dp_c0], r7
+    call  dp_now
+    st    [dp_c1], r7
     mov   r7, #100
     st    [dp_n], r7
 .l:
@@ -238,12 +270,6 @@ dp_bench:                               ; R: 100 frames back to back, L: 100 ref
     st    [dp_n], r7
     cmp   r7, #0
     bne   .l
-    ld    r7, [{IRQS:#06x}]
-    ld    r6, [dp_c0]
-    .dw   0xaf06                        ; sub r7, r6
-    st    [dp_l], r7
-    ld    r7, [{CLOCK:#06x}]
-    st    [dp_c0], r7
     ret
 .end
 
