@@ -32,6 +32,8 @@ unsigned held;
 int ticks, drew, t0, dt, st_val, st_ok, nframe;
 int lj;                                         /* the ljmp test (C8): 1 = came back */
 void ljtest(void);                              /* asm (ray.py) */
+void trace(int v);                              /* asm (ray.py): a marker to the host, one per tick over USB MIDI */
+int stage;
 
 int isin(int a)
 {
@@ -192,6 +194,7 @@ void frame(void)
     }
     LCD_FLAG = LCD_FLAG | 1;
     nframe++;
+    trace(0x400 + (nframe & 0xff));
 }
 
 unsigned sth;
@@ -222,13 +225,18 @@ void rc_start(void)
     px = 384;
     py = 384;
     pa = 0;
-    st_val = selftest();
-    st_ok = st_val == SELFTEST_EXPECT;
-    frame();
+    stage = 0;
 }
 
 void rc_tick(void)
 {
+    if (stage == 0) {                           /* one step per tick, each followed by a marker */
+        st_val = selftest();
+        st_ok = st_val == SELFTEST_EXPECT;
+        trace(0x300 + st_ok);
+        stage = 1;
+        return;
+    }
     if (drew) {                                 /* the clock moved past the frame drawn last tick */
         dt = now() - t0;
         drew = 0;

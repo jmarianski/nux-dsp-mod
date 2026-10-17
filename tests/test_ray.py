@@ -28,6 +28,7 @@ def m():
     m.sim.ram = Watch({a: 0xBEEF for a in range(ray.RAM[0], ray.RAM[1])})
     m.call("__cc_init")
     m.call("rc_start")
+    m.call("rc_tick")                         # stage 0: the self-test
     return m
 
 

@@ -42,8 +42,8 @@ MAP = [
     "#...........#..#",
     "################",
 ]
-RC_ON, RC_R1 = 0x6430, 0x6431
-RAM = (0x6432, 0x662a)
+RC_ON, RC_R1, RC_TW, RC_TR, RC_PD, RC_RING = 0x6430, 0x6431, 0x6432, 0x6433, 0x6434, 0x6435  # ring: 16 words
+RAM = (0x6445, 0x662a)
 DP_MAGIC, DP_PEND = 0x600D, 0x600E
 ORG = 0x1a280
 
@@ -69,7 +69,7 @@ class Machine:
 
     def __init__(self, result):
         from nuxdsp import asm, fwmap, sim
-        syms = dict(fwmap.load().symbols(), ljtest=0x1f000)      # the glue's ljtest: a bare ret here
+        syms = dict(fwmap.load().symbols(), ljtest=0x1f000, trace=0x1f000)   # the glue's: a bare ret here
         words, self.labels = asm.assemble(result.lines, syms, origin=ORG, label_prefix="ray")
         words[0x1f000] = 0xD1CA
         self.r = result
@@ -107,6 +107,28 @@ GLUE = """
 dm_start:                               ; extra_menu's item 7 (Enter): Extra redraws itself next, the tick starts us
     li    r6, #DP_PEND
     st    [rc_on], r6
+    mov   r6, #0
+    st    [rc_tw], r6
+    st    [rc_tr], r6
+    st    [rc_pd], r6
+    ret
+
+trace:                                  ; r7 = a marker into the ring (16), sent by the tick; uses r1, r6
+    ld    r6, [rc_tw]
+    li    r1, #rc_ring
+    add   r1, r6
+    st    [r1+0], r7
+    add   r6, #1
+    and   r6, #15
+    st    [rc_tw], r6
+    ret
+
+dp_d:                                   ; r7 nested calls (the depth probe)
+    cmp   r7, #0
+    beq   .dd
+    addi  r7, #0xffff
+    call  dp_d
+.dd:
     ret
 
 dm_icon:                                ; extra_menu draws page 3: the skull in item 7's place
@@ -178,16 +200,57 @@ rc_tickh:                               ; in place of tick_10ms's ccall lcd_refr
     ld    r7, [rc_on]
     li    r6, #DP_PEND
     cmp   r7, r6
+    beq   .act
+    li    r6, #DP_MAGIC
+    cmp   r7, r6
+    beq   .act
+    jmp   .refresh
+.act:
+    ld    r7, [rc_tr]                   ; first, one marker of an earlier tick to the host: channel 16 CC,
+    ld    r6, [rc_tw]                   ; controller = bits 7..13, value = bits 0..6
+    cmp   r7, r6
+    beq   .step
+    li    r1, #rc_ring
+    add   r1, r7
+    ld    r5, [r1+0]
+    add   r7, #1
+    and   r7, #15
+    st    [rc_tr], r7
+    mov   r7, r5
+    shr   r7, 7
+    and   r7, #0x7f
+    shl   r7, 8
+    and   r5, #0x7f
+    or    r7, r5
+    li    r6, #0x0bbf                   ; cable 0, CIN B, BF (as telemetry's tl_pk)
+    push  r7
+    push  r6
+    ccall 0x062cc
+.step:
+    ld    r7, [rc_on]
+    li    r6, #DP_PEND
+    cmp   r7, r6
     bne   .on
+    ld    r7, [rc_pd]                   ; ticks 1..20: r7 nested calls, then marker 0x200 + depth
+    add   r7, #1
+    st    [rc_pd], r7
+    cmp   r7, #21
+    beq   .start
+    call  dp_d
+    ld    r7, [rc_pd]
+    li    r6, #0x200
+    add   r7, r6
+    call  trace
+    jmp   .refresh
+.start:
     li    r7, #DP_MAGIC
     st    [rc_on], r7
     call  __cc_init
+    li    r7, #0x100
+    call  trace
     call  rc_start
     jmp   .refresh
 .on:
-    li    r6, #DP_MAGIC
-    cmp   r7, r6
-    bne   .refresh
     call  rc_tick
 .refresh:
     ccall 0x4e75
@@ -214,6 +277,10 @@ def patch():
 .code 0x1a280
 .equ rc_on, {RC_ON:#06x}
 .equ rc_r1, {RC_R1:#06x}
+.equ rc_tw, {RC_TW:#06x}
+.equ rc_tr, {RC_TR:#06x}
+.equ rc_pd, {RC_PD:#06x}
+.equ rc_ring, {RC_RING:#06x}
 .equ DP_MAGIC, {DP_MAGIC:#06x}
 .equ DP_PEND, {DP_PEND:#06x}
 {GLUE.format(icon=icon)}
