@@ -72,7 +72,7 @@ class Machine:
     def __init__(self, result):
         from nuxdsp import asm, fwmap, sim
         syms = dict(fwmap.load().symbols(), ljtest=0x1f000, trace=0x1f000, farcopy=0x1f000, synth=0x1f000,
-                    fr_init=0x1f000)   # the glue's: a bare ret here
+                    fr_init=0x1f000, mdiag=0x1f000)   # the glue's: a bare ret here
         words, self.labels = asm.assemble(result.lines + ADIAG.splitlines(), syms, origin=ORG, label_prefix="ray")
         words[0x1f000] = 0xD1CA
         self.r = result
@@ -315,6 +315,41 @@ synth:                                  ; C: r7 = CIN << 8 | status, r6 = d1 << 
     push  r6
     push  r7
     ccall 0x1330
+    ld    r0, [fc_s0]
+    ld    r2, [fc_s2]
+    ld    r3, [fc_s3]
+    ret
+
+mdiag:                                  ; mul r6 (d4ce, as the volume handler's vol*127): all registers after it
+    st    [fc_s0], r0                   ; 0x1234 * 0x5678 = 0x0626 0060 -> dv[20..27] = r7 r6 r5 r4 r1 r0 r2 r3
+    st    [fc_s2], r2                   ; 0xfffe * 3 (-2 * 3: 0xffff fffa signed, 0x0002 fffa unsigned)
+    st    [fc_s3], r3                   ;     -> dv[28..31] = r7 r6 r5 r4
+    li    r0, #0xdddd
+    li    r1, #0xcccc
+    li    r2, #0xeeee
+    li    r3, #0x9999
+    li    r4, #0xaaaa
+    li    r5, #0xbbbb
+    li    r6, #0x5678
+    li    r7, #0x1234
+    .dw   0xd4ce                        ; mul r6
+    st    [dv+20], r7
+    st    [dv+21], r6
+    st    [dv+22], r5
+    st    [dv+23], r4
+    st    [dv+24], r1
+    st    [dv+25], r0
+    st    [dv+26], r2
+    st    [dv+27], r3
+    li    r4, #0xaaaa
+    li    r5, #0xbbbb
+    mov   r6, #3
+    li    r7, #0xfffe
+    .dw   0xd4ce
+    st    [dv+28], r7
+    st    [dv+29], r6
+    st    [dv+30], r5
+    st    [dv+31], r4
     ld    r0, [fc_s0]
     ld    r2, [fc_s2]
     ld    r3, [fc_s3]
