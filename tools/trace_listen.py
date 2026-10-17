@@ -3,7 +3,9 @@
 
     0x201..0x214  the call depth probe came back from that many nested calls
     0x100         __cc_init done          0x300 + ok   the C self-test (1 = as in the simulator)
-    0x400 + n     frame n drawn (mod 256)
+    0x400 + n     frame n drawn (mod 256)        0x500 + c    render part c (0..7) starts
+    0x2000 | (k & 15) << 8 | hi, then 0x3000 | (k & 15) << 8 | lo   diagnostic word dv[k], k counted from
+                  __cc_init (compare: firmware/ray.py --diag)
 
 Usage: uv run python tools/trace_listen.py [PORT-SUBSTRING]
 """
@@ -15,7 +17,22 @@ import mido
 NAMES = {0x100: "__cc_init done"}
 
 
+DV = {"k": 0, "hi": 0}
+
+
 def describe(v):
+    if v == 0x100:
+        DV["k"] = 0
+    if v & 0x3000 == 0x2000:
+        DV["hi"] = (v & 255) << 8
+        return ""
+    if v & 0x3000 == 0x3000:
+        k = DV["k"]
+        DV["k"] += 1
+        bad = "" if k & 15 == v >> 8 & 15 else "  (index says %d: a marker lost)" % (v >> 8 & 15)
+        return "dv[%2d] = %#06x%s" % (k, DV["hi"] | v & 255, bad)
+    if 0x500 <= v < 0x508:
+        return "part %d" % (v - 0x500)
     if 0x200 < v < 0x300:
         return "call depth %d ok" % (v - 0x200)
     if v in (0x300, 0x301):

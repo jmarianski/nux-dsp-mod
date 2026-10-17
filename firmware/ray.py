@@ -70,7 +70,7 @@ class Machine:
     def __init__(self, result):
         from nuxdsp import asm, fwmap, sim
         syms = dict(fwmap.load().symbols(), ljtest=0x1f000, trace=0x1f000)   # the glue's: a bare ret here
-        words, self.labels = asm.assemble(result.lines, syms, origin=ORG, label_prefix="ray")
+        words, self.labels = asm.assemble(result.lines + ADIAG.splitlines(), syms, origin=ORG, label_prefix="ray")
         words[0x1f000] = 0xD1CA
         self.r = result
 
@@ -103,6 +103,98 @@ def expected_selftest():
     return m.call("selftest")
 
 
+ADIAG = """
+adiag:                                  ; raw results of single instructions into dv[0..15]; keeps r0, r2, r3
+    li    r6, #0xffff                   ; dv0: blt after cmp 0xffff, #1 (1 = signed)
+    mov   r7, #0
+    cmp   r6, #1
+    blt   .a0
+    jmp   .a0e
+.a0:
+    mov   r7, #1
+.a0e:
+    st    [dv+0], r7
+    li    r7, #0x8000                   ; dv1: blt after cmp 0x8000, r6 = 1 (1 = signed)
+    mov   r6, #1
+    mov   r5, #0
+    cmp   r7, r6
+    blt   .a1
+    jmp   .a1e
+.a1:
+    mov   r5, #1
+.a1e:
+    st    [dv+1], r5
+    mov   r7, #1                        ; dv2: blt after cmp 1, r6 = 0x8000 (1 = unsigned)
+    li    r6, #0x8000
+    mov   r5, #0
+    cmp   r7, r6
+    blt   .a2
+    jmp   .a2e
+.a2:
+    mov   r5, #1
+.a2e:
+    st    [dv+2], r5
+    mov   r7, #2                        ; dv3: blt after cmp 2, #5 (1)
+    mov   r5, #0
+    cmp   r7, #5
+    blt   .a3
+    jmp   .a3e
+.a3:
+    mov   r5, #1
+.a3e:
+    st    [dv+3], r5
+    mov   r7, #5                        ; dv4: 5 sub 3 (2)
+    mov   r6, #3
+    sub   r7, r6
+    st    [dv+4], r7
+    li    r5, #0x1000                   ; dv5: r5 0x1000 sub r4 1 (0x0fff)
+    mov   r4, #1
+    sub   r5, r4
+    st    [dv+5], r5
+    li    r7, #0x8000                   ; dv6: 0x8000 shr 15 (1)
+    shr   r7, 15
+    st    [dv+6], r7
+    li    r6, #0xf000                   ; dv7: 0xf000 shr 8 (0x00f0)
+    shr   r6, 8
+    st    [dv+7], r6
+    li    r5, #0x4001                   ; dv8: 0x4001 shl 1 (0x8002)
+    shl   r5, 1
+    st    [dv+8], r5
+    li    r4, #0x1234                   ; dv9..11: r4, r5, r1 after a ~5 ms loop on r7 only
+    li    r5, #0x5678
+    li    r1, #0x9abc
+    li    r7, #20000
+.al:
+    addi  r7, #0xffff
+    cmp   r7, #0
+    bne   .al
+    st    [dv+9], r4
+    st    [dv+10], r5
+    st    [dv+11], r1
+    mov   r4, #0                        ; dv12: 0 addi 0xffff, then 2 if cmp #0 says not equal
+    addi  r4, #0xffff
+    mov   r7, #0
+    cmp   r4, #0
+    beq   .ac
+    mov   r7, #2
+.ac:
+    st    [dv+12], r4
+    st    [dv+13], r7
+    li    r6, #0x0f0f                   ; dv14: movs and and/or through r4, r5, r1 (0x0f03)
+    mov   r4, r6
+    mov   r5, r4
+    and   r5, #3
+    mov   r1, r5
+    li    r5, #0x0f00
+    or    r5, r1
+    st    [dv+14], r5
+    li    r7, #0xfff0                   ; dv15: 0xfff0 add #0x20 (zero-extended imm8: 0x0010)
+    add   r7, #0x20
+    st    [dv+15], r7
+    ret
+"""
+
+
 GLUE = """
 dm_start:                               ; extra_menu's item 7 (Enter): Extra redraws itself next, the tick starts us
     li    r6, #DP_PEND
@@ -131,6 +223,7 @@ dp_d:                                   ; r7 nested calls (the depth probe)
 .dd:
     ret
 
+{adiag}
 dm_icon:                                ; extra_menu draws page 3: the skull in item 7's place
 {icon}
     ret
@@ -283,13 +376,27 @@ def patch():
 .equ rc_ring, {RC_RING:#06x}
 .equ DP_MAGIC, {DP_MAGIC:#06x}
 .equ DP_PEND, {DP_PEND:#06x}
-{GLUE.format(icon=icon)}
+{GLUE.format(icon=icon, adiag=ADIAG)}
 {body}
 .end
 """
 
 
+def diag_expected():
+    """dv as the simulator computes it: what the piano should send."""
+    m = Machine(compile_ray(expected_selftest()))
+    m.call("__cc_init")
+    m.call("adiag")
+    m.call("cdiag")
+    base = m.r.globals["dv"][0]
+    return [m.sim.rd(base + k) for k in range(32)]
+
+
 def main(argv):
+    if argv[:1] == ["--diag"]:
+        for k, v in enumerate(diag_expected()):
+            print("dv[%2d] = %#06x" % (k, v))
+        return
     if argv[:1] == ["--preview"]:
         m = Machine(compile_ray(expected_selftest()))
         m.call("__cc_init")
