@@ -49,6 +49,8 @@ def decode(x, lit):
             return "or", (hi & 7, ("r", lo))
         if (x & 0xF8F8) == 0xA800:
             return "sub", (hi & 7, ("r", lo))
+        if (x & 0xFFF8) == 0xD4C8:
+            return "mul", (lo & 7,)
         if (x & 0xF8F0) == 0xF090 and lo & 0xF:  # fR90 is st [abs]
             return "shl", (hi & 7, lo & 0xF)
         if (x & 0xF8F0) == 0xF0D0 and lo & 0xF:
@@ -91,6 +93,8 @@ def encode(op, args):
         return [0xD1CA]
     if op == "sub":
         return [0xA800 | args[0] << 8 | args[1][1]]
+    if op == "mul":
+        return [0xD4C8 | args[0]]
     if op in ("mov", "cmp", "add", "and", "or"):
         d, s = args
         if isinstance(s, tuple):  # register form
