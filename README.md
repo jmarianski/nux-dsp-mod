@@ -81,6 +81,23 @@ sudo udevadm control --reload && sudo udevadm trigger /dev/uinput
 
 Common options: `--config FILE`, `--port NAME` (part of the MIDI input name), `--dry-run`, `-v`.
 
+## On the piano's own display (work in progress)
+
+The long-term goal is Doom running on the NEK-100 itself, drawn on its 128x64 LCD, as a patch for
+[nek100-mod](../nek100-mod). Step 1 is a full-screen framebuffer test:
+
+```sh
+python3 firmware/splash.py                       # regenerates firmware/fb_splash.patch (our own code + image)
+cd ../nek100-mod
+python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin ../doom-piano/build/NEK100_DSP_fbsplash.bin \
+    -p boot_preset -p touch_off -p sustain_in_preset -p version_tag -p octave_per_part -p extra_menu \
+    -p ../doom-piano/firmware/fb_splash.patch
+python3 -m nuxdsp flash ../doom-piano/build/NEK100_DSP_fbsplash.bin   # piano in update mode
+```
+
+On the main screen, VOL+ or VOL- then shows the test card instead of redrawing the volume number. Built files contain
+NUX code: keep them local (`build/` is ignored). Flash the official file to go back.
+
 ## Development
 
 ```sh
