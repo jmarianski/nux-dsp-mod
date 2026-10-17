@@ -47,6 +47,7 @@ RAM = dict(dp_on=0x6500, dp_t=0x6501, dp_tk=0x6502, dp_sec=0x6503, dp_c0=0x6504,
            dp_i=0x650e, dp_k=0x650f, dp_v=0x6510, dp_ad=0x6511,
            dp_tab=0x6518, dp_div=0x6520, dp_fnt=0x6530)  # copied from far: tab 8, div 10, font 42 -> 0x6518..0x655a
 COUNTER = 0x295a
+DP_MAGIC = 0x600D
 
 
 def font_words():
@@ -84,7 +85,7 @@ def patch():
     pad = RAM["dp_fnt"] - RAM["dp_tab"] - len(tab) - len(div)
     assert pad >= 0 and RAM["dp_div"] == RAM["dp_tab"] + len(tab)
     data = tab + div + [0] * pad + font_words()
-    equs = "\n".join(".equ %s, %#06x" % kv for kv in RAM.items())
+    equs = "\n".join(".equ %s, %#06x" % kv for kv in list(RAM.items()) + [("DP_MAGIC", DP_MAGIC)])
     line_down = "\n".join("    add   r1, #128\n    st    [r1+0], r6" for _ in range(7))
     return f""".patch fb_test
 .title "doom-piano: VOL+/VOL- on the main screen starts/stops a framebuffer test (far data, game loop, timings)"
@@ -101,15 +102,15 @@ def patch():
 {equs}
 
 dp_vol:                                 ; start (card, then the loop) or stop
-    ld    r7, [dp_on]
-    cmp   r7, #0
-    beq   .start
+    ld    r7, [dp_on]                   ; on only while it holds DP_MAGIC: after init_all this RAM holds leftovers
+    li    r6, #DP_MAGIC                 ; of the ramdata copy (0x6b here), which crashed the first build at power-on
+    cmp   r7, r6
+    bne   .start
     mov   r7, #0
     st    [dp_on], r7
     ret
 .start:
-    mov   r7, #1
-    st    [dp_on], r7
+    st    [dp_on], r6
     mov   r7, #0
     st    [dp_t], r7
     st    [dp_tk], r7
@@ -145,8 +146,9 @@ dp_vol:                                 ; start (card, then the loop) or stop
 
 dp_tick:                                ; in place of tick_10ms's ccall lcd_refresh
     ld    r7, [dp_on]
-    cmp   r7, #0
-    beq   .refresh
+    li    r6, #DP_MAGIC
+    cmp   r7, r6
+    bne   .refresh
     ld    r7, [dp_t]
     add   r7, #1
     st    [dp_t], r7
@@ -246,10 +248,12 @@ dp_frame:
     ld    r6, [dp_dx]
     add   r7, r6
     st    [dp_x], r7
-    cmp   r7, #120
-    blt   .x1
-    li    r6, #0xffff
+    cmp   r7, #120                      ; bounce and clamp: the box is drawn at fb + page*128 + x, so x and y
+    blt   .x1                           ; must stay in range whatever the RAM held (the first build wrote far
+    li    r6, #0xffff                   ; outside the framebuffer from power-on leftovers and crashed)
     st    [dp_dx], r6
+    mov   r7, #120
+    st    [dp_x], r7
 .x1:
     cmp   r7, #33
     blt   .x2
@@ -257,6 +261,8 @@ dp_frame:
 .x2:
     mov   r6, #1
     st    [dp_dx], r6
+    mov   r7, #32
+    st    [dp_x], r7
 .x3:
     ld    r7, [dp_y]
     ld    r6, [dp_dy]
@@ -266,6 +272,8 @@ dp_frame:
     blt   .y1
     li    r6, #0xffff
     st    [dp_dy], r6
+    mov   r7, #56
+    st    [dp_y], r7
 .y1:
     cmp   r7, #1
     blt   .y2
@@ -273,6 +281,8 @@ dp_frame:
 .y2:
     mov   r6, #1
     st    [dp_dy], r6
+    mov   r7, #0
+    st    [dp_y], r7
 .y3:
     mov   r6, r7                        ; r6 = y & 7, r7 = page
     and   r6, #7
@@ -356,6 +366,8 @@ dp_frame:
     ld    r5, [dp_v]
     mov   r7, #0
 .dv:
+    cmp   r7, #9                        ; at most 9 per digit, whatever the RAM holds
+    beq   .dd
     cmp   r5, r6
     blt   .dd
     add   r5, r4
