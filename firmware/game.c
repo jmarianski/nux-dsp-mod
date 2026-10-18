@@ -18,7 +18,9 @@ void view_point(int x, int y);
 int light_factor(int light, unsigned s);
 void sprite_column(int x);
 
-int game_visible, game_mode, health, ammo, armor, kills, weapon;
+/* game_mode: 0 playing, 1 dead, 2 the exit reached, 3 the title, 4 the skill menu. skill: Doom's 0..4, 2 (hurt me
+ * plenty) the game as tuned. */
+int game_visible, game_mode, health, ammo, armor, kills, weapon, skill;
 int enemy_x[4], enemy_y[4];
 unsigned enemy_state[4], pickup_bits[4];
 int dynamic_height[DYN_SLOTS], moving_actor;
@@ -163,15 +165,15 @@ int ray_clear(int tx, int ty, int use)
     return 0;
 }
 
-/* Effects on channel 8 (GM gunshot; the music uses 4, 5, 6, 9): the pitch picks the sound, played low it is slower
- * and deeper (the fireball). */
+/* Effects on channel 7 (GM gunshot, applause at the exit; the music uses 4, 5, 6, 9, the style's drums 8): the
+ * pitch picks the sound, played low it is slower and deeper (the fireball). */
 void sound_at(int note, int velocity)
 {
 #if SILENT_AUDIO
     (void)note; (void)velocity;
 #else
-    if (sfx_timer) synth(0x0888, sfx_note << 8);
-    synth(0x0998, (note << 8) | velocity);
+    if (sfx_timer) synth(0x0887, sfx_note << 8);
+    synth(0x0997, (note << 8) | velocity);
     sfx_note = note; sfx_timer = note < 48 ? 10 : 3;   /* a low, slow one rings longer */
 #endif
 }
@@ -188,9 +190,19 @@ int far_velocity(int distance)
     return distance < 20 ? 20 : distance;
 }
 
+/* The exit: GM applause (program 126) for ~4 s; audio_restart sets the gunshot back. */
+void applause(void)
+{
+#if !SILENT_AUDIO
+    if (sfx_timer) synth(0x0887, sfx_note << 8);
+    synth(0x0cc7, 126 << 8); synth(0x0997, (60 << 8) | 127);
+    sfx_note = 60; sfx_timer = 140;
+#endif
+}
+
 void activate(int action)
 {
-    if (action == 255) { game_mode = 2; mu_stop(); return; }
+    if (action == 255) { game_mode = 2; mu_stop(); applause(); return; }
     if (action > 0 && action <= DYNAMIC_N) { dynamic_open |= 1 << (action - 1); sound(48); }
 }
 
@@ -231,6 +243,7 @@ void dynamic_tick(void)
 void damage(int amount)
 {
     int saved;
+    if (!skill) amount >>= 1;                  /* I'm too young to die: half the damage */
     saved = amount / 3; if (saved > armor) saved = armor;
     armor -= saved; health -= amount - saved; hurt = 12;    /* ~0.35 s: three frames or so */
     if (health <= 0) { health = 0; game_mode = 1; mu_stop(); }
@@ -265,6 +278,12 @@ void fire_game(void)
     else { enemy_state[best] &= 0x4000; kills++; }                           /* dying: the step counts up */
 }
 
+/* Logic turns between a monster's attacks: slower on the easy skills, faster on the hard ones. */
+int attack_rest(void)
+{
+    return skill < 2 ? 16 : skill == 2 ? 12 : skill == 3 ? 9 : 6;
+}
+
 void enemy_move(int i)
 {
     int oldx, oldy, oldz, dx, dy;
@@ -277,19 +296,20 @@ void enemy_move(int i)
     px = oldx; py = oldy; pz = oldz; moving_actor = -1;
 }
 
-/* Doom's imp fireball: 10 units a tic toward where the player stood. It flies to there and a little past (walls
+/* Doom's imp fireball: 10 units a tic (20 on nightmare) toward where the player stood. It flies to there and a little past (walls
  * behind the player hide it), bursting on the player within 20 units. */
 void ball_launch(int i)
 {
-    int dx, dy, ax, ay, len, vx, vy;
+    int dx, dy, ax, ay, len, vx, vy, speed;
+    speed = skill == 4 ? 20 : 10;              /* nightmare: the fast fireball */
     dx = px - enemy_x[i]; dy = py - enemy_y[i];
     ax = absval(dx); ay = absval(dy);
     len = ax > ay ? ax + (ay >> 1) : ay + (ax >> 1);             /* ~ the distance */
     if (len < 1) return;
-    vx = muldiv(dx, 10, len); vy = muldiv(dy, 10, len);
+    vx = muldiv(dx, speed, len); vy = muldiv(dy, speed, len);
     ball_x = enemy_x[i]; ball_y = enemy_y[i];
     ball_v = ((vx & 255) << 8) | (vy & 255);
-    ball_t = len / 10 + 8;
+    ball_t = len / speed + 8;
     sound_at(42, far_velocity(len));          /* the gunshot played low: slower, a whoosh */
 }
 
@@ -327,9 +347,9 @@ void enemy_tick(void)
     if (distance > 1024 || !ray_clear(enemy_x[i], enemy_y[i], 0)) return;
     cooldown = (enemy_state[i] >> 7) & 63;
     if (!cooldown && distance < 640) {
-        if (!(enemy_state[i] & 0x4000)) { damage(8); sound_at(62, far_velocity(distance)); cooldown = 12; }  /* zombie */
-        else if (distance < 64) { damage(10); sound_at(36, 100); cooldown = 12; }   /* imp, close: its claws */
-        else if (!ball_t) { ball_launch(i); cooldown = 12; }               /* imp: a fireball to dodge */
+        if (!(enemy_state[i] & 0x4000)) { damage(8); sound_at(62, far_velocity(distance)); cooldown = attack_rest(); }  /* zombie */
+        else if (distance < 64) { damage(10); sound_at(36, 100); cooldown = attack_rest(); }   /* imp, close: its claws */
+        else if (!ball_t) { ball_launch(i); cooldown = attack_rest(); }               /* imp: a fireball to dodge */
     } else if (cooldown) cooldown--;
     enemy_state[i] = (enemy_state[i] & 0xc07f) | (cooldown << 7);
     if (distance > 52) enemy_move(i);
@@ -337,7 +357,7 @@ void enemy_tick(void)
 
 void pickup_step(int i)
 {
-    int kind, x, y;
+    int kind, x, y, more;
     unsigned bit;
     bit = 1 << (i & 15); if (pickup_bits[i >> 4] & bit) return;
     readmap(8, (ENEMY_N + i) * 3, 3); x = buf[0]; y = buf[1]; kind = buf[2];
@@ -345,13 +365,14 @@ void pickup_step(int i)
     if (kind <= 5 && health >= (kind == 5 ? 200 : 100)) return;
     if (kind == 6 && armor >= 200) return;
     if ((kind == 7 || kind == 8) && ammo >= 200) return;
+    more = !skill || skill == 4;               /* ammo doubled, as Doom's easiest and nightmare */
     if (kind == 3) health += 10;
     if (kind == 4) health += 25;
     if (kind == 5) health++;
     if (kind == 6) armor++;
-    if (kind == 7) ammo += 10;
-    if (kind == 8) ammo += 50;
-    if (kind == 9) { weapon = 1; ammo += 8; }
+    if (kind == 7) ammo += 10 << more;
+    if (kind == 8) ammo += 50 << more;
+    if (kind == 9) { weapon = 1; ammo += 8 << more; }
     if (kind < 5 && health > 100) health = 100;
     if (ammo > 200) ammo = 200;
     pickup_bits[i >> 4] |= bit; sound(72);
@@ -379,7 +400,8 @@ void touch_specials(void)
 void audio_restart(void)
 {
 #if !SILENT_AUDIO
-    synth(0x0cc8, 127 << 8);
+    synth(0x0887, sfx_note << 8);              /* the applause, if it still rings */
+    synth(0x0cc7, 127 << 8);
     mu_restart(); mu_ok = 1; mu_last = CLOCK_LO; mu_us = 0;
 #endif
 }
@@ -398,23 +420,55 @@ void game_init(void)
     for (i = 0; i < DYNAMIC_N; i++) { readmap(9, i * 4, 4); dynamic_height[i] = buf[1]; }
     game_visible = 1;
 #if !SILENT_AUDIO
-    synth(0x0cc8, 127 << 8);                   /* GM gunshot on an unused E1M1 channel */
+    synth(0x0cc7, 127 << 8);                   /* GM gunshot on an unused E1M1 channel */
+#endif
+}
+
+int key_hit(int k)
+{
+    return (pressed & k) || ((held & k) && !(prev_held & k));
+}
+
+/* The title or the menu, drawn once by render state 6 (screen_draw), again whenever the cursor moves. */
+void show_screen(int mode)
+{
+    game_mode = mode; render_state = 6;
+}
+
+/* A new game at the chosen skill: the menu's choice, and the harnesses' start. */
+void start_game(void)
+{
+    px = START_X; py = START_Y; pa = START_A; game_init();
+    read_sector(sector_at(px, py)); pz = buf[0]; audio_restart();
+    render_state = 0;
+}
+
+/* The title waits for any key; the menu moves with forward/back and starts on fire, use or enter. */
+void menu_tick(void)
+{
+    if (game_mode == 3) { if (pressed | (held & ~prev_held)) show_screen(4); return; }
+    if (key_hit(20) && skill) { skill--; render_state = 6; }
+    if (key_hit(8) && skill < 4) { skill++; render_state = 6; }
+    if (key_hit(128 | 256 | 512)) start_game();
+}
+
+void sfx_tick(void)
+{
+#if !SILENT_AUDIO
+    if (sfx_timer && !--sfx_timer) synth(0x0887, sfx_note << 8);
 #endif
 }
 
 void game_tick(void)
 {
+    if (game_mode >= 3) { menu_tick(); prev_held = held; pressed = 0; return; }
     if (game_mode) {
-        if ((pressed & 512) || ((held & 512) && !(prev_held & 512))) {
-            px = START_X; py = START_Y; pa = START_A; game_init();
-            read_sector(sector_at(px, py)); pz = buf[0]; audio_restart();
-        }
+        sfx_tick();
+        if (key_hit(512)) show_screen(4);      /* dead or out: back to the skill menu */
         prev_held = held; pressed = 0; return;
     }
     if (shot_cd) shot_cd--; if (flash) flash--; if (hurt) hurt--;
-#if !SILENT_AUDIO
-    if (sfx_timer && !--sfx_timer) synth(0x0888, sfx_note << 8);
-#endif
+    sfx_tick();
     dynamic_tick();
     if (held & 0x5d) bob++; else bob = 0;      /* moving or strafing */
     steer();
@@ -637,6 +691,20 @@ void draw_overlay(void)
     draw_weapon();
     draw_hud();
     if (game_mode) end_overlay();
+}
+
+/* The title (game_mode 3) or the menu (4): a whole framebuffer from the font table, the menu's cursor drawn on it. */
+void screen_draw(void)
+{
+    int y;
+    fr_lo = map_lo[11] + SCREENS_AT + (game_mode - 3) * 1024;
+    fr_hi = map_hi[11] + (fr_lo < map_lo[11]);
+    fr_dst = (unsigned)framebuffer; fr_n = 1024; fr_mode = 0;
+    farcopy();
+    if (game_mode == 4) {
+        y = MENU_Y + MENU_STEP * skill;
+        rect(MENU_X - 6, y, 1, 5, 1); rect(MENU_X - 5, y + 1, 1, 3, 1); rect(MENU_X - 4, y + 2, 1, 1, 1);
+    }
 }
 
 void game_draw(void)

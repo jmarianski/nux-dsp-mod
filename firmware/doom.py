@@ -12,18 +12,21 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 sys.path.insert(0, str(HERE.parent / "cc"))
 import doommap
 import mathasm
+import screens
 import sprites
 import walltex
 import p16cc
 
 RAM = (0x6448, 0x662a)
 ORG = 0x1a280
+SCREENS_AT = 19 * 3                             # the font: 19 glyphs of 3 columns
 TABLES = ["vertices", "nodes", "subsecs", "segs", "sectors", "collision", "blockmap", "sine", "entities", "dynamics",
           "sprites", "font", "walltex"]
 
 
 def assets():
-    """The WAD's monster and pickup sprites (tools/sprites.py), and a 3x5 HUD font."""
+    """The WAD's monster and pickup sprites (tools/sprites.py), a 3x5 HUD font and after it (SCREENS_AT) the title and
+    menu screens (tools/screens.py)."""
     import fbtest
     import sprites
     import wad
@@ -33,7 +36,9 @@ def assets():
                  "I": ["###", ".#.", ".#.", ".#.", "###"], "E": ["###", "#..", "##.", "#..", "###"],
                  "/": ["..#", "..#", ".#.", "#..", "#.."]})
     font = [sum((rows[ch][y][x] == "#") << y for y in range(5)) for ch in "0123456789HAKWINDE/" for x in range(3)]
-    return {"sprites": sprites.words(wad.Wad()), "font": font}
+    if len(font) != SCREENS_AT:
+        raise ValueError("SCREENS_AT must be the font's length, %d" % len(font))
+    return {"sprites": sprites.words(wad.Wad()), "font": font + screens.words(wad.Wad())}
 
 
 def compile_doom(m=None, silent_audio=False, far=None):
@@ -53,6 +58,8 @@ def compile_doom(m=None, silent_audio=False, far=None):
            + f"#define IMP_BASE {sprites.IMP_BASE}\n#define ATTACK {sprites.ATTACK}\n#define PAIN {sprites.PAIN}\n"
            + f"#define DEATH {sprites.DEATH}\n#define PICKUP_BASE {sprites.PICKUP_BASE}\n"
            + f"#define BALL_BASE {sprites.BALL_BASE}\n#define DYN_SLOTS {max(1, len(getattr(m, 'dynamics', [])))}\n"
+           + f"#define SCREENS_AT {SCREENS_AT}\n#define MENU_X {screens.MENU_X}\n#define MENU_Y {screens.MENU_Y}\n"
+           + f"#define MENU_STEP {screens.MENU_STEP}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"
            + f"#define BLOCK_X {bx}\n#define BLOCK_Y {by}\n#define BLOCK_W {bw}\n#define BLOCK_H {bh}\n"
            + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define PICKUP_N {len(getattr(m, 'pickups', []))}\n"

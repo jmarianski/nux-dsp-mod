@@ -7,7 +7,7 @@ const path = JSON.parse(fs.readFileSync(process.argv[4]));
 const m = new P16(p,rayNatives());
 let frames=0, attempts=0, ticks=0;
 m.writeGuard = a => assert((a>=0x6448&&a<0x6448+p.ram_words)||(a>=0x662a&&a<0x6a2a)||[0x6a50,0x145,0x6d78,0x6d79].includes(a),'RAM spill '+a.toString(16));
-m.call('__cc_init');m.call('rc_start');
+m.call('__cc_init');m.call('rc_start');m.call('start_game');
 const s=v=>v&32768?v-65536:v;
 const pos=()=>[s(m.get('px')),s(m.get('py'))];
 function tick(n=1) {

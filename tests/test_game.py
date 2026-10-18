@@ -58,7 +58,7 @@ def test_cooperative_render_keeps_input_live_and_rejects_full_frame_callback(tmp
 const assert=require('node:assert/strict'),fs=require('fs');
 const {P16,rayNatives}=require(process.argv[2]);
 const p=JSON.parse(fs.readFileSync(process.argv[3]));
-const m=new P16(p,rayNatives());m.call('__cc_init');m.call('rc_start');
+const m=new P16(p,rayNatives());m.call('__cc_init');m.call('rc_start');m.call('start_game');
 assert(m.maxCallbackSteps.rc_start<50000);
 m.wr(m.sym('game_visible'),0);m.call('frame');
 const fb=p.mmio.framebuffer,expected=Array.from(m.ram.slice(fb,fb+1024));

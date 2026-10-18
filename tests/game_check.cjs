@@ -11,7 +11,7 @@ function machine() {
     assert((a >= 0x6448 && a < 0x6448 + p.ram_words) || (a >= 0x662a && a < 0x6a2a) ||
       [0x6a50, 0x145, 0x6d78, 0x6d79].includes(a), "RAM spill at 0x" + a.toString(16));
   };
-  m.call("__cc_init"); m.call("rc_start");
+  m.call("__cc_init"); m.call("rc_start"); m.call("start_game");
   for (let i = 0; i < 4; i++) { m.wr(m.sym("enemy_state") + i, 0); m.wr(m.sym("pickup_bits") + i, 65535); }
   return m;
 }
@@ -67,12 +67,13 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
   m.wr(m.sym("ammo"),0); m.call("pickup_tick"); assert.equal(m.get("ammo"),10);
   m.call("pickup_tick"); assert.equal(m.get("ammo"),10); peak(m);
 }
-// Enemy attacks can kill the player. Enter restarts all persistent state.
+// Enemy attacks can kill the player. Enter opens the skill menu, fire there restarts all persistent state.
 {
   const m = machine(); set(m,1056,-3616,0,64); enemy(m,1056,-3536);
   m.wr(m.sym("health"),8); m.call("game_tick"); assert.equal(m.get("game_mode"),1);
   assert.equal(m.get("health"),0);
-  m.call("rc_key",23,100); m.call("rc_key",23,0); m.call("game_tick");
+  m.call("rc_key",23,100); m.call("rc_key",23,0); m.call("game_tick"); assert.equal(m.get("game_mode"),4);
+  m.call("rc_key",72,100); m.call("rc_key",72,0); m.call("game_tick");
   assert.equal(m.get("game_mode"),0); assert.equal(m.get("health"),100); assert.equal(m.get("ammo"),50);
   assert(m.get("enemy_state") & 127); assert.equal(m.get("pickup_bits"),0); peak(m);
 }
@@ -81,12 +82,25 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
   const m = machine(); m.call("rc_key",72,100); m.call("rc_key",72,0); m.call("game_tick");
   assert.equal(m.get("ammo"),49); peak(m);
 }
-// The actual E1M1 exit switch ends the demo and Enter recovers to the start.
+// The actual E1M1 exit switch ends the demo; Enter, then fire in the menu, recovers to the start.
 {
   const m = machine(); set(m,2960,-4768,-24,128); m.call("use_game");
   assert.equal(m.get("game_mode"),2); m.call("frame");
-  m.call("rc_key",23,100); m.call("game_tick");
+  m.call("rc_key",23,100); m.call("game_tick"); m.call("rc_key",23,0); assert.equal(m.get("game_mode"),4);
+  m.call("rc_key",74,100); m.call("game_tick");
   assert.equal(m.get("game_mode"),0); assert.equal(m.get("px"),1056); peak(m);
+}
+// The title waits for any key; the menu's cursor moves with forward/back, within the five skills.
+{
+  const m = new P16(p, rayNatives()); m.call("__cc_init"); m.call("rc_start");
+  assert.equal(m.get("game_mode"),3); assert.equal(m.get("skill"),2);
+  m.call("rc_key",50,100); m.call("game_tick"); m.call("rc_key",50,0); assert.equal(m.get("game_mode"),4);
+  for (let k = 0; k < 3; k++) { m.call("rc_key",49,100); m.call("game_tick"); m.call("rc_key",49,0); m.call("game_tick"); }
+  assert.equal(m.get("skill"),0);
+  for (let k = 0; k < 6; k++) { m.call("rc_key",50,100); m.call("game_tick"); m.call("rc_key",50,0); m.call("game_tick"); }
+  assert.equal(m.get("skill"),4); assert.equal(m.get("render_state"),6);
+  m.call("rc_key",72,100); m.call("game_tick"); assert.equal(m.get("game_mode"),0); assert.equal(m.get("skill"),4);
+  peak(m);
 }
 assert(peakDepth <= 20, "call depth exceeds the hardware-characterized range");
 console.log(JSON.stringify({peakDepth,writes,ram:p.ram_words,program:p.budget.program.used}));

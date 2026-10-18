@@ -491,6 +491,7 @@ void frame_work(void)
         else if (render_state == 2) pickup_draw_work();
         else if (render_state == 3) enemy_draw_work();
         else if (render_state == 4) { draw_overlay(); render_state = 5; work += (game_mode ? 330 : 190) + (hurt ? 170 : 0); }   /* the frame: ~11k instructions */
+        else if (render_state == 6) { screen_draw(); render_state = 5; work += 200; }   /* title, menu: ~13k */
         else { nframe++; LCD_FLAG = LCD_FLAG | 1; render_state = 0; }
     }
     render_context = 0;
@@ -608,7 +609,7 @@ void rc_start(void)
     read_sector(sector_at(px, py)); pz = buf[0];
     audio_restart();
     ticks = nframe = logic_epoch = callback_stage = callback_count = 0;
-    frame_begin();
+    skill = 2; show_screen(3);                  /* the title; start_game begins the level */
 }
 
 void rc_tick(void)
@@ -627,7 +628,7 @@ void rc_tick(void)
     } else tick_start = work;
     callback_stage = 3;                         /* the rest of the tick's budget renders */
     if (nframe < 3 || callback_count < 64) trace(0x603);
-    if (!render_state) frame_begin();
+    if (!render_state && game_mode < 3) frame_begin();
     frame_work();
     callback_stage = 0;
     if (nframe < 3 || callback_count < 64) trace(0x600);
