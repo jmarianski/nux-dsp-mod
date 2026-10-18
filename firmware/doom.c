@@ -490,7 +490,7 @@ void frame_work(void)
         if (render_state == 1) bsp_work();
         else if (render_state == 2) pickup_draw_work();
         else if (render_state == 3) enemy_draw_work();
-        else if (render_state == 4) { draw_overlay(); render_state = 5; work += game_mode ? 330 : 190; }
+        else if (render_state == 4) { draw_overlay(); render_state = 5; work += (game_mode ? 330 : 190) + (hurt ? 170 : 0); }   /* the frame: ~11k instructions */
         else { nframe++; LCD_FLAG = LCD_FLAG | 1; render_state = 0; }
     }
     render_context = 0;
