@@ -265,14 +265,15 @@ function dirEntry(d, bank, prog) {
   throw `no instrument for bank ${bank} program ${prog}`;
 }
 const instrumentAddr = (d, a) => (d[a + 1] * 0x10000 + u16(d, a + 2)) * 2;
-// the zone records of all the layers of an instrument (soundbank.py zones())
-function zoneAddrs(d, inst) {
+// the zone records of an instrument, per layer (soundbank.py layers())
+function zoneLayers(d, inst) {
   const page = Math.floor(inst / 2 / 0x10000) * 0x10000, nl = d[inst + 1];
-  let o = inst + 2 + (d[inst] & 4 ? 2 : 0), n = 0;
-  for (let i = 0; i < nl; i++) n += u16(d, o + 2 * i) & 0x7f;
+  let o = inst + 2 + (d[inst] & 4 ? 2 : 0);
+  const counts = Array.from({length: nl}, (_, i) => u16(d, o + 2 * i) & 0x7f);
   o += 2 * nl;
-  return Array.from({length: n}, (_, i) => (page + u16(d, o + 6 * i + 4)) * 2);
+  return counts.map(n => { const zs = Array.from({length: n}, (_, i) => (page + u16(d, o + 6 * i + 4)) * 2); o += 6 * n; return zs; });
 }
+const zoneAddrs = (d, inst) => zoneLayers(d, inst).flat();
 // 18 bytes, or 22 for the stereo one (right channel's start X at +12)
 const blockLen = (d, o) => !d[o + 15] && d[o + 18] === 0x0e && d[o + 19] === 0x7f ? 18 : 22;
 function findSampleBlock(d, z) {
@@ -445,6 +446,21 @@ async function addInstruments(target, dsp, bank, items) {
     out[a + 1] = page; put16(out, a + 2, (base / 2) & 0xffff);
   });
   return out;
+}
+// the target's sustain sound (1.Grand Piano) decaying FACTOR times slower while held (soundbank.py longer_sustain)
+function longerSustain(target, dsp, bank, factor) {
+  const v = target.voices, [voice, floor] = v.soundbank.sustain;
+  if (!(factor >= 1 && factor <= 10)) throw "sustain factor: 1..10";
+  const b = bank.slice(), inst = instrumentAddr(b, dirEntry(b, ...voiceToBankProg(voiceBanks(v, dsp), voice)));
+  for (const layer of zoneLayers(b, inst)) {
+    if (layer.length < 2) continue;                      // the resonance layer: as it is
+    for (const z of layer) {
+      const sb = findSampleBlock(b, z), at = ampEnvAt(b.subarray(sb), 0);
+      if (at < 0 || (b[sb + at + 5] & 0xe0) !== 0x80) continue;   // holds while the key is held
+      b[sb + at + 4] = envRate(Math.max(envSeconds(b[sb + at + 4]), floor) * factor, false);
+    }
+  }
+  return b;
 }
 function nameWords(voice, name, polish) {
   const s = name ? `${voice}.${name}` : "", cs = [...s];

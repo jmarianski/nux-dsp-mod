@@ -19,13 +19,14 @@ Format, one entry per line, `;` starts a comment that is kept as the entry descr
     label   ADDR NAME            named location inside a function
     var     ADDR NAME [SIZE]     RAM variable (word address), optional size in words
     glyphs  TABLE BITMAPS COUNT  file word addresses of the glyph/image table and its bitmap data
-    soundbank NAME sha256 HEX template VOICE ZONE [loop VOICE ZONE] [piano VOICE ZONE] [pianomods FILTER VOLUME]
+    soundbank NAME sha256 HEX template VOICE ZONE [loop VOICE ZONE] [piano VOICE ZONE] [pianomods FILTER VOLUME] [sustain VOICE FLOOR]
                                  the official soundbank file instruments are added to, and the zone
                                  (sound number, zone index over all its layers) whose settings added
                                  instruments copy; instruments with loops copy the "loop" one when given,
                                  pianos (GM programs 0..7) the "piano" one, with its two velocity
                                  modulators (4 bytes each, hex: soundbank.vel_mods) replaced when
-                                 "pianomods" is given
+                                 "pianomods" is given; "sustain": the sound longer_sustain() slows
+                                 (soundbank.py)
 """
 import os
 import shlex
@@ -125,6 +126,8 @@ def load(path=None):
                 for i in range(7, len(t) - 2, 3):
                     if t[i] in ("loop", "piano"):
                         m.soundbank["template_" + t[i]] = (int(t[i + 1]), int(t[i + 2]))
+                    elif t[i] == "sustain":
+                        m.soundbank["sustain"] = (int(t[i + 1]), float(t[i + 2]))
                     elif t[i] == "pianomods":
                         m.soundbank["mods_piano"] = tuple(bytes.fromhex(t[i + j]) for j in (1, 2))
                         if any(len(x) != 4 for x in m.soundbank["mods_piano"]):

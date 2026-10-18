@@ -73,6 +73,16 @@ python3 -m nuxdsp export-sound NEK100_DSP_V1.0.7.bin NEK100_SBANK_V1.0.4.bin 462
 `export-sound` turns an official sound into a SoundFont, to compare a conversion with the original. Its samples
 are NUX's: keep the file to yourself, do not share or publish it.
 
+**Longer sustain for 1.Grand Piano** (`--sustain 3`, on the page a box in step 3): the factory grand decays in
+9–25 s while the key or the pedal is held (the high keys of its velocity 75–84 layer in 2–3 s); the option makes
+that N times slower (3: 27–76 s), first evening out zones faster than 9 s. Key release works as before. It changes
+only the soundbank (flash it as for instruments); chosen by ear on the NEK-100.
+
+```sh
+python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin NEK100_DSP_V1.0.7B_mod.bin \
+    --sbank NEK100_SBANK_V1.0.4.bin --sbank-out NEK100_SBANK_V1.0.4_mod.bin --sustain 3 --voice 500=cat_piano
+```
+
 ### Where to get SoundFonts
 
 - **[GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS)** (`GeneralUser-GS.sf2`, ~30 MB, 261
@@ -230,6 +240,11 @@ dalej FluidR3_GM (licencja MIT, w Linuksie pakiet `fluid-soundfont-gm`), pojedyn
 wybranego presetu, a strona pokazuje ich rozmiar. Do organów, smyczków i padów wybieraj presety oznaczone jako „z pętlą”.
 SoundFont z własnych sampli (np. z [Freesound](https://freesound.org)) robi `python3 -m nuxdsp pack` (opis wyżej). `nuxdsp export-sound` zapisuje fabryczne brzmienie jako SF2 do porównań; to sample NUX, więc taki plik zostaje u Ciebie, nie udostępniaj go. Soundbank rośnie o rozmiar sampli, a ile miejsca ma
 flash, jeszcze nie wiadomo, więc lepiej zaczynać od małych instrumentów.
+
+**Dłuższe wybrzmiewanie 1.Grand Piano** (`--sustain 3`, na stronie pole w kroku 3): fabryczny fortepian przy
+trzymanym klawiszu lub pedale wygasa w 9–25 s (a wysokie dźwięki warstwy velocity 75–84 w 2–3 s); opcja zwalnia to
+N razy (3: 27–76 s), wcześniej wyrównując strefy szybsze niż 9 s. Puszczenie klawisza działa jak dotąd. Zmienia
+tylko soundbank (wgrywasz go jak instrumenty); brzmienie dobrane na słuch na NEK-100.
 
 > **Na własne ryzyko.** To nieoficjalny projekt, niezwiązany z NUX ani Dream. Zmodyfikowany firmware może
 > naruszać warunki gwarancji. Zachowaj oryginalny plik: wgranie go z powrotem przywraca fabryczny stan.
