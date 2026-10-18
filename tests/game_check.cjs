@@ -12,14 +12,20 @@ function machine() {
       [0x6a50, 0x145, 0x6d78, 0x6d79].includes(a), "RAM spill at 0x" + a.toString(16));
   };
   m.call("__cc_init"); m.call("rc_start"); m.call("start_game");
-  for (let i = 0; i < 4; i++) { m.wr(m.sym("enemy_state") + i, 0); m.wr(m.sym("pickup_bits") + i, 65535); }
+  for (let i = 0; i < 4; i++) { m.wr(m.sym("enemy_state") + i, 0x7c00); m.wr(m.sym("pickup_bits") + i, 65535); }
+  for (let i = 0; i < 2; i++) m.wr(m.sym("roster_bits") + i, 65535);     // no monster comes into the slots
   return m;
+}
+// The first zombie's record in the entities table (kind 1 in its low byte).
+function zombie(m) {
+  const at = m.get("map_hi", 8) * 65536 + m.get("map_lo", 8);
+  for (let k = 0; ; k++) if ((m.farRead(at + 3 * k + 2) & 255) === 1) return k;
 }
 function set(m, x, y, z, a) {
   for (const [k, v] of Object.entries({px:x, py:y, pz:z, pa:a})) m.wr(m.sym(k), v);
 }
-function enemy(m, x, y, hp=20) {
-  m.wr(m.sym("enemy_x"), x); m.wr(m.sym("enemy_y"), y); m.wr(m.sym("enemy_state"), hp);
+function enemy(m, x, y, hp=20) {           // hp in points, stored in 2-point units
+  m.wr(m.sym("enemy_x"), x); m.wr(m.sym("enemy_y"), y); m.wr(m.sym("enemy_state"), (zombie(m) << 10) | (hp >> 1));
 }
 function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
 
@@ -40,30 +46,31 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
 {
   const m = machine(); set(m, 1488, -2496, 0, 0); enemy(m, 1600, -2496);
   assert.equal(m.call("can_move", 1544, -2496), 0);
-  m.call("fire_game"); assert.equal(m.get("enemy_state") & 127, 20);
+  m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 10);
   m.call("rc_key",74,100); m.call("rc_key",74,0); m.call("game_tick");
   assert.equal(m.get("dynamic_open") & 1, 1, "a tap shorter than one frame still uses the door");
   m.call("dynamic_tick"); assert.equal(m.call("ray_clear",1600,-2496,0),0, "a tiny door gap blocks sight");
   for (let i=0; i<12; i++) m.call("dynamic_tick");
   assert.equal(m.get("dynamic_height"), 68);
   assert.equal(m.call("can_move", 1544, -2496), 1);
-  m.wr(m.sym("shot_cd"), 0); m.call("fire_game"); assert.equal(m.get("enemy_state") & 127, 10);
-  m.wr(m.sym("shot_cd"), 0); m.call("fire_game"); assert.equal(m.get("enemy_state") & 127, 0);
+  m.wr(m.sym("shot_cd"), 0); m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 5);
+  m.wr(m.sym("shot_cd"), 0); m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 0);
   assert.equal(m.get("kills"), 1); assert.equal(m.get("ammo"), 47); peak(m);
 }
 // An opaque wall blocks hitscan, and empty ammo never damages a target.
 {
   const m = machine(); set(m, 1056, -3616, 0, 64); enemy(m, 1056, -2800);
-  m.call("fire_game"); assert.equal(m.get("enemy_state") & 127, 20);
+  m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 10);
   enemy(m, 1056, -3496); m.wr(m.sym("ammo"),0); m.wr(m.sym("shot_cd"),0);
-  m.call("fire_game"); assert.equal(m.get("enemy_state") & 127, 20); peak(m);
+  m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 10); peak(m);
 }
 // Pickups are persistent and do not grant their payload twice.
 {
   const m = machine();
   const data = p.far.find(s => s.addr === (m.get("map_hi",8)*65536 + m.get("map_lo",8))).words;
-  const i = Array.from({length:50}, (_,i)=>i).find(i => data[(4+i)*3+2] === 7);
-  set(m, data[(4+i)*3], data[(4+i)*3+1],0,0); m.wr(m.sym("pickup_bits") + (i>>4), 65535 & ~(1 << (i&15)));
+  let e = 0; while (data[e*3+2] > 255) e++;       // the monsters' records carry skill flags in the high byte
+  const i = Array.from({length:50}, (_,i)=>i).find(i => data[(e+i)*3+2] === 7);
+  set(m, data[(e+i)*3], data[(e+i)*3+1],0,0); m.wr(m.sym("pickup_bits") + (i>>4), 65535 & ~(1 << (i&15)));
   m.wr(m.sym("ammo"),0); m.call("pickup_tick"); assert.equal(m.get("ammo"),10);
   m.call("pickup_tick"); assert.equal(m.get("ammo"),10); peak(m);
 }
@@ -75,7 +82,8 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
   m.call("rc_key",23,100); m.call("rc_key",23,0); m.call("game_tick"); assert.equal(m.get("game_mode"),4);
   m.call("rc_key",72,100); m.call("rc_key",72,0); m.call("game_tick");
   assert.equal(m.get("game_mode"),0); assert.equal(m.get("health"),100); assert.equal(m.get("ammo"),50);
-  assert(m.get("enemy_state") & 127); assert.equal(m.get("pickup_bits"),0); peak(m);
+  for (let i = 0; i < 4; i++) { const st = m.get("enemy_state", i); assert((st & 31) || (st & 0x7c00) === 0x7c00, "no corpse left"); }
+  assert.equal(m.get("pickup_bits"),0); peak(m);
 }
 // A short fire tap is latched until the next game frame.
 {
@@ -100,6 +108,22 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
   for (let k = 0; k < 6; k++) { m.call("rc_key",50,100); m.call("game_tick"); m.call("rc_key",50,0); m.call("game_tick"); }
   assert.equal(m.get("skill"),4); assert.equal(m.get("render_state"),6);
   m.call("rc_key",72,100); m.call("game_tick"); assert.equal(m.get("game_mode"),0); assert.equal(m.get("skill"),4);
+  peak(m);
+}
+// Slots: on ultra-violence the shotgun guy by the start comes in; far behind the player he gives way to a nearer one
+// and goes back to the roster. Hurt me plenty has nobody that near.
+{
+  const m = new P16(p, rayNatives()); m.call("__cc_init"); m.call("rc_start");
+  m.call("start_game");
+  for (let i = 0; i < 4; i++) assert.equal(m.get("enemy_state", i), 0x7c00);
+  m.wr(m.sym("skill"), 3); m.call("start_game");
+  const st = m.get("enemy_state", 0), k = (st >> 10) & 31;
+  const met = (r) => m.get("roster_bits", r >> 4) & (1 << (r & 15));
+  assert.equal(st & 31, 15, "a shotgun guy: 30 points"); assert(met(k));
+  set(m, 3000, -3584, 0, 0); for (let n = 0; n < 4; n++) m.call("slot_tick");
+  const moved = Array.from({length:4}, (_, i) => (m.get("enemy_state", i) >> 10) & 31);
+  assert(moved.every(r => r !== 31), "the far end has its own monsters");
+  assert(!moved.includes(k) && !met(k), "the far one was evicted, whole");
   peak(m);
 }
 assert(peakDepth <= 20, "call depth exceeds the hardware-characterized range");

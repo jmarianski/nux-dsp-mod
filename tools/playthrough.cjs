@@ -32,14 +32,14 @@ function use() {key(74,true);tick();key(74,false);tick();}
 function combat() {
  for(let retry=0;retry<4;retry++) {
   let best=-1, distance=641;
-  for(let i=0;i<4;i++) if(m.get('enemy_state',i)&127) {
+  for(let i=0;i<4;i++) if(m.get('enemy_state',i)&31) {
    const d=Math.abs(s(m.get('enemy_x',i))-pos()[0])+Math.abs(s(m.get('enemy_y',i))-pos()[1]);
    if(d<distance&&m.call('ray_clear',m.get('enemy_x',i),m.get('enemy_y',i),0)){best=i;distance=d;}
   }
   if(best<0)return;
   let a=Math.round(Math.atan2(s(m.get('enemy_y',best))-pos()[1],s(m.get('enemy_x',best))-pos()[0])*128/Math.PI/4)*4;
   a=(a+256)&255;turn(a);key(72,true);
-  for(let k=0;k<70&&(m.get('enemy_state',best)&127);k++)tick();
+  for(let k=0;k<70&&(m.get('enemy_state',best)&31);k++)tick();
   key(72,false);
  }
 }

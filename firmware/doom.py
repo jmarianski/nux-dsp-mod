@@ -41,7 +41,11 @@ def assets():
     return {"sprites": sprites.words(wad.Wad()), "font": font + screens.words(wad.Wad())}
 
 
-def compile_doom(m=None, silent_audio=False, far=None):
+SFX_DRUMS = False                               # builddemo --sfx drums: effects on the GM drums, for a soundbank without
+                                                # the gunshot at program 127 (500)
+
+
+def compile_doom(m=None, silent_audio=False, far=None, sfx_drums=None):
     m = m or doommap.Map()
     # The fixed explicit stack must cover the deepest front-to-back BSP path.
     def depth(n):
@@ -62,7 +66,11 @@ def compile_doom(m=None, silent_audio=False, far=None):
            + f"#define MENU_STEP {screens.MENU_STEP}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"
            + f"#define BLOCK_X {bx}\n#define BLOCK_Y {by}\n#define BLOCK_W {bw}\n#define BLOCK_H {bh}\n"
-           + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define PICKUP_N {len(getattr(m, 'pickups', []))}\n"
+           + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define SERGEANT_BASE {sprites.SERGEANT_BASE}\n"
+           + "".join(f"#define ENEMY_{name} {sum(1 for e in getattr(m, 'enemies', []) if e[2] >> 8 & bit)}\n"
+                     for name, bit in (("EASY", 1), ("MEDIUM", 2), ("HARD", 4)))
+           + f"#define SFX_DRUMS {int(SFX_DRUMS if sfx_drums is None else sfx_drums)}\n"
+           + f"#define PICKUP_N {len(getattr(m, 'pickups', []))}\n"
            + f"#define DYNAMIC_N {len(getattr(m, 'dynamics', []))}\n")
     src = (HERE / "doom.c").read_text().replace(
         "/* MUSIC_SOURCE: inserted by ray.py / doom.py, shared by both engines. */", (HERE / "music.c").read_text())

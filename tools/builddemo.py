@@ -91,6 +91,9 @@ if __name__ == "__main__":
     p.add_argument("--firmware", type=Path, default=ROOT.parent / "NEK100_DSP_V1.0.7.bin")
     p.add_argument("--extra", nargs="*", default=["battery_percent"],
                    help="optional nek100-mod patches to add (default: battery_percent; --extra alone: none)")
+    p.add_argument("--sfx", choices=["shot", "drums"], default="shot",
+                   help="effects: the GM gunshot (program 127, soundbank slot 500) or the GM drums")
     p.add_argument("--silent", action="store_true", help="no music and no sound effects: the game sends nothing to the synth")
     args = p.parse_args()
+    doom.SFX_DRUMS = args.sfx == "drums"
     build(args.firmware, ROOT / "build", silent_audio=args.silent, extra=args.extra)

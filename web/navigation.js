@@ -47,11 +47,11 @@ class Navigation {
     c.drawImage(this.background, 0, 0);
     for (let i = 0; i < this.program.navigation.enemy_count; i++) {
       const state = machine.get("enemy_state", i);
-      if (!(state & 127)) continue;
+      if (!(state & 31)) continue;
       const x = (machine.get("enemy_x", i) << 16) >> 16, y = (machine.get("enemy_y", i) << 16) >> 16;
       const [sx, sy] = this.point(x, y);
       c.fillStyle = "#ff726a"; c.beginPath(); c.arc(sx, sy, 5, 0, Math.PI * 2); c.fill();
-      if (i === this.program.navigation.target) {
+      if (((state >> 10) & 31) === this.program.navigation.target) {
         c.strokeStyle = "#ffce62"; c.lineWidth = 2; c.beginPath(); c.arc(sx, sy, 10, 0, Math.PI * 2); c.stroke();
         c.fillStyle = "#ffce62"; c.font = "14px system-ui"; c.fillText("pierwszy żołnierz", sx - 45, sy - 18);
       }

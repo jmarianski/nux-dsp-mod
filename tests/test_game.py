@@ -93,6 +93,6 @@ def test_actual_firmware_can_finish_e1m1(tmp_path):
                     str(tmp_path / "linked-game.json"), str(tmp_path / "route.json")],
                    capture_output=True, text=True, check=True)
     result = json.loads((tmp_path / "playthrough-result.json").read_text())
-    assert result["result"] == "WIN" and result["kills"] == 4 and result["health"] > 0
+    assert result["result"] == "WIN" and result["kills"] == 6 and result["health"] > 0
     assert summary["ram"]["used"] <= summary["ram"]["limit"]
     assert summary["firmware"]["used"] <= summary["firmware"]["limit"]
