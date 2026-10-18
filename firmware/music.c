@@ -48,7 +48,9 @@ void mu_restart(void)
 }
 
 
-unsigned mu_scale(int c) { return mvol[c] * DEV_VOL / 10; }
+/* Channel c's volume under VOL: the music at 40% of what the song asks (the effects must be heard over it), the
+ * effects' channel 8 at full. */
+unsigned mu_scale(int c) { return c == 8 ? 127 * DEV_VOL / 10 : mvol[c] * DEV_VOL / 25; }
 
 void mu_volumes(void)                           /* all channels' volume again, after VOL changed */
 {
