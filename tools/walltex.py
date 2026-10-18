@@ -9,7 +9,7 @@ screen as the view moves. Flats are one gray each (their mean), the sky is pre-d
 LCD pixel, as it moves rigidly with the view angle.
 
 walltex table layout (16-bit words, offsets from its start):
-    THR_AT     thresholds: [light 0..31][x & 3][y & 3] -> the smallest gray drawn there
+    THR_AT     thresholds: [light 0..31][x & 3][y & 3] -> the smallest gray left bright (not inked) there
     SKYANG_AT  per screen column: the sky's column offset (atan of the column, 1024 per turn)
     SKY_AT     sky: 128 columns x 4 words, 64 rows of bits (row 16 + y on screen row y)
     FLATS_AT   per sector: floor gray | ceiling gray << 4 | 256 for a sky ceiling
@@ -28,13 +28,14 @@ ROWS = 32                                       # texel rows a column: 128 map u
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 THR_AT, SKYANG_AT, SKY_AT = 0, 512, 640
 FLATS_AT = SKY_AT + 512
-CONTRAST = 1.5                                  # local contrast boost over the 3x3 texel mean
-GAMMA = 0.8                                     # gray = 16 * (luminance / 255) ** GAMMA, before the contrast
-GAIN = 20                                       # light factor at full brightness: a 1-bit LCD looks darker
+CONTRAST = 2.0                                  # local contrast boost over the 3x3 texel mean
+GAMMA = 0.6                                     # gray = 16 * (luminance / 255) ** GAMMA, before the contrast
+GAIN = 25                                       # light factor at full brightness: a 1-bit LCD looks darker
 
 
 def threshold(light, x, y):
-    """Gray g is drawn at (x, y) under light L (16 = as stored) when g * L > 16 * bayer + 8."""
+    """Gray g is bright at (x, y) under light L (16 = as stored) when g * L > 16 * bayer + 8, i.e. g >= this;
+    below it the pixel is inked."""
     t = BAYER[y & 3][x & 3] * 16 + 8
     return t // light + 1 if light else 16
 
@@ -157,8 +158,9 @@ def sky_bits(img):
     for r in range(64):
         for c in range(width // 2):
             v = g[r][c]
-            out[r][c] = int(v >= 0.5)
-            e = v - out[r][c]
+            bright = int(v >= 0.5)
+            out[r][c] = 1 - bright             # ink is dark on the LCD
+            e = v - bright
             for dr, dc, k in ((0, 1, 7), (1, -1, 3), (1, 0, 5), (1, 1, 1)):
                 if r + dr < 64 and 0 <= c + dc < width // 2:
                     g[r + dr][c + dc] += e * k / 16

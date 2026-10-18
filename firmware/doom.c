@@ -111,7 +111,7 @@ void view_vertex(unsigned v)
 }
 
 int x1, z1, x2, z2, sx1, sx2, s1, s2;
-int ff, fc, fl, bf, bc, corner;
+int ff, fc, fl, bf, bc, corner;              /* corner: bit 0 the seg starts its linedef, bit 1 ends it */
 unsigned back_sector;
 int tex_u1, tex_u2, tex_top, tex_width;
 unsigned tex_base, tex_col[8], thr[4], front_flats;
@@ -124,7 +124,7 @@ void seg_data(unsigned k)
 {
     unsigned v1, v2, front, material;
     readmap(3, k * 5, 5);
-    v1 = buf[0]; v2 = buf[1]; front = buf[2]; back_sector = buf[3]; corner = buf[4] & 1; material = buf[4] >> 1;
+    v1 = buf[0]; v2 = buf[1]; front = buf[2]; back_sector = buf[3]; corner = buf[4] & 3; material = buf[4] >> 2;
     view_vertex(v1); x1 = vx; z1 = vz;
     view_vertex(v2); x2 = vx; z2 = vz;
     read_sector(front); ff = buf[0]; fc = buf[1]; fl = buf[2];
@@ -187,14 +187,14 @@ unsigned span(int lo, int hi)
 
 int col, top, bot, edge;
 
-/* Rows lo..hi-1 of the column in one gray: its Bayer pattern is the same every 4 rows. */
+/* Rows lo..hi-1 of the column in one gray, inked below the threshold: the pattern repeats every 4 rows. */
 void tone(int lo, int hi, unsigned g)
 {
     unsigned bits;
     int p;
     if (lo >= hi) return;
     work += 2 + ((hi - lo) >> 3);
-    bits = (g >= thr[0]) | (g >= thr[1]) << 1 | (g >= thr[2]) << 2 | (g >= thr[3]) << 3;
+    bits = (g < thr[0]) | (g < thr[1]) << 1 | (g < thr[2]) << 2 | (g < thr[3]) << 3;   /* ink is dark */
     bits = bits | bits << 4;
     for (p = lo >> 3; p <= (hi - 1) >> 3; p++) framebuffer[p * 128 + col] |= bits & span(lo - p * 8, hi - p * 8);
 }
@@ -226,17 +226,50 @@ void load_material(unsigned material)
     cached_material = material;
 }
 
-/* Rows lo..hi-1 of texture column tex_col: 1/256 texel steps of z a row, a gray drawn where it is >= thr[y & 3]
+/* Rows lo..hi-1 of texture column tex_col: 1/256 texel steps of z a row, a gray inked where it is < thr[y & 3]
  * (firmware/mathasm.py; the C it replaced: git history). The locals only give the asm room to save registers. */
 void texels(int lo, int hi, unsigned v, unsigned z) { unsigned s0, s2, s3; /* ASM texels */ }
 
-/* Wall rows a..b-1 within the window: lit top and bottom rows, a dark line at a corner, the texture between. */
+void ink_rows(int lo, int hi)
+{
+    int p;
+    for (p = lo >> 3; p <= (hi - 1) >> 3; p++) framebuffer[p * 128 + col] |= span(lo - p * 8, hi - p * 8);
+}
+
+/* Column x of the set-up sprite (game.c), in front of the wall there: 4-bit grays as the walls, 14 its light
+ * edge, 15 transparent (firmware/mathasm.py sprite_texels). Rows below 56 belong to the HUD. */
+void sprite_texels(int lo, int hi, unsigned v, unsigned z) { unsigned s0, s2, s3, clear; /* ASM sprite_texels */ }
+
+void sprite_column(int x)
+{
+    int lo, hi;
+    unsigned u;
+    work += 1;
+    u = (unsigned)spr_u >> 8;
+    if (x < 0 || u >= spr_cols) return;
+    if ((windows[x] & 0x8000) && spr_scale < (windows[x] & 0x7fff)) return;
+    lo = spr_top < 0 ? 0 : spr_top; hi = spr_bot > 56 ? 56 : spr_bot;
+    if (lo >= hi) return;
+    work += 2 + ((hi - lo) >> 1);
+    readmap(12, THR_AT + ((spr_light << 2) + (x & 3)) * 4, 4);
+    thr[0] = buf[0]; thr[1] = buf[1]; thr[2] = buf[2]; thr[3] = buf[3];
+    fr_lo = map_lo[10] + spr_base + u * 8;
+    fr_hi = map_hi[10] + (fr_lo < map_lo[10]);
+    fr_dst = (unsigned)tex_col; fr_n = 8; fr_mode = 0;
+    farcopy();
+    col = x;
+    sprite_texels(lo, hi, spr_v0 + lo * spr_dz, spr_dz);
+}
+
+/* Wall rows a..b-1 within the window: inked top and bottom rows, an inked column where the linedef starts or
+ * ends, the texture between. */
 void material_wall(int a, int b, unsigned material, int s)
 {
     int lo, hi, u;
     unsigned z;
     lo = a > top ? a : top; hi = b < bot ? b : bot;
-    if (lo >= hi || edge) return;
+    if (lo >= hi) return;
+    if (edge) { ink_rows(lo, hi); return; }
     if (lo == a) framebuffer[(a >> 3) * 128 + col] |= 1 << (a & 7);
     if (hi == b) framebuffer[((b - 1) >> 3) * 128 + col] |= 1 << ((b - 1) & 7);
     if (!material) { tone(lo, hi, 8); return; }
@@ -260,7 +293,7 @@ void draw_column(void)
     s = s1 + muldiv(s2 - s1, col - sx1, sx2 - sx1);
     yc = screen_y(fc, s); yf = screen_y(ff, s);
     work += 6;
-    edge = corner && col == sx1;
+    edge = (corner & 1) && col == sx1 && !clip_u1 || (corner & 2) && col == sx2 - 1 && clip_u2 == 16384;
     readmap(12, THR_AT + ((light_factor(fl, s) << 2) + (col & 3)) * 4, 4);
     thr[0] = buf[0]; thr[1] = buf[1]; thr[2] = buf[2]; thr[3] = buf[3];
     if (front_flats & 256) sky(top, yc < bot ? yc : bot);

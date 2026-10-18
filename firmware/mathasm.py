@@ -149,7 +149,7 @@ def _tx_store():
 
 def texels():
     """texels(lo, hi, v, z): rows lo..hi-1 of column col, texture row (v >> 8) & 31 of tex_col (4-bit grays, four
-    a word) drawn where it is >= thr[y & 3]; v += z a row. A page's bits are gathered, then or-ed in once.
+    a word) inked where it is < thr[y & 3]; v += z a row. A page's bits are gathered, then or-ed in once.
     r0 = y, r2 = bits, r3 = this row's bit, r4 = v, r5 = z; r0, r2, r3 are saved in the frame's locals."""
     f = "texels__f"
     out = [f"st    [{f}+4], r0", f"st    [{f}+5], r2", f"st    [{f}+6], r3",
@@ -163,7 +163,7 @@ def texels():
             "cmp   r6, #2", "blt   .txa", "shr   r7, 8", ".txa:",
             "and   r6, #1", "cmp   r6, #0", "beq   .txb", "shr   r7, 4", ".txb:", "and   r7, #15",
             "mov   r6, r0", "and   r6, #3", "li    r1, #thr", "add   r1, r6", "ld    r6, [r1+0]",
-            "cmp   r7, r6", "blt   .txo", "or    r2, r3", ".txo:",
+            "cmp   r7, r6", "blt   .txi", "jmp   .txo", ".txi:", "or    r2, r3", ".txo:",   # ink below the threshold
             "shl   r3, 1", "add   r4, r5", "add   r0, #1",
             "mov   r6, r0", "and   r6, #7", "cmp   r6, #0", "bne   .txc"] + _tx_store()
     out += [".txc:", f"ld    r7, [{f}+1]", "cmp   r0, r7", "blt   .txp",
@@ -172,8 +172,39 @@ def texels():
     return out
 
 
+def sprite_texels():
+    """As texels, for a sprite column: nibble 15 leaves the pixel, 14 clears it (the light edge), a gray below
+    thr[y & 3] inks it and above it clears it. The page becomes (old & ~clear) | ink; clear is the frame's word 7."""
+    f = "sprite_texels__f"
+    store = ["mov   r1, r0", "li    r7, #0xffff", "add   r1, r7", "shr   r1, 3", "shl   r1, 7", "ld    r6, [col]",
+             "add   r1, r6", "li    r6, #framebuffer", "add   r1, r6", f"ld    r6, [{f}+7]", "li    r7, #0xffff",
+             "sub   r7, r6", "ld    r6, [r1+0]", "and   r6, r7", "or    r6, r2", "st    [r1+0], r6",
+             "mov   r2, #0", "mov   r3, #1", "mov   r6, #0", f"st    [{f}+7], r6"]
+    out = [f"st    [{f}+4], r0", f"st    [{f}+5], r2", f"st    [{f}+6], r3",
+           f"ld    r0, [{f}+0]", f"ld    r4, [{f}+2]", f"ld    r5, [{f}+3]", "mov   r2, #0", "mov   r3, #1",
+           "mov   r6, #0", f"st    [{f}+7], r6", "mov   r6, r0", "and   r6, #7",
+           ".spm:", "cmp   r6, #0", "beq   .spl", "shl   r3, 1", "li    r7, #0xffff", "add   r6, r7", "jmp   .spm",
+           ".spl:", f"ld    r7, [{f}+1]", "cmp   r0, r7", "blt   .spp", "jmp   .spe"]
+    out += [".spp:", "mov   r6, r4", "shr   r6, 10", "and   r6, #7",
+            "li    r1, #tex_col", "add   r1, r6", "ld    r7, [r1+0]",
+            "mov   r6, r4", "shr   r6, 8", "and   r6, #3",
+            "cmp   r6, #2", "blt   .spa", "shr   r7, 8", ".spa:",
+            "and   r6, #1", "cmp   r6, #0", "beq   .spb", "shr   r7, 4", ".spb:", "and   r7, #15",
+            "cmp   r7, #15", "beq   .spn",                                   # transparent
+            f"ld    r6, [{f}+7]", "or    r6, r3", f"st    [{f}+7], r6",       # the sprite covers this pixel
+            "cmp   r7, #14", "beq   .spn",                                   # its edge: cleared, never inked
+            "mov   r6, r0", "and   r6, #3", "li    r1, #thr", "add   r1, r6", "ld    r6, [r1+0]",
+            "cmp   r7, r6", "blt   .spi", "jmp   .spn", ".spi:", "or    r2, r3",
+            ".spn:", "shl   r3, 1", "add   r4, r5", "add   r0, #1",
+            "mov   r6, r0", "and   r6, #7", "cmp   r6, #0", "bne   .spc"] + store
+    out += [".spc:", f"ld    r7, [{f}+1]", "cmp   r0, r7", "bne   .spq", "jmp   .spz", ".spq:", "ljmp  .spp", ".spz:",
+            "mov   r6, r0", "and   r6, #7", "cmp   r6, #0", "beq   .spe"] + store
+    out += [".spe:", f"ld    r0, [{f}+4]", f"ld    r2, [{f}+5]", f"ld    r3, [{f}+6]", "ret"]
+    return out
+
+
 FUNCTIONS = {"umul32": umul32, "smul32": smul32, "fmul": fmul, "muldiv": muldiv, "screen_y": screen_y,
-             "texels": texels}
+             "texels": texels, "sprite_texels": sprite_texels}
 
 
 def insert(src):

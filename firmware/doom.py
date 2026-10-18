@@ -12,6 +12,7 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 sys.path.insert(0, str(HERE.parent / "cc"))
 import doommap
 import mathasm
+import sprites
 import walltex
 import p16cc
 
@@ -22,47 +23,17 @@ TABLES = ["vertices", "nodes", "subsecs", "segs", "sectors", "collision", "block
 
 
 def assets():
-    """Small original silhouettes with a one-pixel light outline, and a 3x5 HUD font."""
+    """The WAD's monster and pickup sprites (tools/sprites.py), and a 3x5 HUD font."""
     import fbtest
+    import sprites
+    import wad
     rows = dict(fbtest.FONT_ROWS)
     rows.update({"H": ["#.#", "#.#", "###", "#.#", "#.#"], "A": [".#.", "#.#", "###", "#.#", "#.#"],
                  "K": ["#.#", "#.#", "##.", "#.#", "#.#"], "W": ["#.#", "#.#", "###", "###", "#.#"],
                  "I": ["###", ".#.", ".#.", ".#.", "###"], "E": ["###", "#..", "##.", "#..", "###"],
                  "/": ["..#", "..#", ".#.", "#..", "#.."]})
     font = [sum((rows[ch][y][x] == "#") << y for y in range(5)) for ch in "0123456789HAKWINDE/" for x in range(3)]
-    human = ["........", "..####..", "..#oo#..", "..####..", "...##...", "..####..", ".######.", ".######.",
-             ".#.##.#.", "...##...", "..####..", "..#..#..", "..#..#..", "..#..#..", ".##..##.", "........"]
-    imp = ["........", "..#..#..", "..####..", "..#oo#..", "..####..", ".######.", ".######.", ".#.##.#.",
-           "...##...", "..####..", "..####..", "..#..#..", "..#..#..", ".##..##.", "........", "........"]
-    shapes = [human, imp]
-    for kind in range(3, 10):
-        shape = [list("........") for _ in range(16)]
-        for y in range(5, 12):
-            for x in range(1, 7):
-                shape[y][x] = "#"
-        if kind in (3, 4, 5):
-            for y in range(6, 11): shape[y][3] = "o"
-            for x in range(2, 6): shape[8][x] = "o"
-        elif kind == 6:
-            for y in range(6, 11):
-                shape[y][2] = shape[y][5] = "o"
-        elif kind == 9:
-            shape = [list("........") for _ in range(16)]
-            for x in range(1, 7): shape[7][x] = shape[8][x] = "#"
-            for y in range(9, 12): shape[y][5] = "#"
-        else:
-            for y in range(6, 11): shape[y][3] = "o"
-        shapes.append(shape)
-    sprites = []
-    for shape in shapes:
-        for y in range(16):
-            mask = ink = 0
-            for x in range(8):
-                if shape[y][x] == "#": ink |= 1 << x
-                if any(shape[yy][xx] != "." for yy in range(max(0, y - 1), min(16, y + 2))
-                       for xx in range(max(0, x - 1), min(8, x + 2))): mask |= 1 << x
-            sprites += [mask, ink]
-    return {"sprites": sprites, "font": font}
+    return {"sprites": sprites.words(wad.Wad()), "font": font}
 
 
 def compile_doom(m=None, silent_audio=False, far=None):
@@ -77,6 +48,8 @@ def compile_doom(m=None, silent_audio=False, far=None):
     pre = (f"#define SILENT_AUDIO {int(silent_audio)}\n#define FAR {far or doommap.FAR}\n"
            + f"#define THR_AT {walltex.THR_AT}\n#define SKYANG_AT {walltex.SKYANG_AT}\n#define SKY_AT {walltex.SKY_AT}\n"
            + f"#define FLATS_AT {walltex.FLATS_AT}\n#define GAIN {walltex.GAIN}\n"
+           + f"#define IMP_BASE {sprites.IMP_BASE}\n#define ATTACK {sprites.ATTACK}\n#define PAIN {sprites.PAIN}\n"
+           + f"#define DEATH {sprites.DEATH}\n#define PICKUP_BASE {sprites.PICKUP_BASE}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"
            + f"#define BLOCK_X {bx}\n#define BLOCK_Y {by}\n#define BLOCK_W {bw}\n#define BLOCK_H {bh}\n"
            + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define PICKUP_N {len(getattr(m, 'pickups', []))}\n"

@@ -7,7 +7,7 @@ Map words (all 16-bit, coordinates in map units):
     node     x, y, dx, dy, right child, left child, right bbox[4], left bbox[4]
              child bit 15: a subsector; bbox order: top, bottom, left, right (14 words total)
     subsec   first seg, seg count, sector
-    seg      v1, v2, front sector, back sector (0xffff: one-sided), flags (corner bit 0, surface offset in bits 1..15)
+    seg      v1, v2, front sector, back sector (0xffff: one-sided), flags (bit 0: starts its linedef, bit 1: ends it; surface offset in bits 2..15)
     sector   floor, ceiling, light
     collision x1, y1, x2, y2, front sector, back sector (0xffff: blocking)
     blockmap  cell offsets, then lists of collision-line indices terminated by 0xffff
@@ -97,7 +97,8 @@ class Map:
                     surfaces[slot] = (texture_name, sd[0] + off, sd[0] + off + length, sd[1], anchor)
             if surfaces:
                 self.wall_surfaces[len(self.segs)] = surfaces
-            self.segs.append((v1, v2, front, back, 1 if off == 0 else 0))
+            ends = v2 == (ld[1] if side == 0 else ld[0])
+            self.segs.append((v1, v2, front, back, (1 if off == 0 else 0) | (2 if ends else 0)))
         walltex.load(self, w)
         self.subsecs = [(first, n, self.segs[first][2]) for n, first in rec("SSECTORS", "<HH")]
         self.root = len(self.nodes) - 1
@@ -167,7 +168,7 @@ class Map:
         for i, action in enumerate(getattr(self, "actions", [])):
             lines[i][4] |= action << 8
         textures, offsets = walltex.pack(self)
-        segs = [(*seg[:4], seg[4] | offsets.get(i, 0) << 1) for i, seg in enumerate(self.segs)]
+        segs = [(*seg[:4], seg[4] | offsets.get(i, 0) << 2) for i, seg in enumerate(self.segs)]
         nodes = [(*node, *self.bounds[i]) for i, node in enumerate(self.nodes)]
         return {"vertices": flat(self.vertices), "nodes": flat(nodes), "subsecs": flat(self.subsecs),
                 "segs": flat(segs), "sectors": flat(sectors), "collision": flat(lines), "walltex": [u(v) for v in textures],
@@ -309,8 +310,10 @@ class Renderer:
             lo, hi = max(a, self.top[x]), min(b, self.bot[x])
             if lo >= hi:
                 return
-            if corner and x == sx1:
-                return                          # a dark line where walls meet
+            if corner & 1 and x == sx1 and not clip1 or corner & 2 and x == sx2 - 1 and clip2 == 16384:
+                for yy in range(lo, hi):        # an inked line where the linedef starts or ends
+                    self.fb[yy][x] = 1
+                return
             if lo == a:
                 self.fb[a][x] = 1               # lit top and bottom rows: the geometry reads on 1 bit
             if hi == b:
@@ -329,7 +332,7 @@ class Renderer:
             z = min(muldiv(8192, 64, s), 32767)  # map units per pixel * 64: 1/256 texel per pixel
             v = ((tex_top - self.eye) * 64 + (lo - 32) * z) & 0xffff
             for yy in range(lo, hi):
-                if image[(v >> 8) & 31][c] >= thr[yy & 3]:
+                if image[(v >> 8) & 31][c] < thr[yy & 3]:
                     self.fb[yy][x] = 1
                 v = (v + z) & 0xffff
 
@@ -364,7 +367,7 @@ class Renderer:
 
     def tone(self, x, lo, hi, g, thr):
         for yy in range(lo, hi):
-            if g >= thr[yy & 3]:
+            if g < thr[yy & 3]:
                 self.fb[yy][x] = 1
 
     def sky(self, x, lo, hi):
