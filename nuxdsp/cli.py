@@ -143,22 +143,33 @@ def parse_voices(items):
 def cmd_build(a):
     img, m = load_checked(a.firmware, a.target)
     voices = parse_voices(a.voice)
-    if voices and not (a.sbank and a.sbank_out):
-        raise SystemExit("error: --voice needs --sbank (the official soundbank file) and --sbank-out")
+    if (voices or a.sustain) and not (a.sbank and a.sbank_out):
+        raise SystemExit("error: --voice and --sustain need --sbank (the official soundbank file) and --sbank-out")
+    if a.sustain and not (m.soundbank or {}).get("sustain"):
+        raise SystemExit("error: --sustain: this target has no sustain sound")
     names = list(a.patch or patcher.defaults(m))
     if voices and "custom_voices" not in names:
         names.append("custom_voices")
     pats = patcher.resolve_patches(names, m)
     out, report = patcher.build(img, m, pats, patcher.parse_params(a.param))
+    bank = None
     if voices:
         out = soundbank.fill_names(out, m, [(s, n, npl) for s, _, n, npl in voices])
         bank = soundbank.add(read(a.sbank), img, m, [(p, s) for s, p, _, _ in voices])
+    if a.sustain:
+        if bank is None:
+            bank = read(a.sbank)
+            if container.sha256(bank) != m.soundbank["sha256"]:
+                raise SystemExit("error: not the official %s (SHA-256 mismatch)" % m.soundbank["name"])
+        bank = soundbank.longer_sustain(bank, img, m, a.sustain)
     print("target    %s (%s)" % (m.id, describe(m)))
     for line in report:
         print(line)
-    if voices:
-        for s, p, n, npl in voices:
-            print("sound %3d  %s%s (%d zones, %.0f kB)" % (s, n, " / " + npl if npl else "", len(p.zones), p.size / 1024))
+    for s, p, n, npl in voices:
+        print("sound %3d  %s%s (%d zones, %.0f kB)" % (s, n, " / " + npl if npl else "", len(p.zones), p.size / 1024))
+    if a.sustain:
+        print("sound %3d  decays %g times slower" % (m.soundbank["sustain"][0], a.sustain))
+    if bank is not None:
         write(a.sbank_out, bank)
         print("wrote %s, sha256 %s" % (a.sbank_out, container.sha256(bank)))
     write(a.out, out)
@@ -263,6 +274,8 @@ def main(argv=None):
                         "sound SLOT (1..500); repeatable, at most 4; needs --sbank and --sbank-out")
     s.add_argument("--sbank", help="the official soundbank file (e.g. NEK100_SBANK_V1.0.4.bin)")
     s.add_argument("--sbank-out", help="where to write the soundbank with the instruments")
+    s.add_argument("--sustain", type=float, metavar="FACTOR",
+                   help="1.Grand Piano decays FACTOR (1..10, e.g. 3) times slower while held; needs --sbank and --sbank-out")
     s = sub.add_parser("instruments", help="list the presets of a SoundFont (.sf2) and what of them can be used")
     s.add_argument("sf2")
     s.add_argument("--velocity", type=int, default=sf2.VELOCITY, help="which velocity layer (default %(default)s)")

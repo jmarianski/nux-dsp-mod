@@ -157,6 +157,28 @@ class TestSoundbank(unittest.TestCase):
         self.assertRaises(soundbank.BankError, soundbank.add, self.bank, self.img, self.map, [(c, 3)] * 2)
         self.assertRaises(soundbank.BankError, soundbank.add, self.img, self.img, self.map, [(c, 3)])
 
+    def test_longer_sustain(self):
+        banks = soundbank.voice_banks(container.words(self.img), self.map)
+        voice, floor = self.map.soundbank["sustain"]
+
+        def falls(bank):
+            inst = soundbank.instrument_addr(bank, *soundbank.voice_to_bank_prog(banks, voice))
+            out = []
+            for layer in soundbank.layers(bank, inst):
+                segs = [envelope.parse(bank, envelope.amp_env_at(bank, soundbank.find_sample_block(bank, z)))
+                        for z in layer]
+                out.append([envelope.seconds(s[1][0]) for s in segs])
+            return out
+        out = soundbank.longer_sustain(self.bank, self.img, self.map, 3)
+        self.assertEqual(len(out), len(self.bank))
+        for a, b in zip(falls(self.bank), falls(out)):
+            if len(a) == 1:
+                self.assertEqual(a, b)                                  # the resonance layer: as it is
+            else:
+                for t0, t1 in zip(a, b):
+                    self.assertAlmostEqual(t1 / max(t0, floor), 3, delta=0.3)
+        self.assertRaises(soundbank.BankError, soundbank.longer_sustain, self.bank, self.img, self.map, 0)
+
     def test_names_need_the_patch(self):
         plain, _ = patcher.build(self.img, self.map, patcher.resolve_patches(["version_tag"]))
         self.assertRaises(soundbank.BankError, soundbank.fill_names, plain, self.map, [(500, "Cat Piano", "")])
@@ -183,7 +205,7 @@ class TestSoundbank(unittest.TestCase):
         cli, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
         cli = soundbank.fill_names(cli, self.map, [(v, n, p) for v, _, _, n, p in voices])
         insts = [(sf2.load(k if k.endswith(".sf2") else instrument.bundled(k)).instrument(i), v) for v, k, i, *_ in voices]
-        cli_bank = soundbank.add(self.bank, self.img, self.map, insts)
+        cli_bank = soundbank.longer_sustain(soundbank.add(self.bank, self.img, self.map, insts), self.img, self.map, 3)
         with tempfile.TemporaryDirectory() as d:
             for f in ("index.html", "patcher.js"):
                 shutil.copy(os.path.join(web.WEB_DIR, f), d)
@@ -194,7 +216,7 @@ class TestSoundbank(unittest.TestCase):
             js = [{"voice": v, "pack": k, "preset": i, "name": n, "name_pl": p} for v, k, i, n, p in voices]
             o, ob = os.path.join(d, "o.bin"), os.path.join(d, "b.bin")
             subprocess.check_call(["node", os.path.join(HERE, "web_check.js"), d, FW, o, json.dumps(sel),
-                                   SBANK, ob, json.dumps(js)])
+                                   SBANK, ob, json.dumps(js), "3"])
             with open(o, "rb") as f:
                 self.assertEqual(f.read(), cli)
             with open(ob, "rb") as f:

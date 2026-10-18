@@ -26,6 +26,7 @@ A template zone may be stereo (a 22-byte sample block with the right channel's s
 1.Grand Piano's): the added instrument's zones then play their mono sample on both channels (X = S).
 
 custom_voices (a DSP patch) shows the new names: fill_names() writes them into its table.
+longer_sustain() makes an official sound (the target's "sustain" one: 1.Grand Piano) decay slower while held.
 """
 import math
 import struct
@@ -106,16 +107,25 @@ def instrument_addr(d, bank, prog):
     return ((d[a + 1] << 16) | struct.unpack_from("<H", d, a + 2)[0]) * 2
 
 
-def zones(d, inst):
-    """byte offsets of the zone records of an instrument, of all its layers in order.
+def layers(d, inst):
+    """byte offsets of the zone records of an instrument, per layer.
     Header: format, number of layers, [u16 if format & 4: the instrument-level block of 0x44], u16 per layer
     (0x80 | number of its zones); then 6 bytes per zone."""
     page = (inst // 2) & ~0xFFFF
     fmt, nl = d[inst], d[inst + 1]
     o = inst + 2 + (2 if fmt & 4 else 0)
-    n = sum(struct.unpack_from("<H", d, o + 2 * i)[0] & 0x7F for i in range(nl))
+    counts = [struct.unpack_from("<H", d, o + 2 * i)[0] & 0x7F for i in range(nl)]
     o += 2 * nl
-    return [(page | struct.unpack_from("<H", d, o + 6 * i + 4)[0]) * 2 for i in range(n)]
+    out = []
+    for n in counts:
+        out.append([(page | struct.unpack_from("<H", d, o + 6 * i + 4)[0]) * 2 for i in range(n)])
+        o += 6 * n
+    return out
+
+
+def zones(d, inst):
+    """byte offsets of the zone records of an instrument, of all its layers in order."""
+    return [z for layer in layers(d, inst) for z in layer]
 
 
 def find_sample_block(d, zone):
@@ -343,6 +353,30 @@ def fill_names(dsp_image, fwmap, entries):
     if container.validate(out):
         raise BankError("internal error: DSP container invalid")
     return out
+
+
+def longer_sustain(bank, dsp_image, fwmap, factor):
+    """bank with the target's sustain sound (soundbank line of target.map: sustain VOICE FLOOR) decaying FACTOR
+    times slower while held: the fall of its volume envelopes, zones falling faster than FLOOR s first set to
+    FLOOR (1.Grand Piano: the high keys of its velocity 75-84 layer fall in 2-3 s, its other zones in 9-25 s).
+    Layers of one zone stay as they are (the Grand's resonance layer). The release (key up) does not change.
+    C (2026-10-18, by ear): 3 times is better than the vendor's."""
+    voice, floor = fwmap.soundbank["sustain"]
+    if not 1 <= factor <= 10:
+        raise BankError("sustain factor: 1..10")
+    b = bytearray(bank)
+    inst = instrument_addr(b, *voice_to_bank_prog(voice_banks(container.words(dsp_image), fwmap), voice))
+    for layer in layers(b, inst):
+        if len(layer) < 2:
+            continue
+        for z in layer:
+            at = envelope.amp_env_at(b, find_sample_block(b, z))
+            segs = envelope.parse(b, at) if at is not None else None
+            if not segs or len(segs) != 3 or segs[1][1] & 0xE0 != envelope.FALL:
+                continue                                      # holds while the key is held: nothing to slow
+            t = max(envelope.seconds(segs[1][0]), floor)
+            b[at + 4] = envelope.rate(t * factor, False)
+    return bytes(b)
 
 
 def sample_block(d, o):

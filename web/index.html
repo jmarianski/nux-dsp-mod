@@ -107,6 +107,10 @@ a { color: var(--accent); }
     <div id="voices"></div>
     <input type="file" id="sf2file" accept=".sf2" hidden>
     <button class="small" id="addv" style="margin-top:8px">+ Add instrument / Dodaj instrument</button>
+    <label style="display:block;margin-top:12px"><input type="checkbox" id="sustain">
+      1.Grand Piano: longer sustain, decays <input type="number" id="sustainf" value="3" min="1" max="10" step="0.5"
+      style="width:4em"> times slower while held (needs the soundbank) / dłuższe wybrzmiewanie przy trzymanym klawiszu
+      (potrzebny soundbank)</label>
   </div>
   <div class="card" id="bcard" hidden>
     <h2>4. Build / Zbuduj</h2>
@@ -430,7 +434,9 @@ $("build").addEventListener("click", async () => {
   }
   try {
     const voices = target.voices ? selectedVoices() : [];
+    const sustain = target.voices && target.voices.soundbank.sustain && $("sustain").checked ? Number($("sustainf").value) : 0;
     let bank = null;
+    if (sustain && !sbank) throw `select the official ${target.voices.soundbank.name}.bin in step 3 / wskaż oryginalny soundbank w kroku 3`;
     if (voices.length) {
       if (!sbank) throw `select the official ${target.voices.soundbank.name}.bin in step 3 / wskaż oryginalny soundbank w kroku 3`;
       sel.custom_voices = {};
@@ -446,11 +452,12 @@ $("build").addEventListener("click", async () => {
       $("bstatus").textContent = "…";
       bank = await addInstruments(target, input, sbank, voices);
     }
+    if (sustain) bank = longerSustain(target, input, bank || sbank, sustain);
     const files = [[target.output, out]];
     if (bank) files.push([`${target.voices.soundbank.name}_mod.bin`, bank]);
     const desc = Object.entries(sel).map(([k, ps]) =>
       [k].concat(Object.entries(ps).map(([n, v]) => `${n}=${v}`)).join(" ")).join(", ") +
-      voices.map(v => `; ${v.voice}.${v.name}`).join("");
+      voices.map(v => `; ${v.voice}.${v.name}`).join("") + (sustain ? `; sustain ×${sustain}` : "");
     status($("bstatus"), true, `Built: ${desc}`, await sha256(out));
     const links = document.createElement("div");
     links.className = "links";

@@ -1,14 +1,14 @@
-// node tests/web_check.js WEB_DIR FW.bin OUT.bin 'SELECTION_JSON' [SBANK.bin SBANK_OUT.bin 'VOICES_JSON']
+// node tests/web_check.js WEB_DIR FW.bin OUT.bin 'SELECTION_JSON' [SBANK.bin SBANK_OUT.bin 'VOICES_JSON' [SUSTAIN]]
 //   -> runs the page's own patch code; VOICES_JSON: [{"voice": 500, "pack": "cat_piano" or a .sf2 path,
 //      "preset": index in phdr (default 0), "name": ..., "name_pl": ...}]
 const fs = require("fs"), path = require("path"), vm = require("vm");
-const [webDir, fw, outp, selJson, sbank, sbOut, voicesJson] = process.argv.slice(2);
+const [webDir, fw, outp, selJson, sbank, sbOut, voicesJson, sustain] = process.argv.slice(2);
 const ctx = vm.createContext({TextDecoder, TextEncoder, atob});
 const html = fs.readFileSync(path.join(webDir, "index.html"), "utf8");
 const run = f => vm.runInContext(fs.readFileSync(path.join(webDir, f), "utf8"), ctx, {filename: f});
 for (const m of html.matchAll(/<script src="([^"]+)"><\/script>/g)) run(m[1]);
 const api = vm.runInContext("({TARGETS, applyPatches, identify, sha256js, containerOk, parseSf2, sf2Instrument, " +
-                            "addInstruments, fillNames, packBytes})", ctx);
+                            "addInstruments, fillNames, packBytes, longerSustain})", ctx);
 const bytes = new Uint8Array(fs.readFileSync(fw));
 const sha = require("crypto").createHash("sha256").update(bytes).digest("hex");
 if (api.sha256js(bytes) !== sha) { console.error("sha256js mismatch"); process.exit(1); }
@@ -25,7 +25,9 @@ api.identify(bytes).then(async id => {
       v.pack = api.sf2Instrument(api.parseSf2(data), v.preset || 0);
     }
     api.fillNames(id.target, out, voices);
-    fs.writeFileSync(sbOut, await api.addInstruments(id.target, bytes, new Uint8Array(fs.readFileSync(sbank)), voices));
+    let b = await api.addInstruments(id.target, bytes, new Uint8Array(fs.readFileSync(sbank)), voices);
+    if (sustain) b = api.longerSustain(id.target, bytes, b, Number(sustain));
+    fs.writeFileSync(sbOut, b);
   }
   fs.writeFileSync(outp, out);
 }).catch(e => { console.error(String(e)); process.exit(1); });
