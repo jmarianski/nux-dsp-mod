@@ -28,6 +28,7 @@ import wad  # noqa: E402
 import walltex  # noqa: E402
 
 W, H = 128, 64
+VIEW_H = 56                                     # rows above the HUD line
 FAR = 1536                                      # far plane (view z): segs wholly beyond it are not drawn
 NEAR = 17                                       # S = 2^19 / z stays a positive 16-bit number
 EYE = 41
@@ -257,7 +258,7 @@ class Renderer:
     def frame(self, px, py, pa):
         m = self.m
         self.fb = [[0] * W for _ in range(H)]
-        self.top, self.bot, self.open = [0] * W, [H] * W, W
+        self.top, self.bot, self.open = [0] * W, [VIEW_H] * W, W
         self.eye = m.sectors[find_sector(m, px, py)][0] + EYE
         self.px, self.py, self.pa, self.c, self.s = px, py, pa, isin(pa + 64), isin(pa)
         stack = [m.root]
@@ -347,8 +348,8 @@ class Renderer:
             if flats & 256:
                 self.sky(x, top, min(yc, bot))
             else:
-                self.tone(x, top, min(yc, bot), flats >> 4 & 15, thr)
-            self.tone(x, max(yf, top), bot, flats & 15, thr)
+                self.flat(x, top, min(yc, bot), flats >> 4 & 15, thr, fl, fc - self.eye, True)
+            self.flat(x, max(yf, top), bot, flats & 15, thr, fl, self.eye - ff, False)
             if back == 0xFFFF:
                 texture("middle", x, s, yc, yf, thr)
                 self.top[x], self.bot[x] = H, 0
@@ -364,6 +365,23 @@ class Renderer:
                 nt, nb = H, 0
                 self.open -= 1
             self.top[x], self.bot[x] = nt, nb
+
+    def flat(self, x, lo, hi, g, thr, light, dh, ceiling):
+        """A floor (rows from 32 down) or ceiling (rows above 32): walltex's fixed gradient, shifted for its height
+        and light; the rare part on the other side of the horizon (or a flat at eye level) in the wall's light."""
+        if dh < 1:
+            self.tone(x, lo, hi, g, thr)
+            return
+        shift = walltex.flat_shift(dh, light, ceiling)
+        if ceiling:
+            self.tone(x, max(lo, 32), hi, g, thr)
+            a, b = lo, min(hi, 32)
+        else:
+            self.tone(x, lo, min(hi, 32), g, thr)
+            a, b = max(lo, 32), hi
+        for yy in range(a, b):
+            if walltex.flat_ink(x, yy, 31 - yy if ceiling else yy - 32, shift):
+                self.fb[yy][x] = 1
 
     def tone(self, x, lo, hi, g, thr):
         for yy in range(lo, hi):

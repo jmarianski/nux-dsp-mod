@@ -48,6 +48,8 @@ def compile_doom(m=None, silent_audio=False, far=None):
     pre = (f"#define SILENT_AUDIO {int(silent_audio)}\n#define FAR {far or doommap.FAR}\n"
            + f"#define THR_AT {walltex.THR_AT}\n#define SKYANG_AT {walltex.SKYANG_AT}\n#define SKY_AT {walltex.SKY_AT}\n"
            + f"#define FLATS_AT {walltex.FLATS_AT}\n#define GAIN {walltex.GAIN}\n"
+           + f"#define FADE_AT {walltex.FADE_AT}\n#define FADE_N {walltex.FADE_N}\n#define BAYER_AT {walltex.BAYER_AT}\n"
+           + f"#define FLATPAT_AT {walltex.FLATPAT_AT}\n#define FLOOR_REF {walltex.FLOOR_REF}\n#define CEIL_REF {walltex.CEIL_REF}\n"
            + f"#define IMP_BASE {sprites.IMP_BASE}\n#define ATTACK {sprites.ATTACK}\n#define PAIN {sprites.PAIN}\n"
            + f"#define DEATH {sprites.DEATH}\n#define PICKUP_BASE {sprites.PICKUP_BASE}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"

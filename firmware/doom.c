@@ -115,6 +115,7 @@ int ff, fc, fl, bf, bc, corner;              /* corner: bit 0 the seg starts its
 unsigned back_sector;
 int tex_u1, tex_u2, tex_top, tex_width;
 unsigned tex_base, tex_col[8], thr[4], front_flats;
+unsigned floor_tab, ceil_tab;                  /* the flat tables of this seg (flat_slot) */
 unsigned middle_material, upper_material, lower_material;
 /* A descriptor is valid only for this segment's clipped endpoints and sector heights. */
 unsigned cached_material;
@@ -135,7 +136,7 @@ void seg_data(unsigned k)
         if (front_flats & buf[0] & 256) fc = bc;  /* sky to sky: no upper wall, the sky reaches down (vanilla) */
     }
     middle_material = upper_material = lower_material = 0;
-    cached_material = 0;
+    cached_material = 0; floor_tab = 1;
     if (material) {
         readmap(12, material, 3);
         middle_material = buf[0]; upper_material = buf[1]; lower_material = buf[2];
@@ -169,13 +170,19 @@ int screen_y(int h, int s)
     return 32 - clamp(q, -1000, 1000);
 }
 
-/* Sector light and wall scale -> 0..31, 16 drawing a gray as stored (tools/walltex.py light_factor). */
+/* Sector light at scale index s >> 5 -> 0..31, 16 drawing a gray as stored: vanilla's colormap choice, distance
+ * fog on top (tools/walltex.py light_at). */
+int light_at(int light, unsigned idx)
+{
+    int dark;
+    readmap(12, FADE_AT + (idx < FADE_N ? idx : FADE_N - 1), 1);
+    dark = clamp((15 - (light >> 4)) * 8 + (int)buf[0], 0, 63);
+    return (GAIN * (64 - dark)) >> 6;
+}
+
 int light_factor(int light, unsigned s)
 {
-    int level, dark;
-    level = s >> 8; if (level > 47) level = 47;
-    dark = clamp((15 - (light >> 4)) * 8 - level, 0, 63);
-    return (GAIN * (64 - dark)) >> 6;
+    return light_at(light, s >> 5);
 }
 
 unsigned span(int lo, int hi)
@@ -212,6 +219,56 @@ void sky(int lo, int hi)
         b = (p + 2) & 7;
         framebuffer[p * 128 + col] |= (buf[b >> 1] >> ((b & 1) << 3)) & span(lo - p * 8, hi - p * 8);
     }
+}
+
+/* Floors and ceilings are a fixed screen-space gradient, shifted for their height and light (tools/walltex.py
+ * flat_shift). The patterns in use live in the framebuffer's HUD page (drawn over at the end of the frame, after
+ * the LCD has had the last one): CEIL_SLOTS slots of a ceiling (a key, then pages 0..3 x (x & 3): the rows of that
+ * page to ink), FLOOR_SLOTS of a floor (pages 4..6, rows 32..55), copied from FLATPAT_AT. A seg finds or copies its
+ * two on its first column; floor_tab, ceil_tab: the table minus the first page's offset (0: in the wall's light,
+ * 1: not looked up yet). */
+#define CEIL_AT 896
+#define CEIL_SLOTS 3
+#define FLOOR_AT 947                            /* CEIL_AT + CEIL_SLOTS * 17 */
+#define FLOOR_SLOTS 4
+#define FLAT_NEXT 1022
+
+unsigned flat_slot(int dh, int ceiling)
+{
+    unsigned key, at, i, n, size, base, words;
+    int t;
+    if (dh < 1) return 0;
+    t = (ceiling ? CEIL_REF : FLOOR_REF) - dh;
+    if (t < -80) t = -80;                       /* clamped below anyway */
+    t = clamp((t + 80) / 4 - 20 + (fl >> 5) - 5, -16, 15);   /* rounding down, as walltex.flat_shift */
+    key = 0x8000 | (t + 16);
+    base = ceiling ? CEIL_AT : FLOOR_AT; words = ceiling ? 16 : 12; size = words + 1; n = ceiling ? CEIL_SLOTS : FLOOR_SLOTS;
+    for (i = 0, at = base; i < n; i++, at += size)
+        if (framebuffer[at] == key) return ceiling ? at + 1 : at + 1 - 16;
+    i = framebuffer[FLAT_NEXT + ceiling]; framebuffer[FLAT_NEXT + ceiling] = i + 1 < n ? i + 1 : 0;
+    at = base + i * size;
+    framebuffer[at] = key;
+    work += 3;
+    fr_lo = map_lo[12] + FLATPAT_AT + (ceiling ? 32 * 12 : 0) + (t + 16) * words;
+    fr_hi = map_hi[12] + (fr_lo < map_lo[12]);
+    fr_dst = (unsigned)framebuffer + at + 1; fr_n = words; fr_mode = 0;
+    farcopy();
+    return ceiling ? at + 1 : at + 1 - 16;
+}
+
+/* Rows lo..hi-1 of the floor (ceiling 0) or ceiling (1), table tab: the part across the horizon (rare) or with no
+ * table in the wall's light. */
+void flat(int lo, int hi, unsigned g, unsigned tab, int ceiling)
+{
+    int a, b, p;
+    if (lo >= hi) return;
+    if (!tab) { tone(lo, hi, g); return; }
+    if (ceiling) { a = lo; b = hi; if (hi > 32) { tone(lo > 32 ? lo : 32, hi, g); b = 32; } }
+    else { a = lo; b = hi; if (lo < 32) { tone(lo, hi < 32 ? hi : 32, g); a = 32; } }
+    if (a >= b) return;
+    work += 2 + ((b - a) >> 3);
+    for (p = a >> 3; p <= (b - 1) >> 3; p++)
+        framebuffer[p * 128 + col] |= framebuffer[tab + (p << 2) + (col & 3)] & span(a - p * 8, b - p * 8);
 }
 
 void load_material(unsigned material)
@@ -296,9 +353,13 @@ void draw_column(void)
     edge = (corner & 1) && col == sx1 && !clip_u1 || (corner & 2) && col == sx2 - 1 && clip_u2 == 16384;
     readmap(12, THR_AT + ((light_factor(fl, s) << 2) + (col & 3)) * 4, 4);
     thr[0] = buf[0]; thr[1] = buf[1]; thr[2] = buf[2]; thr[3] = buf[3];
+    if (floor_tab == 1) {
+        floor_tab = flat_slot(eye - ff, 0);
+        ceil_tab = front_flats & 256 ? 0 : flat_slot(fc - eye, 1);
+    }
     if (front_flats & 256) sky(top, yc < bot ? yc : bot);
-    else tone(top, yc < bot ? yc : bot, (front_flats >> 4) & 15);
-    tone(yf > top ? yf : top, bot, front_flats & 15);
+    else flat(top, yc < bot ? yc : bot, (front_flats >> 4) & 15, ceil_tab, 1);
+    flat(yf > top ? yf : top, bot, front_flats & 15, floor_tab, 0);
     if (back_sector == 0xffff) {
         material_wall(yc, yf, middle_material, s); windows[col] = 0x8000 | s; open_columns--; return;
     }
@@ -335,7 +396,7 @@ void frame_begin(void)
     eye = pz + 41;
     for (k = 0; k < 8; k++) render_height[k] = dynamic_height[k];
     for (k = 0; k < 1024; k++) framebuffer[k] = 0;
-    for (k = 0; k < 128; k++) windows[k] = 64 << 7;
+    for (k = 0; k < 128; k++) windows[k] = 56 << 7;          /* the HUD's rows: never drawn */
     sp = 1; stack[0] = MAP_ROOT; open_columns = 128;
     render_seg = render_last = render_end = col = 0;
     render_actor = render_row = render_kind = render_pass = 0;
