@@ -56,7 +56,7 @@ def data_c(expect):
     digs = []
     for g in "0123456789":
         digs += fbtest.font_words()[fbtest.GLYPHS.index(g) * 3:fbtest.GLYPHS.index(g) * 3 + 3]
-    return ("#define SELFTEST_EXPECT %d\n" % expect
+    return ("#define SELFTEST_EXPECT %d\n#define INTRO_OFF %d\n" % (expect, intro_off())
             + "unsigned map[16] = {%s};\n" % ", ".join("%#06x" % r for r in rows)
             + "int sintab[65] = {%s};\n" % ", ".join(map(str, sin))
             + "unsigned digits[30] = {%s};\n" % ", ".join("%#04x" % d for d in digs))
@@ -464,8 +464,17 @@ def dw(words):
 
 
 def music():
+    """The far music data: the level's song, then the title's (at INTRO_OFF)."""
     import wad
-    return wad.mus_stream(wad.Wad().lump("D_E1M1"))
+    return wad.songs()[0]
+
+
+def intro_off():
+    import wad
+    try:
+        return wad.songs()[1]
+    except (FileNotFoundError, OSError):
+        return 0                                # no WAD: webbuild's music is only an end
 
 
 def patch():

@@ -31,7 +31,8 @@ python3 tools/builddemo.py --wad wad/DOOM1.WAD --map wad/DOOM1.WAD
 python3 tools/packdemo.py  --wad wad/DOOM1.WAD --map wad/DOOM1.WAD
 ```
 
-Those builds stay private (the tools say so). The server and the tests take the same as `PIANODOOM_WAD` /
+The music: the title plays Freedoom's intro once, the level loops E4M8; `--music E1M1` (any song lump of the WAD)
+picks another for the level. Those `--wad` builds stay private (the tools say so). The server and the tests take the same as `PIANODOOM_WAD` /
 `PIANODOOM_MAP`. Editing the map:
 change `tools/makemap.py` and run it; the nodes come from `zdbsp` (`apt install zdbsp`, or without root
 `apt-get download zdbsp && dpkg-deb -x zdbsp_*.deb x`, then `--zdbsp x/usr/bin/zdbsp`). `maps/hangar.wad` also plays
@@ -43,7 +44,7 @@ in any source port: `chocolate-doom -iwad freedoom1.wad -file maps/hangar.wad -w
 - Stand close to a door and face it, then tap **F / D5**; it lifts upwards. **M / Mapa** opens a browser-only
   map: current player arrow, live enemies, yellow doors and a fixed route from spawn to the first zombie.
 - **R / Przeładuj**: recompile changed sources and restart. Build errors appear in the log; fix the code and retry.
-- **Włącz MIDI**: select the piano as output for the music (Freedoom's E1M1 track) through its own synthesizer over USB, or as input
+- **Włącz MIDI**: select the piano as output for the music (Freedoom's intro on the title, E4M8 in the level) through its own synthesizer over USB, or as input
   for piano-key movement. No browser synthesizer is included. This does not flash firmware.
 - Pause, reload, MIDI disconnection and hiding the tab release controls/silence notes as appropriate.
 

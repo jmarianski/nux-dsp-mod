@@ -125,5 +125,16 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
   assert(!moved.includes(k) && !met(k), "the far one was evicted, whole");
   peak(m);
 }
+// The title plays its song once and falls silent; the level's song loops.
+{
+  let notes = 0;
+  const m = new P16(p, rayNatives({synth: (st, a, b) => { if ((st & 0xf0) === 0x90 && b) notes++; }}));
+  m.call("__cc_init"); m.call("rc_start"); m.wr(0x145, 10); m.wr(m.sym("mu_last"), m.rd(0x6d78));
+  const run = (n) => { notes = 0; for (let i = 0; i < n; i++) { m.wr(0x6d78, (m.rd(0x6d78) + 10000) & 0xffff); m.call("mu_clock"); } return notes; };
+  assert(run(1500) > 0 && !m.get("mu_ok"), "the title's song ends");
+  assert.equal(run(500), 0, "and stays silent");
+  m.call("start_game"); m.wr(m.sym("mu_last"), m.rd(0x6d78));
+  assert(run(20000) > 0 && m.get("mu_ok") && run(1000) > 0, "the level's song plays on, over its end");
+}
 assert(peakDepth <= 20, "call depth exceeds the hardware-characterized range");
 console.log(JSON.stringify({peakDepth,writes,ram:p.ram_words,program:p.budget.program.used}));

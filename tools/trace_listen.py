@@ -25,11 +25,11 @@ MU = {"b": None, "sums": None}
 
 
 def music_sums():
-    """-> {block: expected 12-bit checksum} of the E1M1 stream as music.c's mword adds it up."""
+    """-> {block: expected 12-bit checksum} of the level's song as music.c's mword adds it up."""
     try:
         sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
         import wad
-        words = wad.mus_stream(wad.Wad().lump("D_E1M1"))
+        words = wad.mus_stream(wad.Wad().lump(wad.SONG))
     except Exception:
         return {}
     out, total = {}, 0

@@ -495,6 +495,11 @@ void audio_restart(void)
 #endif
 }
 
+void audio_intro(void)                          /* the title's song, once: the title and the menu */
+{
+    audio_restart(); mu_intro();
+}
+
 void game_init(void)
 {
     int i;
@@ -552,7 +557,7 @@ void game_tick(void)
     if (game_mode >= 3) { menu_tick(); prev_held = held; pressed = 0; return; }
     if (game_mode) {
         sfx_tick();
-        if (key_hit(512)) show_screen(4);      /* dead or out: back to the skill menu */
+        if (key_hit(512)) { show_screen(4); audio_intro(); }   /* dead or out: back to the skill menu */
         prev_held = held; pressed = 0; return;
     }
     if (shot_cd) shot_cd--; if (flash) flash--; if (hurt) hurt--;
