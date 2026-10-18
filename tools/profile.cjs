@@ -24,7 +24,7 @@ natives.farcopy = m => { fw.farcopy++; fw.farWords += m.get('fr_n'); nf(m); };
 natives.synth = m => { fw.synth++; ns(m); };
 const m = new P16(p, natives);
 m.wr(0x145, 10);
-m.call('__cc_init'); m.call('rc_start');
+m.call('__cc_init'); m.call('rc_start');m.call('start_game');
 if (p.callback_limits) p.callback_limits.rc_tick = 1e9;     /* measure, do not stop */
 m.profile = new Uint32Array(p.code.op.length);
 

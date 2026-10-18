@@ -22,10 +22,11 @@ const {P16,rayNatives}=require(process.argv[2]);
 const p=JSON.parse(fs.readFileSync(process.argv[3]));
 let synthMessages=0;
 const m=new P16(p,rayNatives({synth:()=>synthMessages++}));
-m.call('__cc_init');m.call('rc_start');
+m.call('__cc_init');m.call('rc_start');m.call('start_game');
 m.call('rc_key',72,100);m.call('game_tick');m.call('rc_key',72,0);
 m.call('damage',250);m.call('mu_stop');
-m.call('rc_key',23,100);m.call('game_tick');
+m.call('rc_key',23,100);m.call('game_tick');m.call('rc_key',23,0);   // dead: enter, the skill menu
+m.call('rc_key',72,100);m.call('game_tick');                                // fire picks the skill
 for(let i=1;i<=30;i++){
  const us=i*10000;m.wr(p.mmio.clock_lo,us&65535);m.wr(p.mmio.clock_hi,Math.floor(us/65536));
  m.call('rc_tick');

@@ -28,7 +28,7 @@ const fs = require('fs');
 const p = JSON.parse(fs.readFileSync(process.argv[3]));
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const m = new P16(p, rayNatives());
-m.call('__cc_init'); m.call('rc_start');
+m.call('__cc_init'); m.call('rc_start');m.call('start_game');
 m.wr(p.symbols.game_visible, 0);
 const arithmetic = input.math.map(([fn, ...args]) => {
   const ret = m.call(fn, ...args);
