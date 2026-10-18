@@ -21,8 +21,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     Object.defineProperty(navigator, "requestMIDIAccess", { value: async () => access });
     window.testMidi = { sent, output, input, access };
   });
-  const ready = (name = "doom") => page.waitForFunction((name) =>
-    !loading && m && prog.name === name && !paused && !document.querySelector("#pause").disabled, name);
+  const ready = async (name = "doom") => {
+    await page.waitForFunction((name) =>
+      !loading && m && prog.name === name && !paused && !document.querySelector("#pause").disabled, name);
+    if (name === "doom")                        // past the title and the skill menu
+      await page.evaluate(() => { if (m.get("game_mode") >= 3) m.call("start_game"); });
+  };
   const snap = () => page.evaluate(() => ({ held: m.get("held"), x: m.get("px"), y: m.get("py"),
     angle: m.get("pa"), frames: m.get("nframe") }));
   const focusGame = () => page.evaluate(() => document.activeElement.blur());
@@ -57,6 +61,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.evaluate(() => m.call("damage", 250));
     await page.waitForFunction(() => m.get("game_mode") === 1);
     await page.keyboard.press("Enter");
+    await page.waitForFunction(() => m.get("game_mode") === 4);    // the skill menu; fire picks the skill
+    await page.keyboard.press("Space");
     await page.waitForFunction(() => m.get("game_mode") === 0 && m.get("health") === 100);
     assert.match(await page.textContent("#budget"), /RAM \d+\/482/);
 
@@ -96,7 +102,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.equal(await page.evaluate(() => prog.name), "ray");
     await page.unroute("**/build/game.json");
     await page.waitForFunction(() => m.get("stage") === 2);
-    assert(await page.isHidden("#navigation"), "navigation is only available for the E1M1 map");
+    assert(await page.isHidden("#navigation"), "navigation is only available for the doom map");
     assert.equal(await page.evaluate(() => m.get("st_ok")), 1, "ray self-test still passes");
     await page.selectOption("#engine", "doom"); await ready();
     await page.waitForTimeout(1200);
@@ -110,23 +116,23 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     // Visual door fixture. Use the actual F binding and wait for the shared engine to raise it.
     await page.evaluate(() => {
       setPaused(true);
-      for (const [key, value] of Object.entries({px:1440, py:-2496, pa:0, pz:0})) m.wr(m.sym(key), value);
+      for (const [key, value] of Object.entries({px:192, py:280, pa:64, pz:0})) m.wr(m.sym(key), value);
       m.call("frame"); draw();
     });
     await page.screenshot({ path: path.join(out, "webcheck-door.png"), fullPage: true });
     await page.evaluate(() => setPaused(false));
     await page.keyboard.down("ArrowUp");
-    await page.waitForFunction(() => m.get("px") >= 1480);
+    await page.waitForFunction(() => m.get("py") >= 300);
     await page.keyboard.up("ArrowUp");
     await page.keyboard.press("f");
     await page.waitForFunction(() => m.get("dynamic_height") >= 16);
     await page.evaluate(() => { setPaused(true); m.call("frame"); draw(); });
     await page.screenshot({ path: path.join(out, "webcheck-door-open.png"), fullPage: true });
-    // A deterministic visual fixture for the original imp spawn, separate from the walking replay.
+    // A deterministic visual fixture: the first slot's monster (the zombie beyond the first door), apart from the replay.
     const spritePixels = await page.evaluate(() => {
       setPaused(true);
-      m.wr(m.sym("px"), 3376); m.wr(m.sym("py"), -3472); m.wr(m.sym("pa"), 0);
-      m.call("read_sector", m.call("sector_at", 3376, -3472)); m.wr(m.sym("pz"), m.get("buf"));
+      m.wr(m.sym("px"), 192); m.wr(m.sym("py"), 400); m.wr(m.sym("pa"), 64);
+      m.call("read_sector", m.call("sector_at", 192, 400)); m.wr(m.sym("pz"), m.get("buf"));
       m.call("frame"); draw();
       const start=prog.mmio.framebuffer, before=Array.from(m.ram.slice(start,start+1024)), state=m.get("enemy_state");
       m.wr(m.sym("enemy_state"),0x7c00);m.call("frame");
@@ -134,10 +140,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       m.wr(m.sym("enemy_state"),state);m.call("frame");draw();
       return changed;
     });
-    assert(spritePixels > 8, "the imp silhouette must actually reach the framebuffer");
+    assert(spritePixels > 8, "the monster silhouette must actually reach the framebuffer");
     await page.screenshot({ path: path.join(out, "webcheck-combat.png"), fullPage: true });
     assert.deepEqual(errors, [], "no uncaught browser errors");
-    console.log("PASS: E1M1, navigation M, textured door/F, movement, fire, death/Enter restart, aliases, blur, pause, reload, mocked MIDI, build/runtime recovery, load race, ray fallback");
+    console.log("PASS: hangar map, navigation M, textured door/F, movement, fire, death/Enter restart, aliases, blur, pause, reload, mocked MIDI, build/runtime recovery, load race, ray fallback");
     console.log(await page.textContent("#stats"));
     console.log("Screenshot: build/webcheck.png");
   } finally { await browser.close(); }

@@ -10,7 +10,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-pytestmark = pytest.mark.skipif(not shutil.which("node") or not (ROOT / "wad" / "DOOM1.WAD").exists(),
+import wad  # noqa: E402
+pytestmark = pytest.mark.skipif(not shutil.which("node") or not Path(wad.WAD).exists(),
                                 reason="needs local WAD and node")
 
 SCRIPT = r"""

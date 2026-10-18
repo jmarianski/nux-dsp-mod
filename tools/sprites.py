@@ -58,9 +58,9 @@ def frame(w, lum, name, glow=False, ref=None):
     """glow: a light source (the fireball), bright grays that full light never inks. ref: stretch over that frame's
     range instead (the shotgun guy over the zombie's: his darker uniform stays darker)."""
     width, height, left, top, img = patch(w, lum, name)
+    if height > 62:                             # Freedoom's imp reaches 63 pixels: its top row goes
+        img, top, height = img[height - 62:], top - (height - 62), 62
     cols, rows = (width + 1) // 2, (height + 1) // 2
-    if rows > 31:
-        raise ValueError("%s: taller than 31 texels" % name)
     lo, hi = stretch_range(patch(w, lum, ref)[4] if ref else img)
     tex = [[None] * cols for _ in range(rows)]
     for r in range(rows):

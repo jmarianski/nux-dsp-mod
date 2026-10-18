@@ -1,4 +1,4 @@
-"""Collision contracts on synthetic rooms and the compiled E1M1 blockmap.
+"""Collision contracts on synthetic rooms and the compiled map's blockmap.
 
 The Python oracle scans every line; the P16 program uses the generated far index.
 Synthetic rooms characterize radius, diagonal walls, headroom and stair limits.
@@ -14,7 +14,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-pytestmark = pytest.mark.skipif(not shutil.which("node") or not (ROOT / "wad" / "DOOM1.WAD").exists(),
+import wad  # noqa: E402
+pytestmark = pytest.mark.skipif(not shutil.which("node") or not Path(wad.WAD).exists(),
                                 reason="needs local WAD and node")
 
 NODE = r"""
@@ -111,7 +112,7 @@ def test_diagonal_and_endpoint_collision():
     assert expected[positions.index((0, 0, 0))] is None
 
 
-def test_e1m1_index_matches_all_linedefs():
+def test_map_index_matches_all_linedefs():
     import doommap
     m = doommap.Map()
     rng = random.Random(0xc0111de)
@@ -120,8 +121,9 @@ def test_e1m1_index_matches_all_linedefs():
     for x1, y1, x2, y2, _f, _b in m.collision:
         x, y = (x1 + x2) // 2 + rng.randint(-20, 20), (y1 + y2) // 2 + rng.randint(-20, 20)
         positions.append((x, y, m.sectors[doommap.find_sector(m, x, y)][0]))
+    xs, ys = [v[0] for v in m.vertices], [v[1] for v in m.vertices]
     for _ in range(150):
-        x, y = rng.randrange(-768, 3809), rng.randrange(-4864, -2047)
+        x, y = rng.randrange(min(xs), max(xs) + 1), rng.randrange(min(ys), max(ys) + 1)
         positions.append((x, y, m.sectors[doommap.find_sector(m, x, y)][0]))
     expected = [doommap.position_floor(m, *p) for p in positions]
     assert run(m, positions)["positions"] == expected

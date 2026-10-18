@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A Doom map from DOOM1.WAD, compacted for the piano, and a reference renderer with the integer math of the C
+"""A Doom map (ours, maps/hangar.wad), compacted for the piano, and a reference renderer with the integer math of the C
 engine (firmware/doom.c), so that frames can be looked at before the C code exists and compared with it after.
 
 Map words (all 16-bit, coordinates in map units):
@@ -64,9 +64,10 @@ def collision_grid(lines):
 
 
 class Map:
-    def __init__(self, name="E1M1", w=None):
+    def __init__(self, name="E1M1", w=None, geometry=None):
         w = w or wad.Wad()
-        lump = lambda k: w.lump(k, after=name)
+        geometry = geometry or wad.Wad(wad.MAP)
+        lump = lambda k: geometry.lump(k, after=name)
         rec = lambda k, fmt: [struct.unpack(fmt, lump(k)[i:i + struct.calcsize(fmt)])
                               for i in range(0, len(lump(k)), struct.calcsize(fmt))]
         self.vertices = rec("VERTEXES", "<hh")

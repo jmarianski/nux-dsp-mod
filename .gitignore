@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.wad
+!maps/*.wad
 build/
 *.bin
 wad/

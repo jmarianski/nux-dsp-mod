@@ -11,35 +11,47 @@ python3 tools/webserve.py
 ```
 
 Open **http://localhost:8017/**. No Python packages are needed for the server/compiler; keep the sibling
-`../nek100-mod` checkout and your local shareware `wad/DOOM1.WAD`. The default view is **E1M1**: the original
-map's BSP geometry rendered by `firmware/doom.c`, with gameplay in `firmware/game.c`, compiled for the piano's
-P16 CPU and executed in JavaScript. The canvas is the same 128×64, one-bit framebuffer. The **playable E1M1 demo**
-uses the original easy-difficulty monster/item placement: four enemies, pickups, pistol/shotgun, doors, a lift,
-health/ammo HUD, death/restart and the exit switch. The selector retains the earlier test raycaster.
+`../nek100-mod` checkout and put [Freedoom](https://freedoom.github.io) Phase 1 at `wad/freedoom1.wad`
+(BSD license: textures, sprites, title and music). The map is our own, **Hangar** (`maps/hangar.wad`, written by
+`tools/makemap.py`): its BSP geometry is rendered by `firmware/doom.c`, with gameplay in `firmware/game.c`, compiled
+for the piano's P16 CPU and executed in JavaScript. The canvas is the same 128×64, one-bit framebuffer. The
+**playable demo**: start room, corridor and stairs, a hangar with a skylight, crates and a lift to the balcony with
+the shotgun, a computer room, a gate that sinks as you walk into it, and the exit room. Zombies, imps and shotgun
+guys by skill (four at a time), pickups, pistol/shotgun, doors, health/ammo HUD, death/restart and the exit switch.
+The selector retains the earlier test raycaster.
+
+The title screen shows the DOOM logo (`art/doom_logo.txt`, 1-bit, from
+[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Doom_logo.png), public domain there as a text logo)
+marked "UNOFFICIAL PORT": DOOM is a trademark of id Software, and this project is not affiliated with or endorsed by
+id. Since the map and the assets are free, builds can be shared. `PIANODOOM_WAD=wad/DOOM1.WAD` swaps in your
+shareware assets and `PIANODOOM_MAP=wad/DOOM1.WAD` id's E1M1 (those builds stay private). Editing the map:
+change `tools/makemap.py` and run it; the nodes come from `zdbsp` (`apt install zdbsp`, or without root
+`apt-get download zdbsp && dpkg-deb -x zdbsp_*.deb x`, then `--zdbsp x/usr/bin/zdbsp`). `maps/hangar.wad` also plays
+in any source port: `chocolate-doom -iwad freedoom1.wad -file maps/hangar.wad -warp 1 1`.
 
 - Arrow keys / WASD: turn and move; Q/E: strafe.
-- **Space**: fire; **F**: doors/switches; **Shift**: run. Reach the E1M1 exit switch and press F to win.
+- **Space**: fire; **F**: doors/switches; **Shift**: run. Reach the exit switch (west wall of the last room) and press F to win.
 - **Enter** restarts after death or winning. Piano: C5 fire, D5 use, E5 run, B0 restart.
 - Stand close to a door and face it, then tap **F / D5**; it lifts upwards. **M / Mapa** opens a browser-only
-  map: current player arrow, live enemies, yellow doors and a fixed route from spawn to the first soldier.
+  map: current player arrow, live enemies, yellow doors and a fixed route from spawn to the first zombie.
 - **R / Przeładuj**: recompile changed sources and restart. Build errors appear in the log; fix the code and retry.
-- **Włącz MIDI**: select the piano as output for E1M1 music through its own synthesizer over USB, or as input
+- **Włącz MIDI**: select the piano as output for the music (Freedoom's E1M1 track) through its own synthesizer over USB, or as input
   for piano-key movement. No browser synthesizer is included. This does not flash firmware.
 - Pause, reload, MIDI disconnection and hiding the tab release controls/silence notes as appropriate.
 
 The server binds only to localhost. `web/build/` contains generated WAD-derived data and stays out of git.
 To build without the server: `python3 tools/webbuild.py` (or `--engine ray` for the test raycaster).
-E1M1 currently needs 474 of the target's 482 free C RAM words, leaving 8 words; the reserved 24 words of firmware
+The map currently needs 479 of the target's 482 free C RAM words, leaving 3 words; the reserved 24 words of firmware
 glue and 1024-word framebuffer are counted separately. Pixel parity of geometry with the Python reference is
-tested at nineteen viewpoints plus three door opening heights. Native firmware services are simulated,
+tested at twenty-two viewpoints plus three door opening heights. Native firmware services are simulated,
 so browser performance does not predict device timing. The earlier build was flashed and froze after its first
 frame. The current diagnostic build spreads rendering across callbacks, allows up to one million P16 instructions
 per tick in the emulator, and emits USB stage markers to investigate that hardware failure. Its device behavior
 still needs checking.
 
 The demo deliberately simplifies Doom: original one-bit silhouettes, direct chase/ranged enemy AI, hitscan attacks,
-one shared ammo pool, doors that stay open, instant vertical snapping on steps, plain floors/ceilings. It uses
-E1M1 only. Music and temporary MIDI sound effects play through the piano; no browser synthesizer is included.
+one shared ammo pool, doors that stay open, instant vertical snapping on steps, plain floors/ceilings. It plays
+one map. Music and temporary MIDI sound effects play through the piano; no browser synthesizer is included.
 Walls use original, simple 32×32 one-bit tiles selected by the WAD's material names: metal panels, masonry,
 ribbed supports, computer faces, steps, doors, switches and exit signs. Their world coordinates and clipping
 are shared by both targets; doors have large frames/handles and the pattern moves with the panel. These are
@@ -184,7 +196,7 @@ uv run pytest
 
 The BSP/game tests require the local WAD and Node; they skip if either is missing. The linked-firmware replay
 also requires the official local firmware. Tests reject RAM/ROM overflow and overlapping code/data, characterize
-collision/doors/combat/pickups/restart, and replay a complete E1M1 win. Optional real-browser checks,
+collision/doors/combat/pickups/restart, and replay a complete win of the map. Optional real-browser checks,
 with the server running and Playwright installed: `node tools/webcheck.cjs`. Set `PLAYWRIGHT_MODULE` to an
 existing Playwright installation if needed. These checks use mocked MIDI and save `build/webcheck.png`.
 

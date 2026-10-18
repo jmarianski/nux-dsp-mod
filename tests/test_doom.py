@@ -1,6 +1,6 @@
-"""Run the compiled 16-bit E1M1 renderer, comparing every pixel to the Python reference.
+"""Run the compiled 16-bit map renderer, comparing every pixel to the Python reference.
 
-The shareware WAD is local and never a test fixture in git. These tests skip without it.
+The WAD (Freedoom, or a local DOOM1.WAD) is not a fixture in git. These tests skip without it.
 """
 import json
 from pathlib import Path
@@ -13,14 +13,16 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+import wad  # noqa: E402
 pytestmark = pytest.mark.skipif(
-    not (ROOT / "wad" / "DOOM1.WAD").exists() or not shutil.which("node"), reason="needs local WAD and node")
+    not Path(wad.WAD).exists() or not shutil.which("node"), reason="needs local WAD and node")
 
-POSITIONS = [(1056, -3616, a) for a in (0, 32, 64, 96, 128, 192, 235)] + [
-    (1100, -3600, 78), (1500, -4000, 235), (1056, -3200, 64), (-256, -4500, 37), (2500, -3000, 160),
-    # First door, both faces, oblique and near-plane clipped; the remaining door materials.
-    (1440, -2496, 0), (1632, -2496, 128), (1500, -2576, 30), (1520, -2480, 10),
-    (2848, -3840, 0), (3008, -4576, 192), (3008, -4096, 64)]
+POSITIONS = [(192, 64, a) for a in (0, 32, 64, 96, 128, 192, 235)] + [
+    # Stairs into the hangar, the skylight over the pool, crates, the lift and the balcony above.
+    (192, 600, 64), (-300, 780, 30), (300, 760, 100), (400, 900, 50), (-200, 1300, 220), (560, 1200, 64),
+    # First door, both faces, oblique and near-plane clipped; the other doors, the gate and the exit switch.
+    (192, 280, 64), (192, 380, 192), (150, 300, 50), (200, 310, 70),
+    (-380, 1104, 128), (-560, 1000, 100), (-720, 1500, 192), (-720, 1500, 64), (-720, 1700, 128)]
 
 NODE = r"""
 const {P16, rayNatives} = require(process.argv[2]);
@@ -105,7 +107,7 @@ def test_door_texture_at_partial_openings(tmp_path, height):
     program = tmp_path / "game.json"
     program.write_text(json.dumps(webbuild.build_doom(m)))
     script = tmp_path / "run.js"; script.write_text(NODE)
-    pos = (1440, -2496, 0)
+    pos = (192, 280, 64)
     result = subprocess.run(["node", str(script), str(ROOT / "web" / "p16.js"), str(program)],
                             input=json.dumps({"math": [], "positions": [[*pos, 0]]}),
                             capture_output=True, text=True, check=True)

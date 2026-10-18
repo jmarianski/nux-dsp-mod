@@ -44,24 +44,24 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
 
 // Closed doors stop movement and bullets. Use raises the ceiling, then both pass.
 {
-  const m = machine(); set(m, 1488, -2496, 0, 0); enemy(m, 1600, -2496);
-  assert.equal(m.call("can_move", 1544, -2496), 0);
+  const m = machine(); set(m, 192, 280, 0, 64); enemy(m, 192, 400);
+  assert.equal(m.call("can_move", 192, 336), 0);
   m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 10);
   m.call("rc_key",74,100); m.call("rc_key",74,0); m.call("game_tick");
   assert.equal(m.get("dynamic_open") & 1, 1, "a tap shorter than one frame still uses the door");
-  m.call("dynamic_tick"); assert.equal(m.call("ray_clear",1600,-2496,0),0, "a tiny door gap blocks sight");
-  for (let i=0; i<12; i++) m.call("dynamic_tick");
-  assert.equal(m.get("dynamic_height"), 68);
-  assert.equal(m.call("can_move", 1544, -2496), 1);
+  m.call("dynamic_tick"); assert.equal(m.call("ray_clear",192,400,0),0, "a tiny door gap blocks sight");
+  for (let i=0; i<16; i++) m.call("dynamic_tick");
+  assert.equal(m.get("dynamic_height"), 108);
+  assert.equal(m.call("can_move", 192, 336), 1);
   m.wr(m.sym("shot_cd"), 0); m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 5);
   m.wr(m.sym("shot_cd"), 0); m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 0);
   assert.equal(m.get("kills"), 1); assert.equal(m.get("ammo"), 47); peak(m);
 }
 // An opaque wall blocks hitscan, and empty ammo never damages a target.
 {
-  const m = machine(); set(m, 1056, -3616, 0, 64); enemy(m, 1056, -2800);
+  const m = machine(); set(m, 64, 160, 0, 128); enemy(m, -100, 160);
   m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 10);
-  enemy(m, 1056, -3496); m.wr(m.sym("ammo"),0); m.wr(m.sym("shot_cd"),0);
+  set(m, 192, 64, 0, 64); enemy(m, 192, 184); m.wr(m.sym("ammo"),0); m.wr(m.sym("shot_cd"),0);
   m.call("fire_game"); assert.equal(m.get("enemy_state") & 31, 10); peak(m);
 }
 // Pickups are persistent and do not grant their payload twice.
@@ -76,7 +76,7 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
 }
 // Enemy attacks can kill the player. Enter opens the skill menu, fire there restarts all persistent state.
 {
-  const m = machine(); set(m,1056,-3616,0,64); enemy(m,1056,-3536);
+  const m = machine(); set(m,192,64,0,64); enemy(m,192,144);
   m.wr(m.sym("health"),8); m.call("game_tick"); assert.equal(m.get("game_mode"),1);
   assert.equal(m.get("health"),0);
   m.call("rc_key",23,100); m.call("rc_key",23,0); m.call("game_tick"); assert.equal(m.get("game_mode"),4);
@@ -90,13 +90,13 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
   const m = machine(); m.call("rc_key",72,100); m.call("rc_key",72,0); m.call("game_tick");
   assert.equal(m.get("ammo"),49); peak(m);
 }
-// The actual E1M1 exit switch ends the demo; Enter, then fire in the menu, recovers to the start.
+// The actual exit switch ends the demo; Enter, then fire in the menu, recovers to the start.
 {
-  const m = machine(); set(m,2960,-4768,-24,128); m.call("use_game");
+  const m = machine(); set(m,-880,1712,-48,128); m.call("use_game");
   assert.equal(m.get("game_mode"),2); m.call("frame");
   m.call("rc_key",23,100); m.call("game_tick"); m.call("rc_key",23,0); assert.equal(m.get("game_mode"),4);
   m.call("rc_key",74,100); m.call("game_tick");
-  assert.equal(m.get("game_mode"),0); assert.equal(m.get("px"),1056); peak(m);
+  assert.equal(m.get("game_mode"),0); assert.equal(m.get("px"),192); peak(m);
 }
 // The title waits for any key; the menu's cursor moves with forward/back, within the five skills.
 {
@@ -110,17 +110,16 @@ function peak(m) { peakDepth = Math.max(peakDepth, m.maxCallDepth); }
   m.call("rc_key",72,100); m.call("game_tick"); assert.equal(m.get("game_mode"),0); assert.equal(m.get("skill"),4);
   peak(m);
 }
-// Slots: on ultra-violence the shotgun guy by the start comes in; far behind the player he gives way to a nearer one
-// and goes back to the roster. Hurt me plenty has nobody that near.
+// Slots: on ultra-violence the zombie beyond the first door comes in first, the hangar's shotgun guy too; from the exit
+// room they give way to nearer ones and go back to the roster.
 {
   const m = new P16(p, rayNatives()); m.call("__cc_init"); m.call("rc_start");
-  m.call("start_game");
-  for (let i = 0; i < 4; i++) assert.equal(m.get("enemy_state", i), 0x7c00);
   m.wr(m.sym("skill"), 3); m.call("start_game");
   const st = m.get("enemy_state", 0), k = (st >> 10) & 31;
   const met = (r) => m.get("roster_bits", r >> 4) & (1 << (r & 15));
-  assert.equal(st & 31, 15, "a shotgun guy: 30 points"); assert(met(k));
-  set(m, 3000, -3584, 0, 0); for (let n = 0; n < 4; n++) m.call("slot_tick");
+  assert.equal(st & 31, 10, "a zombie: 20 points"); assert(met(k));
+  assert(Array.from({length:4}, (_, i) => m.get("enemy_state", i) & 31).includes(15), "the shotgun guy by the stairs");
+  set(m, -880, 1824, 0, 0); for (let n = 0; n < 4; n++) m.call("slot_tick");
   const moved = Array.from({length:4}, (_, i) => (m.get("enemy_state", i) >> 10) & 31);
   assert(moved.every(r => r !== 31), "the far end has its own monsters");
   assert(!moved.includes(k) && !met(k), "the far one was evicted, whole");

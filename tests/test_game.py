@@ -8,7 +8,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-pytestmark = pytest.mark.skipif(not shutil.which("node") or not (ROOT / "wad" / "DOOM1.WAD").exists(),
+import wad  # noqa: E402
+pytestmark = pytest.mark.skipif(not shutil.which("node") or not Path(wad.WAD).exists(),
                                 reason="needs local WAD and node")
 
 
@@ -45,7 +46,7 @@ def test_navigation_does_not_open_the_actual_map():
     assert m.sectors == before
     nav = program["navigation"]
     assert tuple(nav["route"][0]) == m.start()[:2]
-    assert nav["target"] == 3  # Original easy soldier, beyond the first door.
+    assert nav["target"] == 0  # The easy zombie beyond the first door.
     end, enemy = nav["route"][-1], m.enemies[nav["target"]]
     assert abs(end[0] - enemy[0]) + abs(end[1] - enemy[1]) == 64
 
@@ -81,7 +82,7 @@ console.log(JSON.stringify(m.maxCallbackSteps));
                    capture_output=True, text=True, check=True)
 
 
-def test_actual_firmware_can_finish_e1m1(tmp_path):
+def test_actual_firmware_can_finish_the_map(tmp_path):
     firmware = ROOT.parent / "NEK100_DSP_V1.0.7.bin"
     if not firmware.exists():
         pytest.skip("needs the local official NUX firmware")
@@ -93,6 +94,6 @@ def test_actual_firmware_can_finish_e1m1(tmp_path):
                     str(tmp_path / "linked-game.json"), str(tmp_path / "route.json")],
                    capture_output=True, text=True, check=True)
     result = json.loads((tmp_path / "playthrough-result.json").read_text())
-    assert result["result"] == "WIN" and result["kills"] == 6 and result["health"] > 0
+    assert result["result"] == "WIN" and result["kills"] == 10 and result["health"] > 0
     assert summary["ram"]["used"] <= summary["ram"]["limit"]
     assert summary["firmware"]["used"] <= summary["firmware"]["limit"]

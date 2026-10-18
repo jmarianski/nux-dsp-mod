@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan and replay a keyboard-only E1M1 route from spawn to the exit switch.
+"""Plan and replay a keyboard-only route from spawn to the exit switch.
 
 The planner assumes doors can open; the C replay must actually use them, fight,
 walk each segment and win. No teleport or inventory/state cheats in the replay.
@@ -17,13 +17,23 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import doommap
 
 
-def route(goal=(2960, -4768), m=None, start=None):
+def exit_goal(m, start):
+    """32 units east of the exit switch (the replay ends facing west), on the start's 16-unit grid."""
+    (x1, y1, x2, y2) = next(m.collision[i][:4] for i, a in enumerate(m.actions) if a == 255)
+    assert x1 == x2, "the replay expects the exit switch on a west wall"
+    return x1 + 32 + (start[0] - x1) % 16, (y1 + y2) // 2 - ((y1 + y2) // 2 - start[1]) % 16
+
+
+def route(goal=None, m=None, start=None):
     m = copy.copy(m or doommap.Map())
     m.sectors = list(m.sectors)
-    # Only the plan sees open doors. The actual compiled game starts with closed doors.
+    # Only the plan sees open doors and lowered gates. The actual compiled game starts with them closed.
     for sec, _original, target, kind in m.dynamics:
+        f, c, light = m.sectors[sec]
         if kind == 0:
-            f, _c, light = m.sectors[sec]; m.sectors[sec] = f, target, light
+            m.sectors[sec] = f, target, light
+        elif kind == 1:
+            m.sectors[sec] = target, c, light
     cache = {}
     ox, oy, bw, bh = m.block_info
 
@@ -54,7 +64,7 @@ def route(goal=(2960, -4768), m=None, start=None):
         cache[key] = (floor, ceiling) if ceiling-floor >= 56 else None
         return cache[key]
 
-    start = tuple(start or m.start()[:2]); goal = tuple(goal)
+    start = tuple(start or m.start()[:2]); goal = tuple(goal or exit_goal(m, start))
     queue = [(0, 0, start)]; costs = {start:0}; previous = {}
     while queue:
         _f, cost, p = heapq.heappop(queue)
@@ -78,7 +88,7 @@ def route(goal=(2960, -4768), m=None, start=None):
             if nc < costs.get(q,10**9):
                 costs[q] = nc; previous[q] = p
                 heapq.heappush(queue,(nc+abs(q[0]-goal[0])+abs(q[1]-goal[1]),nc,q))
-    raise RuntimeError('no traversable route to the E1M1 exit')
+    raise RuntimeError('no traversable route to the exit')
 
 
 if __name__ == '__main__':
