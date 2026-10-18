@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import builddemo
 import playthrough
 import wad
+MAPNAME = Path(wad.MAP).stem.upper()
 from nuxdsp import container, fwmap, patcher
 
 
@@ -36,7 +37,7 @@ def command(args):
 
 def instructions(params, ram, program, firmware):
     patches = ", ".join(params["patches"])
-    return f"""DOOM NA NUX NEK-100 — diagnostyka pętli E1M1
+    return f"""DOOM NA NUX NEK-100 — diagnostyka pętli, mapa {MAPNAME}
 
 Wersja diagnostyczna wycisza muzykę i efekty gry; sterowanie zostaje bez zmian.
 Sprawdza porcje renderowania zamiast całej klatki w ticku, z podniesionym
@@ -46,7 +47,7 @@ Test instrumentu sprawdzi, czy brak muzyki i efektów zmienia zawieszanie.
 Znaczniki diagnostyczne idą kanałem USB MIDI, lecz nie przez syntezator.
 
 CO WGRAĆ
-NEK100_DSP_DOOM_E1M1.bin — firmware DSP z grą i Twoim zwykłym zestawem poprawek.
+NEK100_DSP_DOOM_{MAPNAME}.bin — firmware DSP z grą i Twoim zwykłym zestawem poprawek.
 Pozostałe pliki BIN są wariantami powrotu w katalogu rollback.
 
 DOMYŚLNA KONFIGURACJA
@@ -63,7 +64,7 @@ WINDOWS
 1. Rozpakuj ZIP. RPC-DFUForWin.exe oraz DREAM-Rpc.dll muszą być obok siebie.
 2. Podłącz pianino przez USB. Włącz tryb aktualizacji: Power + VOL+ + VOL−
    przytrzymane razem przez około pół sekundy.
-3. Uruchom RPC-DFUForWin.exe z tej paczki. Wskaż NEK100_DSP_DOOM_E1M1.bin
+3. Uruchom RPC-DFUForWin.exe z tej paczki. Wskaż NEK100_DSP_DOOM_{MAPNAME}.bin
    i wykonaj zwykłą aktualizację firmware DSP. Sprawdź, że program zgłasza
    niezerową ilość zaprogramowanych danych. Nie odłączaj zasilania podczas zapisu.
 4. Po zakończeniu wyłącz i włącz pianino. Ekran wersji: DSP:1.0.7B.
@@ -71,8 +72,8 @@ WINDOWS
 
 LINUX / macOS Z ISTNIEJĄCYM REPOZYTORIUM nek100-mod
 W trybie aktualizacji, z katalogu nek100-mod, użyj sprawdzonego polecenia:
-  python3 -m nuxdsp flash --dry-run /ścieżka/do/NEK100_DSP_DOOM_E1M1.bin
-  python3 -m nuxdsp flash /ścieżka/do/NEK100_DSP_DOOM_E1M1.bin
+  python3 -m nuxdsp flash --dry-run /ścieżka/do/NEK100_DSP_DOOM_{MAPNAME}.bin
+  python3 -m nuxdsp flash /ścieżka/do/NEK100_DSP_DOOM_{MAPNAME}.bin
 Potrzebne są pyusb/libusb oraz dostęp do USB zgodnie z README nek100-mod.
 Te polecenia wykonujesz sam; przygotowanie paczki niczego nie wgrywa.
 
@@ -98,7 +99,7 @@ B0                   restart po śmierci lub wygranej
 VOL+ / VOL−          głośność
 Inny przycisk panelu kończy grę i wraca do menu Extra.
 
-Cel: dotrzyj do przycisku wyjścia w E1M1 i użyj D5.
+Cel: dotrzyj do przycisku wyjścia i użyj D5.
 H = zdrowie, A = amunicja, K = pokonani przeciwnicy. Drzwi podnoszą się do góry
 i zostają otwarte. Pomocnicza mapa z przeglądarki jest dostępna w symulatorze.
 
@@ -126,7 +127,7 @@ def main():
     now = datetime.now(timezone.utc)
     packages = ROOT / "build" / "packages"
     packages.mkdir(parents=True, exist_ok=True)
-    name = "NEK100_DOOM_E1M1_SILENT_" + now.strftime("%Y%m%dT%H%M%S%fZ")
+    name = f"NEK100_DOOM_{MAPNAME}_SILENT_" + now.strftime("%Y%m%dT%H%M%S%fZ")
     output = packages / name
     print("Running repository tests…", flush=True)
     test_log = command([sys.executable, "-m", "pytest", "-q"])
@@ -144,8 +145,8 @@ def main():
         replay_log = command(["node", str(ROOT / "tools" / "playthrough.cjs"), str(ROOT / "web" / "p16.js"),
                               str(work / "linked-game.json"), str(work / "route.json")])
         result = json.loads((work / "playthrough-result.json").read_text())
-        if result["result"] != "WIN" or result["kills"] != 4 or result["health"] <= 0:
-            raise RuntimeError("linked firmware did not finish E1M1 alive")
+        if result["result"] != "WIN" or result["health"] <= 0:
+            raise RuntimeError("linked firmware did not finish the map alive")
         print(replay_log.splitlines()[-1], flush=True)
         # Same defaults and canonical addresses as the demo, with no game patch.
         canonical = patcher.canonical_layout(target)
@@ -156,7 +157,7 @@ def main():
         builddemo.budget.check_firmware(recovery)
         output.mkdir()
         rollback = output / "rollback"; rollback.mkdir()
-        shutil.copyfile(work / "NEK100_DSP_demo.bin", output / "NEK100_DSP_DOOM_E1M1.bin")
+        shutil.copyfile(work / "NEK100_DSP_demo.bin", output / f"NEK100_DSP_DOOM_{MAPNAME}.bin")
         (rollback / "NEK100_DSP_DEFAULTS_BEZ_DOOM.bin").write_bytes(recovery)
         shutil.copyfile(official, rollback / official.name)
         for path in helpers:
@@ -200,4 +201,11 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--wad", help="textures, sprites, music (default: wad/freedoom1.wad; DOOM1.WAD packages stay private)")
+    p.add_argument("--map", help="the WAD whose E1M1 is played (default: maps/hangar.wad), e.g. DOOM1.WAD for id's")
+    args = p.parse_args()
+    wad.use(args.wad, args.map)
+    MAPNAME = Path(wad.MAP).stem.upper()
     main()

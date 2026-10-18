@@ -125,8 +125,7 @@ def build_doom(m=None, silent_audio=False):
     m = m or doommap.Map()
     r = doom.compile_doom(m, silent_audio=silent_audio)
     s = r.symbols
-    far = [{"addr": FAR_MUSIC, "words": music()}]
-    init = [[s["mu_shi"], FAR_MUSIC >> 16], [s["mu_slo"], FAR_MUSIC & 0xffff]]
+    far, init = [], []
     addr = 0x20000
     tables = m.words()
     tables.update(doom.assets())
@@ -135,6 +134,9 @@ def build_doom(m=None, silent_audio=False):
         far.append({"addr": addr, "words": words})
         init += [[s["map_hi"] + k, addr >> 16], [s["map_lo"] + k, addr & 0xffff]]
         addr += len(words)
+    music_at = max(FAR_MUSIC, addr)             # a larger map's tables push the music up
+    far.insert(0, {"addr": music_at, "words": music()})
+    init[:0] = [[s["mu_shi"], music_at >> 16], [s["mu_slo"], music_at & 0xffff]]
     wanted = ["__cc_init", "rc_start", "rc_tick", "rc_key", "frame", "mu_stop", "mu_restart", "umul32", "smul32", "fmul", "muldiv",
               "can_move", "move_player", "steer", "sector_at", "game_tick", "use_game", "fire_game", "ray_clear",
               "dynamic_tick", "pickup_tick", "damage", "game_init", "read_sector", "audio_restart", "ray_fraction",

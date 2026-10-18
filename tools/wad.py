@@ -4,6 +4,7 @@
 Default: Freedoom Phase 1 (wad/freedoom1.wad, BSD licensed: https://freedoom.github.io), so builds can be shared;
 PIANODOOM_WAD=path picks another one (e.g. your shareware DOOM1.WAD, whose builds stay private).
 The map is our own, maps/hangar.wad (tools/makemap.py); PIANODOOM_MAP=path reads E1M1 from another WAD.
+The build tools take the same as --wad / --map (use()).
 
 Music stream: two words per event, played by the tick (10 ms):
     w0 = wait << 8 | status    wait = ticks after this event (0..255), status = MIDI status | channel (0: no event)
@@ -23,9 +24,27 @@ MIDI_FREE = [4, 5, 6, 10, 11, 12, 13, 14, 15]   # a MIDI song's: also clear of t
 MUS_SYS = {10: 120, 11: 123, 12: 126, 13: 127, 14: 121}
 
 
+def use(wad=None, map=None):
+    """Pick the WAD and the map's WAD for this run and the commands it starts (PIANODOOM_WAD / PIANODOOM_MAP)."""
+    global WAD, MAP
+    if wad:
+        WAD = os.environ["PIANODOOM_WAD"] = os.path.abspath(wad)
+    if map:
+        MAP = os.environ["PIANODOOM_MAP"] = os.path.abspath(map)
+    for path in (WAD, MAP):
+        if not os.path.isfile(path):
+            raise FileNotFoundError(path)
+
+
+def shareable():
+    """Whether builds may be shared: Freedoom's assets and our own map."""
+    ours = os.path.abspath(os.path.join(HERE, "..", "maps"))
+    return any(n == "FREEDOOM" for n, _, _ in Wad().lumps) and os.path.dirname(os.path.abspath(MAP)) == ours
+
+
 class Wad:
-    def __init__(self, path=WAD):
-        self.data = open(path, "rb").read()
+    def __init__(self, path=None):
+        self.data = open(path or WAD, "rb").read()
         n, off = struct.unpack("<4xII", self.data[:12])
         self.lumps = []
         for i in range(n):
