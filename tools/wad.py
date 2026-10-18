@@ -24,6 +24,7 @@ INTRO = "D_INTRO"
 MUS_CTRL = {1: 0, 2: 1, 3: 7, 4: 10, 5: 11, 6: 91, 7: 93, 8: 64, 9: 67}   # MUS controller -> MIDI CC (0 = program)
 FREE = [4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15]  # melodic channels: 0..3 are the keyboard's parts, 9 percussion
 MIDI_FREE = [4, 5, 6, 10, 11, 12, 13, 14, 15]   # a MIDI song's: also clear of the effects (7) and the style's drums (8)
+BANK_GAP = 2                                    # ticks (10 ms) between the bank selects and the song
 MUS_SYS = {10: 120, 11: 123, 12: 126, 13: 127, 14: 121}
 
 
@@ -169,14 +170,17 @@ def mus_events(mus):
 
 def mus_stream(mus, hz=100, once=False):
     """MUS -> the piano's music stream (words); once: it stops at the end instead of starting over.
-    A melodic program change goes out after bank select 0 (GM): the songs send none, and a channel left in another
-    bank plays that bank's voice (bank 18's program 34 is FX Laugh where E4M8 wants the picked bass)."""
-    ev = []
-    for e in mus_events(mus):
-        if e[1] & 0xf0 == 0xc0 and e[1] & 15 != 9:
-            ev += [(e[0], 0xb0 | e[1] & 15, 0, 0), (e[0], 0xb0 | e[1] & 15, 32, 0)]
-        ev.append(e)
+    It starts with bank select 0 (GM) on each melodic channel, then BANK_GAP ticks before the song: the songs send
+    none, and a channel left in another bank plays that bank's voice (bank 18's program 34 is FX Laugh where E4M8
+    wants the picked bass). Sent by the game in one go, right before a program change, it left the channels
+    silent (C: over USB, a millisecond apart, the same messages worked)."""
+    ev = mus_events(mus)
+    melodic = sorted({e[1] & 15 for e in ev if e[1] & 15 != 9})
     words = []
+    for ch in melodic:
+        words += [0xb0 | ch, 0, 0xb0 | ch, 32 << 8]
+    if words:
+        words[-2] |= BANK_GAP << 8
     for k, (t, st, d1, d2) in enumerate(ev):
         now = t * hz // 140
         nxt = ev[k + 1][0] * hz // 140 if k + 1 < len(ev) else now
