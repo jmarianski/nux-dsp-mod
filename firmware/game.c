@@ -23,6 +23,7 @@ int enemy_x[4], enemy_y[4];
 unsigned enemy_state[4], pickup_bits[4];
 int dynamic_height[8], moving_actor;
 unsigned dynamic_open, lift_timer, prev_held, shot_cd, flash, hurt, ai_index, sfx_timer, sfx_note;
+unsigned bob;                                   /* walking ticks: the weapon's sway */
 unsigned pressed;
 int ray_x, ray_y, ray_dx, ray_dy, ray_use, ray_action, ray_z, ray_dz;
 
@@ -213,7 +214,7 @@ void damage(int amount)
 {
     int saved;
     saved = amount / 3; if (saved > armor) saved = armor;
-    armor -= saved; health -= amount - saved; hurt = 4;
+    armor -= saved; health -= amount - saved; hurt = 12;    /* ~0.35 s: three frames or so */
     sound(36);
     if (health <= 0) { health = 0; game_mode = 1; mu_stop(); }
 }
@@ -332,7 +333,7 @@ void game_init(void)
 {
     int i;
     game_visible = 0; game_mode = 0; health = 100; ammo = 50; armor = kills = weapon = 0;
-    dynamic_open = lift_timer = prev_held = pressed = shot_cd = flash = hurt = ai_index = sfx_timer = 0;
+    dynamic_open = lift_timer = prev_held = pressed = shot_cd = flash = hurt = ai_index = sfx_timer = bob = 0;
     moving_actor = -1; held = 0;
     for (i = 0; i < 4; i++) pickup_bits[i] = 0;
     for (i = 0; i < ENEMY_N; i++) {
@@ -360,6 +361,7 @@ void game_tick(void)
     if (sfx_timer && !--sfx_timer) synth(0x0888, sfx_note << 8);
 #endif
     dynamic_tick();
+    if (held & 0x5d) bob++; else bob = 0;      /* moving or strafing */
     steer();
     if (can_move(px, py)) pz = move_floor;
     if ((pressed & 256) || ((held & 256) && !(prev_held & 256))) use_game();
@@ -537,7 +539,6 @@ void draw_hud(void)
     glyph(48, 7, 12); hud_number(52, kills);
     glyph(64, 7, 18);
     glyph(68, 7, ENEMY_N);
-    if (hurt) rect(0, 0, 128, 1, 1);
 }
 
 void end_overlay(void)
@@ -547,11 +548,31 @@ void end_overlay(void)
     else { glyph(55, 4, 16); glyph(59, 4, 17); glyph(63, 4, 11); glyph(67, 4, 16); }
 }
 
+/* Hit: an inked frame round the view, narrowing as hurt counts down. */
+void hurt_frame(void)
+{
+    int w;
+    w = (hurt + 3) >> 2;
+    rect(0, 0, 128, w, 1); rect(0, 56 - w, 128, w, 1);
+    rect(0, w, w, 56 - 2 * w, 1); rect(128 - w, w, w, 56 - 2 * w, 1);
+}
+
+/* The weapon sways on an arc while walking, as vanilla's: sideways 0, 1, 2, 1, 0, -1, -2, -1, lower at the sides. */
+void draw_weapon(void)
+{
+    int k, dx, dy;
+    k = (bob >> 2) & 7;
+    dx = k < 4 ? (k < 3 ? k : 1) : (k < 7 ? 4 - k : -1);
+    dy = dx < 0 ? -dx : dx;
+    rect(57 + dx, 48 + dy, 14, 8 - dy, 0); rect(59 + dx, 50 + dy, 10, 6 - dy, 1); rect(61 + dx, 42 + dy, weapon ? 6 : 4, 12 - dy, 1);
+    if (flash) { rect(58 + dx, 39 + dy, 12, 2, 1); rect(63 + dx, 36 + dy, 2, 8, 1); }
+}
+
 void draw_overlay(void)
 {
     rect(61, 29, 5, 5, 0); rect(63, 30, 1, 3, 1); rect(62, 31, 3, 1, 1);
-    rect(57, 48, 14, 8, 0); rect(59, 50, 10, 6, 1); rect(61, 42, weapon ? 6 : 4, 12, 1);
-    if (flash) { rect(58, 39, 12, 2, 1); rect(63, 36, 2, 8, 1); }
+    if (hurt) hurt_frame();
+    draw_weapon();
     draw_hud();
     if (game_mode) end_overlay();
 }
