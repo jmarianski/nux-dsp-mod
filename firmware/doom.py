@@ -52,6 +52,7 @@ def compile_doom(m=None, silent_audio=False, far=None):
            + f"#define FLATPAT_AT {walltex.FLATPAT_AT}\n#define FLOOR_REF {walltex.FLOOR_REF}\n#define CEIL_REF {walltex.CEIL_REF}\n"
            + f"#define IMP_BASE {sprites.IMP_BASE}\n#define ATTACK {sprites.ATTACK}\n#define PAIN {sprites.PAIN}\n"
            + f"#define DEATH {sprites.DEATH}\n#define PICKUP_BASE {sprites.PICKUP_BASE}\n"
+           + f"#define BALL_BASE {sprites.BALL_BASE}\n#define DYN_SLOTS {max(1, len(getattr(m, 'dynamics', [])))}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"
            + f"#define BLOCK_X {bx}\n#define BLOCK_Y {by}\n#define BLOCK_W {bw}\n#define BLOCK_H {bh}\n"
            + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define PICKUP_N {len(getattr(m, 'pickups', []))}\n"

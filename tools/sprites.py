@@ -22,9 +22,11 @@ STRETCH = 1.4
 ZOMBIE = ["POSSA1", "POSSB1", "POSSC1", "POSSD1", "POSSF1", "POSSG1", "POSSH0", "POSSI0", "POSSJ0", "POSSK0", "POSSL0"]
 IMP = ["TROOA1", "TROOB1", "TROOC1", "TROOD1", "TROOF1", "TROOH1", "TROOI0", "TROOJ0", "TROOK0", "TROOL0", "TROOM0"]
 PICKUPS = ["STIMA0", "MEDIA0", "BON1A0", "BON2A0", "CLIPA0", "AMMOA0", "SHOTA0"]   # pickup kinds 3..9
-FRAMES = ZOMBIE + IMP + PICKUPS
+BALL = ["BAL1A0", "BAL1B0", "BAL1C0", "BAL1D0", "BAL1E0"]   # the imp's fireball: flight, then the burst
+FRAMES = ZOMBIE + IMP + PICKUPS + BALL
 # Frame numbers in doom.c: a monster's base (0 zombie, IMP_BASE imp) + walk 0..3, ATTACK, PAIN, DEATH..DEATH+4.
 IMP_BASE, ATTACK, PAIN, DEATH, PICKUP_BASE = len(ZOMBIE), 4, 5, 6, len(ZOMBIE) + len(IMP)
+BALL_BASE = PICKUP_BASE + len(PICKUPS)
 
 
 def patch(w, lum, name):
@@ -43,7 +45,8 @@ def patch(w, lum, name):
     return width, height, left, top, img
 
 
-def frame(w, lum, name):
+def frame(w, lum, name, glow=False):
+    """glow: a light source (the fireball), bright grays that full light never inks."""
     width, height, left, top, img = patch(w, lum, name)
     cols, rows = (width + 1) // 2, (height + 1) // 2
     if rows > 31:
@@ -57,7 +60,7 @@ def frame(w, lum, name):
             seen = [v for v in px if v is not None]
             if len(seen) >= 2:
                 t = max(0.0, min(1.0, (sum(seen) / len(seen) - lo) / max(1, hi - lo)))
-                tex[r][c] = min(13, int(14 * t ** STRETCH))
+                tex[r][c] = min(13, 9 + int(5 * t)) if glow else min(13, int(14 * t ** STRETCH))
     opaque = lambda r, c: 0 <= r < rows and 0 <= c < cols and tex[r][c] is not None
     words = [cols, rows, left & 0xffff, top & 0xffff]
     for c in range(cols):
@@ -66,7 +69,7 @@ def frame(w, lum, name):
             if not opaque(r, c):
                 nib.append(15)
             elif not all(opaque(r + dr, c + dc) for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))):
-                nib.append(14)
+                nib.append(0 if glow else 14)   # a light source gets a dark rim instead
             else:
                 nib.append(tex[r][c])
         words += [sum(nib[4 * k + j] << 4 * j for j in range(4)) for k in range(8)]
@@ -79,5 +82,5 @@ def words(w):
     out = [0] * len(FRAMES)
     for k, name in enumerate(FRAMES):
         out[k] = len(out)
-        out += frame(w, lum, name)
+        out += frame(w, lum, name, name in BALL)
     return out
