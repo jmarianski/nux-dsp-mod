@@ -368,35 +368,45 @@ void game_tick(void)
  * that held their clip window. No second 128-word depth buffer is allocated. */
 int spr_left, spr_top, spr_width, spr_height, spr_scale;
 
-void sprite_span(int x, int a, int b, int ink)
+/* Page p of columns x0..end-1: the mask m set (or cleared) where the sprite is in front of the wall. */
+void sprite_page(int x0, int end, unsigned at, unsigned m, int ink)
 {
-    int p;
-    unsigned bits;
-    if (x < 0 || x >= 128) return;
-    if ((windows[x] & 0x8000) && spr_scale < (windows[x] & 0x7fff)) return;
-    a = clamp(a, 0, 56); b = clamp(b, 0, 56);
-    for (p = a >> 3; p <= (b - 1) >> 3; p++) {
-        bits = span(a - p * 8, b - p * 8);
-        if (ink) framebuffer[p * 128 + x] |= bits;
-        else framebuffer[p * 128 + x] &= ~bits;
+    int x;
+    for (x = x0; x < end; x++) {
+        if ((windows[x] & 0x8000) && spr_scale < (windows[x] & 0x7fff)) continue;
+        if (ink) framebuffer[at + x] |= m; else framebuffer[at + x] &= ~m;
     }
 }
 
+/* Columns of band u, rows a..b-1: a page's mask once, then the columns. */
 void sprite_band(int u, int a, int b, int ink)
 {
-    int x, end;
-    end = spr_left + (u + 1) * spr_width / 8;
-    for (x = spr_left + u * spr_width / 8; x < end; x++) sprite_span(x, a, b, ink);
+    int x0, end, p;
+    x0 = spr_left + u * spr_width / 8; end = spr_left + (u + 1) * spr_width / 8;
+    if (x0 < 0) x0 = 0; if (end > 128) end = 128;
+    a = clamp(a, 0, 56); b = clamp(b, 0, 56);
+    if (x0 >= end || a >= b) return;
+    work += 1 + (((end - x0) * (((b - 1) >> 3) - (a >> 3) + 1)) >> 1);
+    for (p = a >> 3; p <= (b - 1) >> 3; p++) sprite_page(x0, end, p * 128, span(a - p * 8, b - p * 8), ink);
+}
+
+/* Band u of a sprite row: at most an eighth of its width, so that one piece of work stays small up close.
+ * -> 0 when the whole row is off screen (its other bands are too). */
+int sprite_part(int row, int u, int kind)
+{
+    int a, b;
+    work += 2;
+    a = spr_top + row * spr_height / 16; b = spr_top + (row + 1) * spr_height / 16;
+    if (a == b || b <= 0 || a >= 56) return 0;
+    readmap(10, (kind - 1) * 32 + row * 2, 2);
+    if (buf[0] & (1 << u)) sprite_band(u, a, b, buf[1] & (1 << u));
+    return 1;
 }
 
 void sprite_row(int row, int kind)
 {
-    int a, b, u;
-    unsigned mask, ink;
-    a = spr_top + row * spr_height / 16; b = spr_top + (row + 1) * spr_height / 16;
-    if (a == b || b <= 0 || a >= 56) return;
-    readmap(10, (kind - 1) * 32 + row * 2, 2); mask = buf[0]; ink = buf[1];
-    for (u = 0; u < 8; u++) if (mask & (1 << u)) sprite_band(u, a, b, ink & (1 << u));
+    int u;
+    for (u = 0; u < 8; u++) if (!sprite_part(row, u, kind)) return;
 }
 
 int sprite_setup(int x, int y, int kind)
@@ -462,11 +472,11 @@ void draw_enemies(void)
     }
 }
 
-int actor_row_work(void)
+int actor_row_work(void)                       /* render_row counts the bands: row * 8 + band */
 {
     if (!render_kind) return 0;
-    sprite_row(render_row++, render_kind);
-    if (render_row == 16) render_kind = 0;
+    if (!sprite_part(render_row >> 3, render_row & 7, render_kind)) render_row |= 7;
+    if (++render_row == 128) render_kind = 0;
     return 1;
 }
 
@@ -499,23 +509,18 @@ void enemy_draw_work(void)
     if (sprite_setup(enemy_x[best], enemy_y[best], kind)) { render_kind = kind; render_row = 0; }
 }
 
-void rect_column(int col, int a, int b, int ink)
+void rect_page(int x0, int end, unsigned at, unsigned m, int ink)
 {
-    int p;
-    unsigned bits;
-    for (p = a >> 3; p <= (b - 1) >> 3; p++) {
-        bits = span(a - p * 8, b - p * 8);
-        if (ink) framebuffer[p * 128 + col] |= bits;
-        else framebuffer[p * 128 + col] &= ~bits;
-    }
+    int col;
+    for (col = x0; col < end; col++) if (ink) framebuffer[at + col] |= m; else framebuffer[at + col] &= ~m;
 }
 
 void rect(int x, int y, int w, int h, int ink)
 {
-    int col, a, b;
+    int a, b, p, x0, end;
     a = clamp(y, 0, 64); b = clamp(y + h, 0, 64);
-    for (col = clamp(x, 0, 128); col < x + w && col < 128; col++)
-        rect_column(col, a, b, ink);
+    x0 = clamp(x, 0, 128); end = x + w < 128 ? x + w : 128;
+    for (p = a >> 3; a < b && p <= (b - 1) >> 3; p++) rect_page(x0, end, p * 128, span(a - p * 8, b - p * 8), ink);
 }
 
 void glyph(int x, int page, int id)

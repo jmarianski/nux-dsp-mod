@@ -308,6 +308,7 @@ void frame_begin(void)
     render_actor = render_row = render_kind = render_pass = 0;
     render_previous = 32767; render_previous_i = -1;
     render_state = 1;
+    work += 250;                                /* the clears above: ~16k instructions */
 }
 
 /* Yield only at complete operations: no C local frame or map buffer survives a tick. */
@@ -393,9 +394,9 @@ void frame_work(void)
     while (render_state && work - tick_start < FRAME_BUDGET) {
         work += 2;
         if (render_state == 1) bsp_work();
-        else if (render_state == 2) { if (render_kind) work += 60; pickup_draw_work(); }
-        else if (render_state == 3) { if (render_kind) work += 60; enemy_draw_work(); }
-        else if (render_state == 4) { draw_overlay(); render_state = 5; work += 270; }
+        else if (render_state == 2) pickup_draw_work();
+        else if (render_state == 3) enemy_draw_work();
+        else if (render_state == 4) { draw_overlay(); render_state = 5; work += game_mode ? 330 : 190; }
         else { nframe++; LCD_FLAG = LCD_FLAG | 1; render_state = 0; }
     }
     render_context = 0;
