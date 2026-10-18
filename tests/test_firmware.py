@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # the settle timer not yet run on hardware) and extra_menu's functions moved
 # above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
 # timed from the last sound not yet run on hardware.
-ALL_SHA = "5b1e6c1a6f8d4439417f5f0ea81ef734e3cf2d6196151c628d2e8342f3123beb"
+ALL_SHA = "5c13f1c852c76d366e08019b1af72a345f2c21132e1bb69a8f31bcb2b769b415"
 
 
 def padded(w, n):
@@ -62,8 +62,9 @@ class TestFirmware(unittest.TestCase):
             p = patcher.load(n)
             one, _ = patcher.build(self.img, self.map, [patcher.load(r) for r in p.requires] + [p])
             ow = container.words(one)
-            # .weak entry points: as in a build without the patches that define them
-            weak = {name for name, _ in p.weaks}
+            # .weak entry points (its own and those of the patches it requires): as in a build without the patches
+            # that define them
+            weak = {name for q in [p] + [patcher.load(r) for r in p.requires] for name, _ in q.weaks}
             rest = [m for m in patcher.available()
                     if not weak & set(re.findall(r"^(\w+):", "\n".join(patcher.load(m).code), re.M))]
             part, _ = patcher.build(self.img, self.map, patcher.resolve_patches(rest))

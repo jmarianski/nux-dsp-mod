@@ -1182,7 +1182,7 @@ pp_screen:
     st    [text_buf+15], r7
 .p_count:
     ld    r7, [text_buf+14]
-    cmp   r7, #12
+    cmp   r7, #13
     blt   .p_count_go
     jmp   .p_counted
 .p_count_go:
@@ -1214,7 +1214,7 @@ pp_screen:
     st    [text_buf+15], r7   ; installed ones before it, minus 5 * page = its line
 .p_loop:
     ld    r7, [text_buf+14]
-    cmp   r7, #12
+    cmp   r7, #13
     blt   .p_go
     .dw   0xd0ce, 0x061f5
 .p_go:
@@ -1320,8 +1320,7 @@ pp_tab:                       ; kind (0 code word, 1 RAM word, 2 always), addres
     .dw   1, 0x05806, 0x0000, pp_n9, pp_p9      ; welcome_cat
     .dw   0, 0x00c1c, 0xd7c8, pp_n10, pp_p10    ; telemetry
     .dw   0, 0x055b4, 0xc14c, pp_n11, pp_p11    ; battery_percent
-pp_n0:
-    .dw   0x54, 0x4f, 0x55, 0x43, 0x48, 0x20, 0x4f, 0x46, 0x46, 0
+    .dw   0, 0x007ea, 0xd7c8, pp_n12, pp_p12    ; doom_demo
 pp_p0:
     .dw   0x44, 0x4f, 0x54, 0x59, 0x4b, 0x20, 0x57, 0x59, 0x141, 0
 pp_n1:
@@ -2146,6 +2145,8 @@ ex_ret:                       ; the telemetry patch's entry points without it
 
 sl_lim:                       ; Sleep times in half ticks: 30 s, 1 min, 5 min (amp_cnt stops at 5 min)
     .dw   1500, 3000, 15000
+pp_n0:                        ; a Patches name here: the main block's pool is full
+    .dw   0x54, 0x4f, 0x55, 0x43, 0x48, 0x20, 0x4f, 0x46, 0x46, 0
 .end
 
 .code 0x08e5a
@@ -2155,6 +2156,9 @@ pp_n10:
     .dw   0x54, 0x45, 0x4c, 0x45, 0x4d, 0x45, 0x54, 0x52, 0x59, 0
 pp_p10:
     .dw   0x54, 0x45, 0x4c, 0x45, 0x4d, 0x45, 0x54, 0x52, 0x49, 0x41, 0
+pp_n12:
+pp_p12:                       ; the same in Polish
+    .dw   0x44, 0x4f, 0x4f, 0x4d, 0
 .end
 
 .code 0x19720

@@ -28,6 +28,7 @@ Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one 
 | `telemetry` *(optional, off unless you select it)* | usage log for measuring battery life: 5-minute windows of time played, average volume, silence with the speaker on and off, time asleep and the battery reading (sleep and speaker off come from `extra_menu`; without it they stay 0), in flash pages the stock firmware does not use (about 17 days). Nothing leaves the instrument by itself: it is read only on request over USB (below). Listed on the Extra → Patches screen when installed (with `extra_menu`) |
 | `polish_font` *(optional)* | Polish letters (ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ) in the main UI font, strings in Unicode. A base for translations |
 | `lang_pl` *(optional, needs `polish_font`)* | Polish UI: the 500 sound and 100 demo names, Touch and reverb values, style sections, buttons, screen headers and dialogs |
+| `doom_demo` *(optional, needs `extra_menu` and `touch_off`)* | DOOM in Extra (an unofficial port from the doom-piano project): one map of its own, Hangar, with [Freedoom](https://freedoom.github.io)'s textures, sprites and music (BSD license, in the patch file), the keys move and shoot. The file grows to about 303 KB. DOOM is a trademark of id Software; not affiliated with or endorsed by id |
 
 | `custom_voices` *(added with instruments)* | shows the names of instruments you add to the soundbank (below), in English or, with `lang_pl`, in Polish |
 
@@ -206,6 +207,7 @@ DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](d
 | `telemetry` *(opcjonalny, wyłączony, dopóki go nie wybierzesz)* | dziennik użycia do mierzenia czasu pracy na baterii: okna po 5 minut z czasem grania, średnią głośnością, ciszą z włączonym i wyłączonym głośnikiem, czasem uśpienia i odczytem baterii (uśpienie i wyłączony głośnik pochodzą z `extra_menu`; bez niego zostają 0), w stronach flasha nieużywanych przez fabryczny firmware (około 17 dni). Nic nie wychodzi z instrumentu samo: odczyt tylko na żądanie przez USB (niżej). Widoczny na ekranie Dodatki → Patche, gdy jest wgrany (z `extra_menu`) |
 | `polish_font` *(opcjonalny)* | polskie litery w głównym foncie UI, napisy w Unicode. Baza pod tłumaczenia |
 | `lang_pl` *(opcjonalny, wymaga `polish_font`)* | polski interfejs: 500 nazw brzmień i 100 dem, wartości Touch i pogłosu, sekcje stylów, przyciski, nagłówki ekranów i okna dialogowe |
+| `doom_demo` *(opcjonalny, wymaga `extra_menu` i `touch_off`)* | DOOM w Dodatkach (nieoficjalny port z projektu doom-piano): jedna własna mapa, Hangar, z teksturami, sprite'ami i muzyką [Freedoom](https://freedoom.github.io) (licencja BSD, w pliku patcha), klawisze chodzą i strzelają. Plik rośnie do ok. 303 KB. DOOM to znak towarowy id Software; projekt nie jest z nim związany |
 
 | `custom_voices` *(dodawany z instrumentami)* | pokazuje nazwy instrumentów dodanych do soundbanku (niżej), po angielsku albo z `lang_pl` po polsku |
 
