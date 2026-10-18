@@ -21,8 +21,13 @@ void sprite_column(int x);
 /* game_mode: 0 playing, 1 dead, 2 the exit reached, 3 the title, 4 the skill menu. skill: Doom's 0..4, 2 (hurt me
  * plenty) the game as tuned. */
 int game_visible, game_mode, health, ammo, armor, kills, weapon, skill;
-int enemy_x[4], enemy_y[4];
-unsigned enemy_state[4], pickup_bits[4];
+/* Four slots for the nearest monsters of the skill (slot_tick). enemy_state: bit 15 in pain until its next turn,
+ * 10..14 its record in the entities table (31: an empty slot), 5..9 the turns to its next attack or, dead, its death
+ * frame, 0..4 health in 2-point units. roster_bits: a record met (in a slot, or killed). */
+#define SLOTS 4
+#define EMPTY 0x7c00
+int enemy_x[SLOTS], enemy_y[SLOTS];
+unsigned enemy_state[SLOTS], pickup_bits[4], roster_bits[2];
 int dynamic_height[DYN_SLOTS], moving_actor;
 /* The imp's fireball, one at a time: position, velocity (x << 8 | y, signed bytes a logic tick), ticks of flight
  * left, or 0x8000 | ticks of its burst. */
@@ -49,8 +54,8 @@ int actors_allow(int x, int y)
 {
     int i;
     if (!game_visible) return 1;
-    for (i = 0; i < ENEMY_N; i++)
-        if (i != moving_actor && (enemy_state[i] & 127) &&
+    for (i = 0; i < SLOTS; i++)
+        if (i != moving_actor && (enemy_state[i] & 31) &&
             absval(x - enemy_x[i]) < 28 && absval(y - enemy_y[i]) < 28) return 0;
     return 1;
 }
@@ -167,14 +172,33 @@ int ray_clear(int tx, int ty, int use)
 
 /* Effects on channel 7 (GM gunshot, applause at the exit; the music uses 4, 5, 6, 9, the style's drums 8): the
  * pitch picks the sound, played low it is slower and deeper (the fireball). */
+#if SFX_DRUMS
+/* builddemo --sfx drums (a soundbank without the gunshot): GM drums on channel 9 with the music's, one per sound. */
+int drum(int note)
+{
+    if (note == 60) return 40;                 /* the pistol: electric snare */
+    if (note == 52) return 38;                 /* shotguns: acoustic snare */
+    if (note == 62) return 37;                 /* the zombie: side stick */
+    if (note == 42) return 41;                 /* the fireball thrown: low floor tom */
+    if (note == 30) return 49;                 /* its burst: crash cymbal */
+    if (note == 36) return 39;                 /* claws: hand clap */
+    if (note == 48) return 45;                 /* a door: low tom */
+    return 81;                                 /* a pickup: open triangle */
+}
+#endif
+
 void sound_at(int note, int velocity)
 {
 #if SILENT_AUDIO
     (void)note; (void)velocity;
 #else
+#if SFX_DRUMS
+    synth(0x0999, (drum(note) << 8) | velocity);
+#else
     if (sfx_timer) synth(0x0887, sfx_note << 8);
     synth(0x0997, (note << 8) | velocity);
     sfx_note = note; sfx_timer = note < 48 ? 10 : 3;   /* a low, slow one rings longer */
+#endif
 #endif
 }
 
@@ -252,7 +276,7 @@ void damage(int amount)
 int target_distance(int i)
 {
     int dx, dz, c, sn;
-    if (!(enemy_state[i] & 127)) return 1025;
+    if (!(enemy_state[i] & 31)) return 1025;
     c = isin(pa + 64); sn = isin(pa);
     dx = enemy_x[i] - px; dz = enemy_y[i] - py;
     dz = fmul(dx, c) + fmul(dz, sn);
@@ -267,21 +291,77 @@ void fire_game(void)
     if (shot_cd || !ammo) return;
     ammo--; shot_cd = weapon ? 12 : 7; flash = 2; sound_at(weapon ? 52 : 60, 127);   /* ours: loud */
     best = -1; distance = 1025;
-    for (i = 0; i < ENEMY_N; i++) {
+    for (i = 0; i < SLOTS; i++) {
         dz = target_distance(i);
         if (dz < distance) { best = i; distance = dz; }
     }
     if (best < 0) return;
-    hp = enemy_state[best] & 127; hit = weapon ? 30 : 10;
+    hp = enemy_state[best] & 31; hit = weapon ? 15 : 5;                     /* 30 and 10 points */
     hp = hp > hit ? hp - hit : 0;
-    if (hp) enemy_state[best] = (enemy_state[best] & 0x7f80) | 0x8000 | hp;   /* in pain until its next turn */
-    else { enemy_state[best] &= 0x4000; kills++; }                           /* dying: the step counts up */
+    if (hp) enemy_state[best] = (enemy_state[best] & 0x7fe0) | 0x8000 | hp;   /* in pain until its next turn */
+    else { enemy_state[best] &= 0x7c00; kills++; }                           /* dying: the step counts up */
 }
 
 /* Logic turns between a monster's attacks: slower on the easy skills, faster on the hard ones. */
 int attack_rest(void)
 {
     return skill < 2 ? 16 : skill == 2 ? 12 : skill == 3 ? 9 : 6;
+}
+
+int skill_bit(void)
+{
+    return skill < 2 ? 1 : skill == 2 ? 2 : 4;
+}
+
+/* 1 zombie, 2 imp, 3 shotgun guy: from the slot's record. */
+int enemy_kind(int i)
+{
+    readmap(8, ((enemy_state[i] >> 10) & 31) * 3 + 2, 1);
+    return buf[0] & 255;
+}
+
+int roster_met(int k)
+{
+    return roster_bits[k >> 4] & (1 << (k & 15));
+}
+
+/* How readily slot i gives way: empty, else a finished corpse, else a live one well beyond the fog (2048); 0: it stays. */
+int slot_yield(int i, int near)
+{
+    unsigned st;
+    int d;
+    st = enemy_state[i];
+    if ((st & EMPTY) == EMPTY) return 30000;
+    if (!(st & 31)) return ((st >> 5) & 31) >= 4 ? 20000 : 0;
+    d = absval(enemy_x[i] - px) + absval(enemy_y[i] - py);
+    return d > 2048 && d > near + 512 ? (d < 19999 ? d : 19999) : 0;
+}
+
+/* The nearest monster of the skill not yet met, within the fog's 1536, takes the slot that gives way most readily. An evicted
+ * live one goes back to its start, whole, and can come again. */
+void slot_tick(void)
+{
+    int i, k, d, best, near, slot, most;
+    best = -1; near = 1536;
+    for (k = 0; k < ENEMY_N; k++) {
+        if (roster_met(k)) continue;
+        readmap(8, k * 3, 3);
+        if (!((buf[2] >> 8) & skill_bit())) continue;
+        d = absval(buf[0] - px) + absval(buf[1] - py);
+        if (d < near) { best = k; near = d; }
+    }
+    if (best < 0) return;
+    slot = -1; most = 0;
+    for (i = 0; i < SLOTS; i++) {
+        d = slot_yield(i, near);
+        if (d > most) { slot = i; most = d; }
+    }
+    if (slot < 0) return;
+    if (most < 20000) { k = (enemy_state[slot] >> 10) & 31; roster_bits[k >> 4] &= ~(1 << (k & 15)); }
+    readmap(8, best * 3, 3); enemy_x[slot] = buf[0]; enemy_y[slot] = buf[1];
+    k = buf[2] & 255;
+    enemy_state[slot] = (best << 10) | (k == 2 ? 30 : k == 3 ? 15 : 10);   /* 60, 30, 20 points */
+    roster_bits[best >> 4] |= 1 << (best & 15);
 }
 
 void enemy_move(int i)
@@ -333,25 +413,34 @@ int ball_frame(void)
     return BALL_BASE + ((logic_epoch >> 2) & 1);
 }
 
+void enemy_attack(int i, int distance)
+{
+    int kind;
+    kind = enemy_kind(i);
+    if (kind == 1) { damage(8); sound_at(62, far_velocity(distance)); }                   /* zombie */
+    else if (kind == 3) { damage(distance < 256 ? 15 : 9); sound_at(52, far_velocity(distance)); }   /* 3 pellets */
+    else if (distance < 64) { damage(10); sound_at(36, 100); }                           /* imp, close: its claws */
+    else if (!ball_t) ball_launch(i);                                                    /* imp: a fireball to dodge */
+    else return;
+    enemy_state[i] = (enemy_state[i] & 0x7c1f) | (attack_rest() << 5);
+}
+
 void enemy_tick(void)
 {
     int i, cooldown, distance;
-    if (!ENEMY_N) return;
-    i = ai_index++; if (ai_index >= ENEMY_N) ai_index = 0;
-    if (!(enemy_state[i] & 127)) {
-        if (((enemy_state[i] >> 7) & 63) < 4) enemy_state[i] += 128;   /* the death frames, one a turn */
+    if (!(logic_epoch & 7)) slot_tick();
+    i = ai_index++; if (ai_index >= SLOTS) ai_index = 0;
+    if ((enemy_state[i] & EMPTY) == EMPTY) return;
+    if (!(enemy_state[i] & 31)) {
+        if (((enemy_state[i] >> 5) & 31) < 4) enemy_state[i] += 32;    /* the death frames, one a turn */
         return;
     }
     enemy_state[i] &= 0x7fff;
     distance = absval(enemy_x[i] - px) + absval(enemy_y[i] - py);
     if (distance > 1024 || !ray_clear(enemy_x[i], enemy_y[i], 0)) return;
-    cooldown = (enemy_state[i] >> 7) & 63;
-    if (!cooldown && distance < 640) {
-        if (!(enemy_state[i] & 0x4000)) { damage(8); sound_at(62, far_velocity(distance)); cooldown = attack_rest(); }  /* zombie */
-        else if (distance < 64) { damage(10); sound_at(36, 100); cooldown = attack_rest(); }   /* imp, close: its claws */
-        else if (!ball_t) { ball_launch(i); cooldown = attack_rest(); }               /* imp: a fireball to dodge */
-    } else if (cooldown) cooldown--;
-    enemy_state[i] = (enemy_state[i] & 0xc07f) | (cooldown << 7);
+    cooldown = (enemy_state[i] >> 5) & 31;
+    if (!cooldown && distance < 640) enemy_attack(i, distance);
+    else if (cooldown) enemy_state[i] -= 32;
     if (distance > 52) enemy_move(i);
 }
 
@@ -413,10 +502,9 @@ void game_init(void)
     dynamic_open = lift_timer = prev_held = pressed = shot_cd = flash = hurt = ai_index = sfx_timer = bob = ball_t = 0;
     moving_actor = -1; held = 0;
     for (i = 0; i < 4; i++) pickup_bits[i] = 0;
-    for (i = 0; i < ENEMY_N; i++) {
-        readmap(8, i * 3, 3); enemy_x[i] = buf[0]; enemy_y[i] = buf[1];
-        enemy_state[i] = buf[2] == 2 ? 0x403c : 20;
-    }
+    roster_bits[0] = roster_bits[1] = 0;
+    for (i = 0; i < SLOTS; i++) enemy_state[i] = EMPTY;
+    for (i = 0; i < SLOTS; i++) slot_tick();
     for (i = 0; i < DYNAMIC_N; i++) { readmap(9, i * 4, 4); dynamic_height[i] = buf[1]; }
     game_visible = 1;
 #if !SILENT_AUDIO
@@ -535,9 +623,10 @@ void draw_pickups(void)
     for (i = 0; i < PICKUP_N; i++) draw_pickup(i);
 }
 
-/* Dead ones too: their corpses stay. */
+/* Dead ones too: their corpses stay (until the slot is wanted). */
 int enemy_depth(int i, int previous, int previous_i)
 {
+    if ((enemy_state[i] & EMPTY) == EMPTY) return 0;
     view_point(enemy_x[i], enemy_y[i]);
     return vz > 0 && (vz < previous || (vz == previous && i > previous_i)) ? vz : 0;
 }
@@ -547,10 +636,11 @@ int enemy_frame(int i)
 {
     unsigned st, step;
     int base;
-    st = enemy_state[i]; base = st & 0x4000 ? IMP_BASE : 0; step = (st >> 7) & 63;
-    if (!(st & 127)) return base + DEATH + (step > 4 ? 4 : step);
+    st = enemy_state[i]; step = (st >> 5) & 31;
+    base = enemy_kind(i); base = base == 2 ? IMP_BASE : base == 3 ? SERGEANT_BASE : 0;
+    if (!(st & 31)) return base + DEATH + (step > 4 ? 4 : step);
     if (st & 0x8000) return base + PAIN;
-    if (step >= 10) return base + ATTACK;
+    if (step > attack_rest() - 3) return base + ATTACK;
     return base + (((logic_epoch >> 3) + i) & 3);
 }
 
@@ -563,9 +653,9 @@ void draw_enemies(void)
 {
     int pass, i, best, distance, previous, previous_i, z;
     previous = 32767; previous_i = -1;
-    for (pass = 0; pass < ENEMY_N; pass++) {
+    for (pass = 0; pass < SLOTS; pass++) {
         best = -1; distance = 0;
-        for (i = 0; i < ENEMY_N; i++) {
+        for (i = 0; i < SLOTS; i++) {
             z = enemy_depth(i, previous, previous_i);
             if (z > distance) { best = i; distance = z; }
         }
@@ -605,8 +695,8 @@ void enemy_draw_work(void)
     if (actor_row_work()) return;
     if (render_pass == 255) { render_state = 4; return; }
     best = -1; distance = 0;
-    if (render_pass < ENEMY_N)
-        for (i = 0; i < ENEMY_N; i++) {
+    if (render_pass < SLOTS)
+        for (i = 0; i < SLOTS; i++) {
             z = enemy_depth(i, render_previous, render_previous_i);
             if (z > distance) { best = i; distance = z; }
         }
@@ -654,7 +744,8 @@ void draw_hud(void)
     glyph(24, 7, 11); hud_number(28, ammo);
     glyph(48, 7, 12); hud_number(52, kills);
     glyph(64, 7, 18);
-    glyph(68, 7, ENEMY_N);
+    x = skill < 2 ? ENEMY_EASY : skill == 2 ? ENEMY_MEDIUM : ENEMY_HARD;
+    glyph(68, 7, x / 10); glyph(72, 7, x % 10);
 }
 
 void end_overlay(void)

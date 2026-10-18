@@ -129,7 +129,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       m.call("read_sector", m.call("sector_at", 3376, -3472)); m.wr(m.sym("pz"), m.get("buf"));
       m.call("frame"); draw();
       const start=prog.mmio.framebuffer, before=Array.from(m.ram.slice(start,start+1024)), state=m.get("enemy_state");
-      m.wr(m.sym("enemy_state"),0);m.call("frame");
+      m.wr(m.sym("enemy_state"),0x7c00);m.call("frame");
       const changed=before.filter((v,i)=>v!==m.ram[start+i]).length;
       m.wr(m.sym("enemy_state"),state);m.call("frame");draw();
       return changed;

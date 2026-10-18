@@ -138,7 +138,7 @@ def build_doom(m=None, silent_audio=False):
     wanted = ["__cc_init", "rc_start", "rc_tick", "rc_key", "frame", "mu_stop", "mu_restart", "umul32", "smul32", "fmul", "muldiv",
               "can_move", "move_player", "steer", "sector_at", "game_tick", "use_game", "fire_game", "ray_clear",
               "dynamic_tick", "pickup_tick", "damage", "game_init", "read_sector", "audio_restart", "ray_fraction",
-              "frame_begin", "frame_work", "start_game", "screen_draw", "screen_y", "bsp_work", "pickup_draw_work", "enemy_draw_work", "draw_overlay"]
+              "frame_begin", "frame_work", "start_game", "screen_draw", "slot_tick", "screen_y", "bsp_work", "pickup_draw_work", "enemy_draw_work", "draw_overlay"]
     result = dict(program(r, wanted), name="doom", label="E1M1 · demo", far=far, fr_init=init)
     # Engineering limits on decoded C/P16 work, including startup. Host natives
     # and device firmware/RTOS time still require a hardware measurement.
@@ -157,10 +157,11 @@ def build_doom(m=None, silent_audio=False):
         # Browser-only navigation aid. It is not part of the linked image or RAM budget.
         from playthrough import route
         start = m.start()[:2]
-        first = min(range(len(enemies)), key=lambda i: abs(enemies[i][0] - start[0]) + abs(enemies[i][1] - start[1]))
+        easy = [i for i in range(len(enemies)) if enemies[i][2] & 0x100]   # met on every skill
+        first = min(easy, key=lambda i: abs(enemies[i][0] - start[0]) + abs(enemies[i][1] - start[1]))
         path = route(enemies[first][:2], m=m)
         result["navigation"] = {"route": path[:-4] if len(path) > 4 else path,
-                                "target": first, "enemy_count": len(enemies), "start": start}
+                                "target": first, "enemy_count": 4, "start": start}   # target: a record; count: the slots
     return result
 
 

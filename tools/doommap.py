@@ -143,14 +143,16 @@ class Map:
             elif line[3] == 11:
                 action = 255
             self.actions.append(action)
-        # kind 1 zombie, 2 imp. State stays in RAM; original spawn records stay far.
-        self.enemies = [(x, y, 2 if kind == 3001 else 1) for x, y, _a, kind, flags in self.things
-                        if kind in (3001, 3004) and flags & 1 and not flags & 16]
+        # Every skill's monsters, the easy ones first: x, y, kind (1 zombie, 2 imp, 3 shotgun guy) | the skill
+        # flags << 8 (1 easy, 2 medium, 4 hard). The firmware brings the nearest of its skill into four RAM slots.
+        monsters = {3004: 1, 3001: 2, 9: 3}
+        self.enemies = sorted(((x, y, monsters[kind] | (flags & 7) << 8) for x, y, _a, kind, flags in self.things
+                               if kind in monsters and flags & 7 and not flags & 16), key=lambda e: not e[2] & 0x100)
         kinds = {2011: 3, 2012: 4, 2014: 5, 2015: 6, 2007: 7, 2048: 8, 2008: 7, 2049: 8, 2001: 9}
         self.pickups = [(x, y, kinds[kind]) for x, y, _a, kind, flags in self.things
                         if kind in kinds and flags & 1 and not flags & 16]
-        if len(self.enemies) > 4 or len(self.pickups) > 64 or len(self.dynamics) > 8:
-            raise ValueError("demo limits exceeded (4 enemies, 64 pickups, 8 moving sectors)")
+        if len(self.enemies) > 31 or len(self.pickups) > 64 or len(self.dynamics) > 8:
+            raise ValueError("demo limits exceeded (31 monsters, 64 pickups, 8 moving sectors)")
 
     def start(self):
         for x, y, a, t, _ in self.things:

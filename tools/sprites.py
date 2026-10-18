@@ -20,12 +20,16 @@ STRETCH = 1.4
 
 # Rotation 1 (facing the player) of each monster; pickups have one view.
 ZOMBIE = ["POSSA1", "POSSB1", "POSSC1", "POSSD1", "POSSF1", "POSSG1", "POSSH0", "POSSI0", "POSSJ0", "POSSK0", "POSSL0"]
+SERGEANT = ["SPOS" + f[4:] for f in ZOMBIE]   # the shotgun guy: the zombie's poses, darker (see frame's ref)
 IMP = ["TROOA1", "TROOB1", "TROOC1", "TROOD1", "TROOF1", "TROOH1", "TROOI0", "TROOJ0", "TROOK0", "TROOL0", "TROOM0"]
 PICKUPS = ["STIMA0", "MEDIA0", "BON1A0", "BON2A0", "CLIPA0", "AMMOA0", "SHOTA0"]   # pickup kinds 3..9
 BALL = ["BAL1A0", "BAL1B0", "BAL1C0", "BAL1D0", "BAL1E0"]   # the imp's fireball: flight, then the burst
-FRAMES = ZOMBIE + IMP + PICKUPS + BALL
-# Frame numbers in doom.c: a monster's base (0 zombie, IMP_BASE imp) + walk 0..3, ATTACK, PAIN, DEATH..DEATH+4.
-IMP_BASE, ATTACK, PAIN, DEATH, PICKUP_BASE = len(ZOMBIE), 4, 5, 6, len(ZOMBIE) + len(IMP)
+FRAMES = ZOMBIE + IMP + SERGEANT + PICKUPS + BALL
+# Frame numbers in doom.c: a monster's base (0 zombie, IMP_BASE imp, SERGEANT_BASE) + walk 0..3, ATTACK, PAIN,
+# DEATH..DEATH+4.
+IMP_BASE, ATTACK, PAIN, DEATH = len(ZOMBIE), 4, 5, 6
+SERGEANT_BASE = IMP_BASE + len(IMP)
+PICKUP_BASE = SERGEANT_BASE + len(SERGEANT)
 BALL_BASE = PICKUP_BASE + len(PICKUPS)
 
 
@@ -45,14 +49,19 @@ def patch(w, lum, name):
     return width, height, left, top, img
 
 
-def frame(w, lum, name, glow=False):
-    """glow: a light source (the fireball), bright grays that full light never inks."""
+def stretch_range(img):
+    every = sorted(v for row in img for v in row if v is not None)
+    return every[len(every) // 10], every[len(every) * 19 // 20]
+
+
+def frame(w, lum, name, glow=False, ref=None):
+    """glow: a light source (the fireball), bright grays that full light never inks. ref: stretch over that frame's
+    range instead (the shotgun guy over the zombie's: his darker uniform stays darker)."""
     width, height, left, top, img = patch(w, lum, name)
     cols, rows = (width + 1) // 2, (height + 1) // 2
     if rows > 31:
         raise ValueError("%s: taller than 31 texels" % name)
-    every = sorted(v for row in img for v in row if v is not None)
-    lo, hi = every[len(every) // 10], every[len(every) * 19 // 20]
+    lo, hi = stretch_range(patch(w, lum, ref)[4] if ref else img)
     tex = [[None] * cols for _ in range(rows)]
     for r in range(rows):
         for c in range(cols):
@@ -82,5 +91,5 @@ def words(w):
     out = [0] * len(FRAMES)
     for k, name in enumerate(FRAMES):
         out[k] = len(out)
-        out += frame(w, lum, name, name in BALL)
+        out += frame(w, lum, name, name in BALL, "POSS" + name[4:] if name in SERGEANT else None)
     return out
