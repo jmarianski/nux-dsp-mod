@@ -21,7 +21,11 @@ void sprite_column(int x);
 int game_visible, game_mode, health, ammo, armor, kills, weapon;
 int enemy_x[4], enemy_y[4];
 unsigned enemy_state[4], pickup_bits[4];
-int dynamic_height[8], moving_actor;
+int dynamic_height[DYN_SLOTS], moving_actor;
+/* The imp's fireball, one at a time: position, velocity (x << 8 | y, signed bytes a logic tick), ticks of flight
+ * left, or 0x8000 | ticks of its burst. */
+int ball_x, ball_y;
+unsigned ball_v, ball_t;
 unsigned dynamic_open, lift_timer, prev_held, shot_cd, flash, hurt, ai_index, sfx_timer, sfx_note;
 unsigned bob;                                   /* walking ticks: the weapon's sway */
 unsigned pressed;
@@ -260,6 +264,40 @@ void enemy_move(int i)
     px = oldx; py = oldy; pz = oldz; moving_actor = -1;
 }
 
+/* Doom's imp fireball: 10 units a tic toward where the player stood. It flies to there and a little past (walls
+ * behind the player hide it), bursting on the player within 20 units. */
+void ball_launch(int i)
+{
+    int dx, dy, ax, ay, len, vx, vy;
+    dx = px - enemy_x[i]; dy = py - enemy_y[i];
+    ax = absval(dx); ay = absval(dy);
+    len = ax > ay ? ax + (ay >> 1) : ay + (ax >> 1);             /* ~ the distance */
+    if (len < 1) return;
+    vx = muldiv(dx, 10, len); vy = muldiv(dy, 10, len);
+    ball_x = enemy_x[i]; ball_y = enemy_y[i];
+    ball_v = ((vx & 255) << 8) | (vy & 255);
+    ball_t = len / 10 + 8;
+    sound(55);
+}
+
+void ball_tick(void)
+{
+    int vx, vy;
+    if (!ball_t) return;
+    if (ball_t & 0x8000) { ball_t--; if (!(ball_t & 0x7fff)) ball_t = 0; return; }
+    vx = ball_v >> 8; if (vx > 127) vx -= 256;
+    vy = ball_v & 255; if (vy > 127) vy -= 256;
+    ball_x += vx; ball_y += vy;
+    if (absval(ball_x - px) < 20 && absval(ball_y - py) < 20) { damage(10); ball_t = 0x8006; return; }
+    if (!--ball_t) ball_t = 0x8006;
+}
+
+int ball_frame(void)
+{
+    if (ball_t & 0x8000) return BALL_BASE + 2 + ((6 - (ball_t & 7)) >> 1);
+    return BALL_BASE + ((logic_epoch >> 2) & 1);
+}
+
 void enemy_tick(void)
 {
     int i, cooldown, distance;
@@ -274,7 +312,9 @@ void enemy_tick(void)
     if (distance > 1024 || !ray_clear(enemy_x[i], enemy_y[i], 0)) return;
     cooldown = (enemy_state[i] >> 7) & 63;
     if (!cooldown && distance < 640) {
-        damage(enemy_state[i] & 0x4000 ? 12 : 8); cooldown = 12;
+        if (!(enemy_state[i] & 0x4000)) { damage(8); cooldown = 12; }          /* zombie: a pistol shot */
+        else if (distance < 64) { damage(10); cooldown = 12; }              /* imp, close: its claws */
+        else if (!ball_t) { ball_launch(i); cooldown = 12; }               /* imp: a fireball to dodge */
     } else if (cooldown) cooldown--;
     enemy_state[i] = (enemy_state[i] & 0xc07f) | (cooldown << 7);
     if (distance > 52) enemy_move(i);
@@ -333,7 +373,7 @@ void game_init(void)
 {
     int i;
     game_visible = 0; game_mode = 0; health = 100; ammo = 50; armor = kills = weapon = 0;
-    dynamic_open = lift_timer = prev_held = pressed = shot_cd = flash = hurt = ai_index = sfx_timer = bob = 0;
+    dynamic_open = lift_timer = prev_held = pressed = shot_cd = flash = hurt = ai_index = sfx_timer = bob = ball_t = 0;
     moving_actor = -1; held = 0;
     for (i = 0; i < 4; i++) pickup_bits[i] = 0;
     for (i = 0; i < ENEMY_N; i++) {
@@ -367,7 +407,7 @@ void game_tick(void)
     if ((pressed & 256) || ((held & 256) && !(prev_held & 256))) use_game();
     if (game_mode) { prev_held = held; pressed = 0; return; }
     if ((held | pressed) & 128) fire_game();
-    pickup_tick(); enemy_tick();
+    pickup_tick(); enemy_tick(); ball_tick();
     if (held & 0x7f) touch_specials();
     prev_held = held; pressed = 0;
 }
@@ -391,6 +431,7 @@ int sprite_setup(int x, int y, int frame)
     if (spr_left >= 128 || spr_right <= 0 || spr_left >= spr_right) return 0;
     spr_dz = vz * 2;                            /* map units a pixel vz / 64, a texel 2 units */
     read_sector(sector_at(x, y)); z = buf[0]; spr_light = light_factor(buf[2], spr_scale);
+    if (frame >= BALL_BASE) { z += 32; spr_light = GAIN; }    /* the fireball: in the air, full bright */
     spr_top = screen_y(z + top, spr_scale); spr_bot = screen_y(z + top - rows * 2, spr_scale);
     spr_v0 = -spr_top * spr_dz;
     spr_u = spr_left < 0 ? muldiv(-spr_left, spr_dz, 1) : 0;
@@ -488,19 +529,25 @@ void pickup_draw_work(void)
     if (absval(x - view_x) + absval(y - view_y) < 768 && sprite_setup(x, y, PICKUP_BASE + kind - 3)) actor_start();
 }
 
+/* Then the fireball, last: it flies in front of the imp that threw it. render_pass 255: done. */
 void enemy_draw_work(void)
 {
     int i, best, distance, z;
     if (actor_row_work()) return;
-    if (render_pass >= ENEMY_N) { render_state = 4; return; }
+    if (render_pass == 255) { render_state = 4; return; }
     best = -1; distance = 0;
-    for (i = 0; i < ENEMY_N; i++) {
-        z = enemy_depth(i, render_previous, render_previous_i);
-        if (z > distance) { best = i; distance = z; }
+    if (render_pass < ENEMY_N)
+        for (i = 0; i < ENEMY_N; i++) {
+            z = enemy_depth(i, render_previous, render_previous_i);
+            if (z > distance) { best = i; distance = z; }
+        }
+    if (best >= 0) {
+        render_previous = distance; render_previous_i = best; render_pass++;
+        if (sprite_setup(enemy_x[best], enemy_y[best], enemy_frame(best))) actor_start();
+        return;
     }
-    if (best < 0) { render_state = 4; return; }
-    render_previous = distance; render_previous_i = best; render_pass++;
-    if (sprite_setup(enemy_x[best], enemy_y[best], enemy_frame(best))) actor_start();
+    render_pass = 255;
+    if (ball_t && sprite_setup(ball_x, ball_y, ball_frame())) actor_start();
 }
 
 void rect_page(int x0, int end, unsigned at, unsigned m, int ink)
@@ -579,5 +626,7 @@ void draw_overlay(void)
 
 void game_draw(void)
 {
-    draw_pickups(); draw_enemies(); draw_overlay();
+    draw_pickups(); draw_enemies();
+    if (ball_t) sprite(ball_x, ball_y, ball_frame());
+    draw_overlay();
 }

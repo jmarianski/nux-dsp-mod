@@ -19,7 +19,7 @@ void trace(unsigned value);
 /* MUSIC_SOURCE: inserted by ray.py / doom.py, shared by both engines. */
 
 int px, py, pz, pa, eye, cs, sn;
-int view_x, view_y, view_a, render_context, render_height[8];
+int view_x, view_y, view_a, render_context, render_height[DYN_SLOTS];
 unsigned render_state, render_seg, render_last, render_end;
 int render_actor, render_row, render_kind, render_pass, render_previous, render_previous_i;
 unsigned logic_epoch, callback_stage;
@@ -394,7 +394,7 @@ void frame_begin(void)
     view_x = px; view_y = py; view_a = pa;
     cs = isin(pa + 64); sn = isin(pa);
     eye = pz + 41;
-    for (k = 0; k < 8; k++) render_height[k] = dynamic_height[k];
+    for (k = 0; k < DYN_SLOTS; k++) render_height[k] = dynamic_height[k];
     for (k = 0; k < 1024; k++) framebuffer[k] = 0;
     for (k = 0; k < 128; k++) windows[k] = 56 << 7;          /* the HUD's rows: never drawn */
     sp = 1; stack[0] = MAP_ROOT; open_columns = 128;
