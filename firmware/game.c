@@ -15,6 +15,8 @@ void move_player(int dx, int dy);
 int can_move(int x, int y);
 void steer(void);
 void view_point(int x, int y);
+int light_factor(int light, unsigned s);
+void sprite_column(int x);
 
 int game_visible, game_mode, health, ammo, armor, kills, weapon;
 int enemy_x[4], enemy_y[4];
@@ -241,8 +243,8 @@ void fire_game(void)
     if (best < 0) return;
     hp = enemy_state[best] & 127; hit = weapon ? 30 : 10;
     hp = hp > hit ? hp - hit : 0;
-    enemy_state[best] = (enemy_state[best] & 0xff80) | hp;
-    if (!hp) kills++;
+    if (hp) enemy_state[best] = (enemy_state[best] & 0x7f80) | 0x8000 | hp;   /* in pain until its next turn */
+    else { enemy_state[best] &= 0x4000; kills++; }                           /* dying: the step counts up */
 }
 
 void enemy_move(int i)
@@ -262,7 +264,11 @@ void enemy_tick(void)
     int i, cooldown, distance;
     if (!ENEMY_N) return;
     i = ai_index++; if (ai_index >= ENEMY_N) ai_index = 0;
-    if (!(enemy_state[i] & 127)) return;
+    if (!(enemy_state[i] & 127)) {
+        if (((enemy_state[i] >> 7) & 63) < 4) enemy_state[i] += 128;   /* the death frames, one a turn */
+        return;
+    }
+    enemy_state[i] &= 0x7fff;
     distance = absval(enemy_x[i] - px) + absval(enemy_y[i] - py);
     if (distance > 1024 || !ray_clear(enemy_x[i], enemy_y[i], 0)) return;
     cooldown = (enemy_state[i] >> 7) & 63;
@@ -366,68 +372,41 @@ void game_tick(void)
 
 /* Drawing is below; the BSP's closed columns retain wall depth in the same word
  * that held their clip window. No second 128-word depth buffer is allocated. */
-int spr_left, spr_top, spr_width, spr_height, spr_scale;
+int spr_left, spr_right, spr_u, spr_dz, spr_top, spr_bot, spr_v0, spr_scale, spr_base, spr_cols, spr_light;
 
-/* Page p of columns x0..end-1: the mask m set (or cleared) where the sprite is in front of the wall. */
-void sprite_page(int x0, int end, unsigned at, unsigned m, int ink)
+/* A sprite frame at (x, y), facing the view: its screen columns and rows, texel steps (1/256 texel a pixel, the
+ * same both ways), the light where it stands. 0 when it is behind, too far or off the screen. */
+int sprite_setup(int x, int y, int frame)
 {
-    int x;
-    for (x = x0; x < end; x++) {
-        if ((windows[x] & 0x8000) && spr_scale < (windows[x] & 0x7fff)) continue;
-        if (ink) framebuffer[at + x] |= m; else framebuffer[at + x] &= ~m;
-    }
-}
-
-/* Columns of band u, rows a..b-1: a page's mask once, then the columns. */
-void sprite_band(int u, int a, int b, int ink)
-{
-    int x0, end, p;
-    x0 = spr_left + u * spr_width / 8; end = spr_left + (u + 1) * spr_width / 8;
-    if (x0 < 0) x0 = 0; if (end > 128) end = 128;
-    a = clamp(a, 0, 56); b = clamp(b, 0, 56);
-    if (x0 >= end || a >= b) return;
-    work += 1 + (((end - x0) * (((b - 1) >> 3) - (a >> 3) + 1)) >> 1);
-    for (p = a >> 3; p <= (b - 1) >> 3; p++) sprite_page(x0, end, p * 128, span(a - p * 8, b - p * 8), ink);
-}
-
-/* Band u of a sprite row: at most an eighth of its width, so that one piece of work stays small up close.
- * -> 0 when the whole row is off screen (its other bands are too). */
-int sprite_part(int row, int u, int kind)
-{
-    int a, b;
-    work += 2;
-    a = spr_top + row * spr_height / 16; b = spr_top + (row + 1) * spr_height / 16;
-    if (a == b || b <= 0 || a >= 56) return 0;
-    readmap(10, (kind - 1) * 32 + row * 2, 2);
-    if (buf[0] & (1 << u)) sprite_band(u, a, b, buf[1] & (1 << u));
-    return 1;
-}
-
-void sprite_row(int row, int kind)
-{
-    int u;
-    for (u = 0; u < 8; u++) if (!sprite_part(row, u, kind)) return;
-}
-
-int sprite_setup(int x, int y, int kind)
-{
-    int z, h;
+    int z, rows, left, top;
     view_point(x, y);
     if (vz < NEAR || vz > 1024) return 0;
+    readmap(10, frame, 1); spr_base = buf[0];
+    readmap(10, spr_base, 4); spr_cols = buf[0]; rows = buf[1]; left = buf[2]; top = buf[3];
+    spr_base += 4;
     spr_scale = muldiv(8192, 64, vz);
-    spr_width = muldiv(kind <= 2 ? 32 : 16, 64, vz);
-    if (!spr_width) return 0;
-    spr_left = 64 + muldiv(vx, 64, vz) - spr_width / 2;
-    if (spr_left >= 128 || spr_left + spr_width <= 0) return 0;
-    read_sector(sector_at(x, y)); z = buf[0]; h = kind <= 2 ? 56 : 16;
-    spr_top = screen_y(z + h, spr_scale); spr_height = screen_y(z, spr_scale) - spr_top;
+    spr_left = 64 + muldiv(vx - left, 64, vz); spr_right = 64 + muldiv(vx - left + spr_cols * 2, 64, vz);
+    if (spr_left >= 128 || spr_right <= 0 || spr_left >= spr_right) return 0;
+    spr_dz = vz * 2;                            /* map units a pixel vz / 64, a texel 2 units */
+    read_sector(sector_at(x, y)); z = buf[0]; spr_light = light_factor(buf[2], spr_scale);
+    spr_top = screen_y(z + top, spr_scale); spr_bot = screen_y(z + top - rows * 2, spr_scale);
+    spr_v0 = -spr_top * spr_dz;
+    spr_u = spr_left < 0 ? muldiv(-spr_left, spr_dz, 1) : 0;
     return 1;
 }
 
-void sprite(int x, int y, int kind)
+/* Column x of the set-up sprite (sprite_column, in doom.c), then the next. -> 0 past its right edge. */
+int sprite_step(int x)
 {
-    int row;
-    if (sprite_setup(x, y, kind)) for (row = 0; row < 16; row++) sprite_row(row, kind);
+    sprite_column(x);
+    spr_u += spr_dz;
+    return x + 1 < spr_right && x + 1 < 128;
+}
+
+void sprite(int x, int y, int frame)
+{
+    int col;
+    if (sprite_setup(x, y, frame)) for (col = spr_left < 0 ? 0 : spr_left; sprite_step(col); col++) ;
 }
 
 void draw_pickup(int i)
@@ -435,7 +414,7 @@ void draw_pickup(int i)
     int x, y, kind;
     if (pickup_bits[i >> 4] & (1 << (i & 15))) return;
     readmap(8, (ENEMY_N + i) * 3, 3); x = buf[0]; y = buf[1]; kind = buf[2];
-    if (absval(x - px) + absval(y - py) < 768) sprite(x, y, kind);
+    if (absval(x - px) + absval(y - py) < 768) sprite(x, y, PICKUP_BASE + kind - 3);
 }
 
 void draw_pickups(void)
@@ -444,16 +423,28 @@ void draw_pickups(void)
     for (i = 0; i < PICKUP_N; i++) draw_pickup(i);
 }
 
+/* Dead ones too: their corpses stay. */
 int enemy_depth(int i, int previous, int previous_i)
 {
-    if (!(enemy_state[i] & 127)) return 0;
     view_point(enemy_x[i], enemy_y[i]);
     return vz > 0 && (vz < previous || (vz == previous && i > previous_i)) ? vz : 0;
 }
 
+/* Walking (four frames), shooting just now, hurt since its last turn, or dying (five frames, then the corpse). */
+int enemy_frame(int i)
+{
+    unsigned st, step;
+    int base;
+    st = enemy_state[i]; base = st & 0x4000 ? IMP_BASE : 0; step = (st >> 7) & 63;
+    if (!(st & 127)) return base + DEATH + (step > 4 ? 4 : step);
+    if (st & 0x8000) return base + PAIN;
+    if (step >= 10) return base + ATTACK;
+    return base + (((logic_epoch >> 3) + i) & 3);
+}
+
 void draw_enemy(int i)
 {
-    sprite(enemy_x[i], enemy_y[i], enemy_state[i] & 0x4000 ? 2 : 1);
+    sprite(enemy_x[i], enemy_y[i], enemy_frame(i));
 }
 
 void draw_enemies(void)
@@ -472,12 +463,16 @@ void draw_enemies(void)
     }
 }
 
-int actor_row_work(void)                       /* render_row counts the bands: row * 8 + band */
+int actor_row_work(void)                       /* render_row is the sprite's next screen column */
 {
     if (!render_kind) return 0;
-    if (!sprite_part(render_row >> 3, render_row & 7, render_kind)) render_row |= 7;
-    if (++render_row == 128) render_kind = 0;
+    if (!sprite_step(render_row++)) render_kind = 0;
     return 1;
+}
+
+void actor_start(void)
+{
+    render_kind = 1; render_row = spr_left < 0 ? 0 : spr_left;
 }
 
 void pickup_draw_work(void)
@@ -488,14 +483,12 @@ void pickup_draw_work(void)
     i = render_actor++;
     if (pickup_bits[i >> 4] & (1 << (i & 15))) return;
     readmap(8, (ENEMY_N + i) * 3, 3); x = buf[0]; y = buf[1]; kind = buf[2];
-    if (absval(x - view_x) + absval(y - view_y) < 768 && sprite_setup(x, y, kind)) {
-        render_kind = kind; render_row = 0;
-    }
+    if (absval(x - view_x) + absval(y - view_y) < 768 && sprite_setup(x, y, PICKUP_BASE + kind - 3)) actor_start();
 }
 
 void enemy_draw_work(void)
 {
-    int i, best, distance, z, kind;
+    int i, best, distance, z;
     if (actor_row_work()) return;
     if (render_pass >= ENEMY_N) { render_state = 4; return; }
     best = -1; distance = 0;
@@ -505,8 +498,7 @@ void enemy_draw_work(void)
     }
     if (best < 0) { render_state = 4; return; }
     render_previous = distance; render_previous_i = best; render_pass++;
-    kind = enemy_state[best] & 0x4000 ? 2 : 1;
-    if (sprite_setup(enemy_x[best], enemy_y[best], kind)) { render_kind = kind; render_row = 0; }
+    if (sprite_setup(enemy_x[best], enemy_y[best], enemy_frame(best))) actor_start();
 }
 
 void rect_page(int x0, int end, unsigned at, unsigned m, int ink)
