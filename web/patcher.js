@@ -265,18 +265,38 @@ function dirEntry(d, bank, prog) {
   throw `no instrument for bank ${bank} program ${prog}`;
 }
 const instrumentAddr = (d, a) => (d[a + 1] * 0x10000 + u16(d, a + 2)) * 2;
+// the zone records of all the layers of an instrument (soundbank.py zones())
 function zoneAddrs(d, inst) {
-  const page = Math.floor(inst / 2 / 0x10000) * 0x10000, out = [];
-  for (let o = inst + 4; ; o += 6) {
-    out.push((page + u16(d, o + 4)) * 2);
-    if (d[o + 3] === 0xff) return out;
-  }
+  const page = Math.floor(inst / 2 / 0x10000) * 0x10000, nl = d[inst + 1];
+  let o = inst + 2 + (d[inst] & 4 ? 2 : 0), n = 0;
+  for (let i = 0; i < nl; i++) n += u16(d, o + 2 * i) & 0x7f;
+  o += 2 * nl;
+  return Array.from({length: n}, (_, i) => (page + u16(d, o + 6 * i + 4)) * 2);
 }
+// 18 bytes, or 22 for the stereo one (right channel's start X at +12)
+const blockLen = (d, o) => !d[o + 15] && d[o + 18] === 0x0e && d[o + 19] === 0x7f ? 18 : 22;
 function findSampleBlock(d, z) {
-  for (let o = z; o < z + 0x60; o++)
-    if (d[o + 1] <= 1 && d[o + 4] === 1 && !d[o + 6] && !d[o + 7] && !d[o + 9] && !d[o + 15] && d[o + 18] === 0x0e && d[o + 19] === 0x7f)
+  for (let o = z; o < z + 0x80; o++)
+    if (d[o + 1] <= 1 && d[o + 4] === 1 && !d[o + 6] && !d[o + 7] && !d[o + 9] &&
+        (!d[o + 15] && d[o + 18] === 0x0e && d[o + 19] === 0x7f ||
+         d[o + 12] === d[o + 8] && !d[o + 19] && d[o + 22] === 0x0e && d[o + 23] === 0x7f))
       return o;
   throw "no sample block in the template zone";
+}
+// offsets of the two velocity modulators (filter, volume) of a zone record, -1 where absent (soundbank.py)
+function velMods(rec) {
+  let o = 0;
+  while (!(rec[o] === 0xf0 && rec[o + 1] === 0xb5)) o++;
+  o += 2;
+  const out = [];
+  for (let g = 0; g < 2; g++) {
+    const F = rec[o], S = rec[o + 1], V0 = rec[o + 2];
+    o += 4 + (F & 0x41 ? 2 : 0);
+    const has = S & 0x10 && V0 & 0x08;
+    out.push(has ? o : -1);
+    if (has) o += 4;
+  }
+  return out;
 }
 function zoneRecord(d, z) {
   const pageB = Math.floor(z / 2 / 0x10000) * 0x20000, sb = findSampleBlock(d, z);
@@ -292,13 +312,15 @@ function zoneRecord(d, z) {
   if (rec[sb - z + 2 - 4] & 0x40) throw "template zone does not follow the keyboard";
   return {rec, offs, pageB, sbOff: sb - (z - 2)};
 }
-function setAddrs(r, o, S, L, E) {
-  const hi = Math.floor(S / 0x1000000);
-  if (Math.floor(L / 0x1000000) !== hi || Math.floor(E / 0x1000000) !== hi) throw "sample crosses a 16M-word boundary";
+// n: 18, or 22 (stereo: X = S, a mono sample on both channels)
+function setAddrs(r, o, n, S, L, E) {
+  const hi = Math.floor(S / 0x1000000), k = n === 18 ? 12 : 16;
+  if (Math.floor(L / 0x1000000) !== hi || Math.floor(E / 0x1000000) !== hi) throw "sample crosses a 16M-word boundary (on the NEK-100: past the end of the soundbank partition, the instruments do not fit)";
   r[o] = (r[o] & 0x3f) | ((hi & 3) << 6); r[o + 1] = hi >> 2;
   put16(r, o + 2, (L >>> 8) & 0xffff); r[o + 5] = L & 0xff;
   r[o + 8] = S & 0xff; put16(r, o + 10, (S >>> 8) & 0xffff);
-  r[o + 14] = E & 0xff; put16(r, o + 16, (E >>> 8) & 0xffff);
+  if (k === 16) { r[o + 12] = S & 0xff; r[o + 13] = hi; put16(r, o + 14, (S >>> 8) & 0xffff); }
+  r[o + k + 2] = E & 0xff; put16(r, o + k + 4, (E >>> 8) & 0xffff);
 }
 // --- volume envelope (as nuxdsp/envelope.py: the model and its H constants are explained there)
 const ENV_SF2_DEFAULT = {34: -12000, 36: -12000, 37: 0, 38: -12000};
@@ -319,7 +341,7 @@ function envEncode(env) {
 }
 // offset in a zone record of its volume envelope (the 00 byte), if it is rise, hold/fall, release
 function ampEnvAt(rec, sbOff) {
-  const at = sbOff + 18;
+  const at = sbOff + blockLen(rec, sbOff);
   if (rec[at] !== 0x0e || rec[at + 1] !== 0x7f || rec[at + 2] !== 6 || rec[at + 6] !== 0) return -1;
   let p = at + 8, n = 0;
   for (; n < 12; n++, p += 2) if (rec[p + 1] & 0x20) break;
@@ -338,8 +360,17 @@ async function addInstruments(target, dsp, bank, items) {
   for (const kind of ["template", "template_loop", "template_piano"]) {   // one-shots, with loops, pianos
     const [tv, tzone] = v.soundbank[kind] || v.soundbank.template;
     const tinst = instrumentAddr(d, dirEntry(d, ...voiceToBankProg(banks, tv)));
-    const tz = zoneAddrs(d, tinst)[tzone];
-    templates[kind] = {tz, hdr: d.slice(tinst, tinst + 4), ...zoneRecord(d, tz)};
+    const tz = zoneAddrs(d, tinst)[tzone], T = zoneRecord(d, tz);
+    const mods = v.soundbank["mods" + kind.slice("template".length)];
+    if (mods) {                                            // the target's velocity modulators (hex strings)
+      const at = velMods(T.rec);
+      for (let g = 0; g < 2; g++) {
+        if (at[g] < 0) throw `${kind}: no velocity modulator to replace`;
+        T.rec.set(mods[g].match(/../g).map(h => parseInt(h, 16)), at[g]);
+      }
+    }
+    // format 0x44 -> 0x40: without the 0x44 instrument-level block
+    templates[kind] = {tz, fmt: d[tinst] & ~4, n: blockLen(T.rec, T.sbOff), ...T};
   }
   let tail = -1;
   const mark = new TextEncoder().encode("PackNameDate:");
@@ -387,19 +418,19 @@ async function addInstruments(target, dsp, bank, items) {
     if (base + size > (page + 1) * 0x20000 || out.subarray(base - 0x10, base + size).some(b => b !== 0x5e && b !== 0xd0))
       throw "no free room for the instrument in the parameter page";
     const inst = new Uint8Array(size);
-    inst.set(T.hdr); inst[2] = 0x80 | n;
+    inst.set([T.fmt, 1, 0x80 | n, 0]);                  // one layer
     let hi = 0;
     pack.zones.forEach((zn, i) => {
       const zstart = zoneAt + i * recLen, lo = hi, e = 4 + 6 * i;
       hi = i === n - 1 ? 0xff : zn.hi;
-      inst.set([i ? 0 : 0x80, lo, 0x7f, hi], e); put16(inst, e + 4, ((zstart + 2) / 2) & 0xffff);
+      inst.set([i ? 0 : 0x80, lo | (T.n === 22 ? 0x80 : 0), 0x7f, hi], e); put16(inst, e + 4, ((zstart + 2) / 2) & 0xffff);
       const z = T.rec.slice();
       for (const o of T.offs) {
         const nw = u16(T.rec, o) * 2 + T.pageB - (tz - 2) + zstart;
         if (Math.floor(nw / 0x20000) !== page) throw "instrument crosses a page";
         put16(z, o, (nw / 2) & 0xffff);
       }
-      setAddrs(z, T.sbOff, ...placed[k][i]);
+      setAddrs(z, T.sbOff, T.n, ...placed[k][i]);
       put16(z, T.sbOff - 2, tuneValue(zn.root, zn.cents, zn.rate) & 0xffff);
       if (zn.env) {                                       // the instrument's volume envelope
         const at = ampEnvAt(z, T.sbOff);

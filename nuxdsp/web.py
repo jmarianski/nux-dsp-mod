@@ -71,7 +71,8 @@ def export_data(image, fwmap, names=None):
     if fwmap.soundbank and "custom_voices" in patcher.available(fwmap):
         from . import soundbank
         syms = fwmap.symbols()  # addresses only: the tables are read from the user's own file
-        data["voices"] = {"soundbank": fwmap.soundbank, "cvTab": soundbank.table_addr(fwmap), "max": 4,
+        sb = {k: [x.hex() for x in v] if k.startswith("mods") else v for k, v in fwmap.soundbank.items()}
+        data["voices"] = {"soundbank": sb, "cvTab": soundbank.table_addr(fwmap), "max": 4,
                           "ramdata": fwmap.ramdata[0], "voiceBanks": syms["voice_banks"],
                           "soundNames": syms["sound_names"]}
     return data

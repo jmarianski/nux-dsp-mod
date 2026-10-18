@@ -16,8 +16,14 @@ The soundbank (NEK100_SBANK_*.bin) is flashed from word 0x80000 on, so its point
 A sound number maps to (bank, program) through the DSP's voice_banks table. The zone settings (envelope, filter,
 ...) come from a template zone of the target (soundbank line of target.map): one for one-shots, one for instruments
 with loops (a sustaining one), one for pianos (GM programs 0..7, loops or not: C, 2026-10-18, SF2 pianos on
-3.Bright Piano's zone sound much closer to the computer than on Shamisen's or Organ 10's), except the volume
-envelope, which is the SF2's (envelope.py); nothing of the vendor's is in an instrument file.
+3.Bright Piano's zone sound much closer to the computer than on Shamisen's or Organ 10's, on 1.Grand Piano's
+loudest layer closer still), except the volume envelope, which is the SF2's (envelope.py), and, when the target
+gives them, the velocity modulators ("pianomods": a zone of a velocity layer reacts to velocity only across its
+layer's range; C, 2026-10-18: the Grand's loudest layer with Bright Piano's volume modulator follows velocity, and
+with the filter open at soft hits too sounds closest to the SoundFont); nothing of the vendor's is in an
+instrument file.
+A template zone may be stereo (a 22-byte sample block with the right channel's start X, entry flag b1 bit 7, as
+1.Grand Piano's): the added instrument's zones then play their mono sample on both channels (X = S).
 
 custom_voices (a DSP patch) shows the new names: fill_names() writes them into its table.
 """
@@ -43,6 +49,7 @@ class BankError(Exception):
 
 
 TEMPLATES = ("template", "template_loop", "template_piano")
+STEREO = 0x80                     # entry b1: the zone's sample block is the 22-byte stereo one
 
 
 def template_kind(inst, sb):
@@ -100,37 +107,64 @@ def instrument_addr(d, bank, prog):
 
 
 def zones(d, inst):
-    """byte offsets of the zone records of an instrument."""
+    """byte offsets of the zone records of an instrument, of all its layers in order.
+    Header: format, number of layers, [u16 if format & 4: the instrument-level block of 0x44], u16 per layer
+    (0x80 | number of its zones); then 6 bytes per zone."""
     page = (inst // 2) & ~0xFFFF
-    o, out = inst + 4, []
-    while True:
-        out.append((page | struct.unpack_from("<H", d, o + 4)[0]) * 2)
-        if d[o + 3] == 0xFF:
-            return out
-        o += 6
+    fmt, nl = d[inst], d[inst + 1]
+    o = inst + 2 + (2 if fmt & 4 else 0)
+    n = sum(struct.unpack_from("<H", d, o + 2 * i)[0] & 0x7F for i in range(nl))
+    o += 2 * nl
+    return [(page | struct.unpack_from("<H", d, o + 6 * i + 4)[0]) * 2 for i in range(n)]
 
 
 def find_sample_block(d, zone):
-    """the 'fl 0/1 A A 01 f 00 00 Z 00 C C X X Y 00 E E 0e 7f' block inside a zone record."""
-    for o in range(zone, zone + 0x60):
-        b = d[o:o + 20]
-        if b[1] in (0, 1) and b[4] == 1 and b[6:8] == b"\0\0" and b[9] == 0 and b[15] == 0 and b[18:20] == b"\x0e\x7f":
+    """the 'fl 0/1 A A 01 f 00 00 Z 00 C C X X Y 00 E E 0e 7f' block inside a zone record, or its stereo
+    variant with 4 more bytes at +12 (the right channel's start X: X & 0xff == S & 0xff)."""
+    for o in range(zone, zone + 0x80):
+        b = d[o:o + 24]
+        if b[1] in (0, 1) and b[4] == 1 and b[6:8] == b"\0\0" and b[9] == 0 and (
+                b[15] == 0 and b[18:20] == b"\x0e\x7f" or b[12] == b[8] and b[19] == 0 and b[22:24] == b"\x0e\x7f"):
             return o
     raise BankError("no sample block in zone at %#x" % zone)
 
 
+def block_len(d, o):
+    """18, or 22 for the stereo sample block at byte offset o"""
+    return 18 if d[o + 15] == 0 and d[o + 18:o + 20] == b"\x0e\x7f" else 22
+
+
 def set_addrs(rec, S, L, E):
+    """rec: an 18- or 22-byte sample block; a stereo one gets X = S (a mono sample on both channels)"""
     hi = S >> 24
     if L >> 24 != hi or E >> 24 != hi:
-        raise BankError("sample crosses a 16M-word boundary")
+        raise BankError("sample crosses a 16M-word boundary (on the NEK-100: past the end of the soundbank partition, the instruments do not fit)")
+    k = 12 if len(rec) == 18 else 16
     rec[0] = (rec[0] & 0x3F) | ((hi & 3) << 6)
     rec[1] = hi >> 2
     struct.pack_into("<H", rec, 2, (L >> 8) & 0xFFFF)
     rec[5] = L & 0xFF
     rec[8] = S & 0xFF
     struct.pack_into("<H", rec, 10, (S >> 8) & 0xFFFF)
-    rec[14] = E & 0xFF
-    struct.pack_into("<H", rec, 16, (E >> 8) & 0xFFFF)
+    if k == 16:
+        rec[12], rec[13] = S & 0xFF, hi
+        struct.pack_into("<H", rec, 14, (S >> 8) & 0xFFFF)
+    rec[k + 2] = E & 0xFF
+    struct.pack_into("<H", rec, k + 4, (E >> 8) & 0xFFFF)
+
+
+def vel_mods(rec):
+    """offsets in a zone record of its two velocity modulators (filter G1M, volume G2M; 4 bytes each:
+    velocity low, velocity high / 2 (low 6 bits), then two values: C, 2026-10-18 on the volume one, 72 ff does not
+    follow velocity, 2d fd does; on the filter one, the first value sets the soft hits (1a dark, ff open: C) and
+    the second has no audible effect between ff and e0), None where absent"""
+    o, out = rec.index(b"\xf0\xb5") + 2, []
+    for _ in range(2):
+        F, S, V0 = rec[o:o + 3]
+        o += 4 + (2 if F & 0x41 else 0)
+        out.append(o if S & 0x10 and V0 & 0x08 else None)
+        o += 4 if out[-1] is not None else 0
+    return out
 
 
 def tune_value(midi, cents, rate=SR):
@@ -175,7 +209,17 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
         tvoice, tzone = sb.get(kind, sb["template"])
         tinst = instrument_addr(d, *voice_to_bank_prog(banks, tvoice))
         tz = zones(d, tinst)[tzone]
-        templates[kind] = (tz, d[tinst:tinst + 4]) + zone_record(d, tz)
+        rec, ptr_offs, page_b, sb_off = zone_record(d, tz)
+        mods = sb.get("mods" + kind[len("template"):])
+        if mods:                                             # the target's velocity modulators
+            rec = bytearray(rec)
+            for at, mod in zip(vel_mods(rec), mods):
+                if at is None:
+                    raise BankError("%s: no velocity modulator to replace" % kind)
+                rec[at:at + 4] = mod
+            rec = bytes(rec)
+        # format 0x44 -> 0x40: without the 0x44 instrument-level block (what it holds is not known)
+        templates[kind] = (tz, d[tinst] & ~4, rec, ptr_offs, page_b, sb_off)
 
     tail = d.index(b"PackNameDate:")
     body, trailer = bytearray(d[:tail]), d[tail:]
@@ -220,25 +264,26 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
         n = len(inst.zones)
         if not 1 <= n <= 127:
             raise BankError("%s: %d zones (1..127)" % (inst.name, n))
-        tz, hdr, rec, ptr_offs, page_b, sb_off = templates[template_kind(inst, sb)]
-        head = bytearray(hdr)
-        head[2] = 0x80 | n
+        tz, fmt, rec, ptr_offs, page_b, sb_off = templates[template_kind(inst, sb)]
+        n_b = block_len(rec, sb_off)
+        head = bytearray([fmt, 1, 0x80 | n, 0])              # one layer
         zone_at = base + 4 + 6 * n + 2
         blob, hi = bytearray(), 0
         for i, z in enumerate(inst.zones):
             zstart = zone_at + len(blob)
             lo = hi                                           # a zone plays the keys above the previous one's
             hi = 0xFF if i == n - 1 else z.hi
-            head += bytes([0x80 if i == 0 else 0x00, lo, 0x7F, hi]) + struct.pack("<H", (zstart + 2) // 2 & 0xFFFF)
+            head += bytes([0x80 if i == 0 else 0x00, lo | (STEREO if n_b == 22 else 0), 0x7F, hi]) + \
+                struct.pack("<H", (zstart + 2) // 2 & 0xFFFF)
             r = bytearray(rec)
             for o in ptr_offs:                                # rebase the in-page pointers
                 new = struct.unpack_from("<H", rec, o)[0] * 2 + page_b - (tz - 2) + zstart
                 if new // 2 >> 16 != page:
                     raise BankError("instrument crosses a page")
                 struct.pack_into("<H", r, o, new // 2 & 0xFFFF)
-            blk = bytearray(r[sb_off:sb_off + 18])
+            blk = bytearray(r[sb_off:sb_off + n_b])
             set_addrs(blk, *addrs[i])
-            r[sb_off:sb_off + 18] = blk
+            r[sb_off:sb_off + n_b] = blk
             struct.pack_into("<h", r, sb_off - 2, tune_value(z.root, z.cents, z.rate))
             if z.env is not None:                             # the instrument's volume envelope (envelope.py)
                 at = envelope.amp_env_at(r, sb_off)
@@ -301,10 +346,11 @@ def fill_names(dsp_image, fwmap, entries):
 
 
 def sample_block(d, o):
-    """(flag, tuning V, S, L, E) of the sample block at byte offset o"""
-    b = d[o:o + 18]
+    """(flag, tuning V, S, L, E) of the (18- or 22-byte) sample block at byte offset o"""
+    b = d[o:o + 22]
+    k = block_len(d, o) - 2
     hi = ((b[0] >> 6) & 3) | (b[1] << 2)
-    S, L, E = ((hi << 24) | (struct.unpack_from("<H", b, w)[0] << 8) | b[lo] for w, lo in ((10, 8), (2, 5), (16, 14)))
+    S, L, E = ((hi << 24) | (struct.unpack_from("<H", b, w)[0] << 8) | b[lo] for w, lo in ((10, 8), (2, 5), (k, k - 2)))
     return d[o - 4], struct.unpack_from("<h", d, o - 2)[0], S, L, E
 
 

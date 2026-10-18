@@ -19,11 +19,13 @@ Format, one entry per line, `;` starts a comment that is kept as the entry descr
     label   ADDR NAME            named location inside a function
     var     ADDR NAME [SIZE]     RAM variable (word address), optional size in words
     glyphs  TABLE BITMAPS COUNT  file word addresses of the glyph/image table and its bitmap data
-    soundbank NAME sha256 HEX template VOICE ZONE [loop VOICE ZONE] [piano VOICE ZONE]
+    soundbank NAME sha256 HEX template VOICE ZONE [loop VOICE ZONE] [piano VOICE ZONE] [pianomods FILTER VOLUME]
                                  the official soundbank file instruments are added to, and the zone
-                                 (sound number, zone index) whose settings added instruments copy;
-                                 instruments with loops copy the "loop" one when given, pianos (GM
-                                 programs 0..7) the "piano" one
+                                 (sound number, zone index over all its layers) whose settings added
+                                 instruments copy; instruments with loops copy the "loop" one when given,
+                                 pianos (GM programs 0..7) the "piano" one, with its two velocity
+                                 modulators (4 bytes each, hex: soundbank.vel_mods) replaced when
+                                 "pianomods" is given
 """
 import os
 import shlex
@@ -123,6 +125,10 @@ def load(path=None):
                 for i in range(7, len(t) - 2, 3):
                     if t[i] in ("loop", "piano"):
                         m.soundbank["template_" + t[i]] = (int(t[i + 1]), int(t[i + 2]))
+                    elif t[i] == "pianomods":
+                        m.soundbank["mods_piano"] = tuple(bytes.fromhex(t[i + j]) for j in (1, 2))
+                        if any(len(x) != 4 for x in m.soundbank["mods_piano"]):
+                            raise ValueError("pianomods: two 4-byte hex values")
             elif k == "ramdata":
                 m.ramdata = (int(t[1], 16), int(t[2], 16))
             elif k in ("func", "label", "var"):
