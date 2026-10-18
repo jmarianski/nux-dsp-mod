@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # the settle timer not yet run on hardware) and extra_menu's functions moved
 # above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
 # timed from the last sound not yet run on hardware.
-ALL_SHA = "d61d5b53848b004b3aa7bcf1df008a8013982454693d0c729fe7de9cbb97beec"
+ALL_SHA = "5b1e6c1a6f8d4439417f5f0ea81ef734e3cf2d6196151c628d2e8342f3123beb"
 
 
 def padded(w, n):

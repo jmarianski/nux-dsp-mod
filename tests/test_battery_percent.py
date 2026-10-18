@@ -11,8 +11,9 @@ class Code(dict):
 
 DEFAULTS = {"EMPTY": 760, "STEP1": 23, "STEP2": 16, "STEP3": 12, "STEP4": 10, "STEP5": 11, "STEP6": 13,
             "STEP7": 16, "STEP8": 24, "STEP9": 27, "STEP10": 23, "CHARGING": 34, "REDRAW": 2,
-            "SAG_LOW": 4, "SAG_KNEE": 858, "SAG_MAX": 16, "SETTLE": 300}
+            "SAG_LOW": 4, "SAG_KNEE": 858, "SAG_MAX": 16, "SETTLE": 300, "START": 60}
 SL_MAGIC, SL_ON, BP_HOLD, BP_SLP, TM_DT = 0x6a3f, 0x6a41, 0x640f, 0x640e, 0x63c1
+BP_MAG, BP_BOOT = 0x6406, 0x641b
 SETTLED = DEFAULTS["SETTLE"] * 100
 
 
@@ -57,6 +58,19 @@ class Runner:
         s.steps = 0
         s.call(self.labels["bp_pct"])
         return s.rd(0x6402)
+
+    def clk(self, dt):
+        """extra_menu's clock: dt x 10 ms gone"""
+        s = self.s
+        s.wr(SL_MAGIC, 0xa55a)
+        s.r[7] = dt
+        s.steps = 0
+        s.call(self.labels["bp_clk"])
+
+    def started(self):
+        """START seconds of ticks after the first reading"""
+        for _ in range(self.params["START"] * 100 // 32 + 1):
+            self.clk(32)
 
     def text(self, val):
         s = self.s
@@ -117,12 +131,40 @@ class TestCurve(unittest.TestCase):
         r = Runner()
         r.s.wr(0x6406, 0)
         self.assertEqual(r.pct(900), expected(900, r.params))
+        r.started()
         low = r.pct(850)
         self.assertEqual(r.pct(880), low)          # recovered voltage: still the lower value
         self.assertEqual(r.pct(300), low)          # no reading yet: not remembered
         self.assertEqual(r.pct(800), expected(800, r.params))
         r.pct(990, src=2)                          # charger: afresh
         self.assertEqual(r.pct(900), expected(900, r.params))
+        self.assertEqual(r.pct(920), expected(920, r.params))   # starting again: up too
+
+    def test_start_follows_the_reading(self):
+        """A low first reading after power-on (the average still filling) must not stay for the whole charge."""
+        r = Runner()
+        r.s.wr(BP_MAG, 0x1234)                     # garbage after power-on
+        self.assertEqual(r.pct(770), expected(770, r.params))   # about 2%
+        self.assertEqual(r.s.rd(BP_MAG), 0x5aa4)
+        r.clk(1000)
+        self.assertEqual(r.pct(880), expected(880, r.params))   # still starting: up
+        self.assertEqual(r.pct(870), expected(870, r.params))   # and down
+        r.clk(r.params["START"] * 100 - 1001)
+        self.assertEqual(r.s.rd(BP_MAG), 0x5aa4)
+        r.clk(1)
+        self.assertEqual(r.s.rd(BP_MAG), 0x5aa5)   # START s: never up from now on
+        v = r.pct(870)
+        self.assertEqual(r.pct(890), v)
+        r.clk(30000)
+        self.assertEqual(r.s.rd(BP_BOOT), r.params["START"] * 100)   # stopped counting
+
+    def test_start_zero(self):
+        r = Runner(START=0)
+        r.s.wr(BP_MAG, 0)
+        r.pct(870)
+        r.clk(1)
+        v = r.pct(870)
+        self.assertEqual(r.pct(890), v)
 
     def test_charging_takes_off_the_offset(self):
         r = Runner()
@@ -176,6 +218,7 @@ class TestSettle(unittest.TestCase):
         r = Runner()
         r.s.wr(0x6406, 0)
         v = r.pct(900)
+        r.started()
         self.assertEqual(r.pct(870, asleep=True, hold=100), v)   # just fell asleep: the reading is still low
         self.assertEqual(r.pct(870, asleep=True), expected(870, r.params, True))
         self.assertLess(r.pct(870, asleep=True), v)

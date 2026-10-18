@@ -23,7 +23,8 @@
 ; always awake.
 ; On battery the shown value never goes up (a lighter load lets the voltage recover), and it stays as it is for
 ; SETTLE seconds after falling asleep or waking up (the averaged reading moves for a while); it starts afresh at
-; power-on and after the charger is unplugged.
+; power-on and after the charger is unplugged: for START seconds then it follows the reading both ways (the
+; averaged reading starts low, and a first reading of 2% must not stay for the whole charge).
 ; The stock code redraws the battery when the ADC moved by more than 5 since the last drawing (about 3%);
 ; REDRAW lowers that.
 ;
@@ -45,6 +46,7 @@
 .param SAG_KNEE 858 700 1000 "Battery %: from this reading (awake) the difference grows by a quarter of the excess"
 .param SAG_MAX 16 0 40 "Battery %: the largest difference awake / asleep"
 .param SETTLE 300 0 300 "Battery %: seconds the shown value stays after falling asleep or waking up"
+.param START 60 0 300 "Battery %: seconds after power-on or unplugging during which the value may also go up"
 .param CHARGING 34 0 80 "Battery %: how much higher the reading is with the charger plugged in"
 .param REDRAW 2 1 5 "Battery %: redraw when the ADC moved by more than this (stock 5)"
 
@@ -82,7 +84,7 @@
 .equ bp_p, 0x6403             ; -> the step of the current tenth
 .equ bp_j, 0x6404             ; percent within the tenth
 .equ bp_last, 0x6405          ; the lowest value shown on battery
-.equ bp_mag, 0x6406           ; 0x5aa5 while bp_last is valid
+.equ bp_mag, 0x6406           ; 0x5aa4 starting (bp_last follows the value), 0x5aa5 never up
 .equ bp_ph, 0x6407            ; blink phase drawn: 0 hidden, 1 shown
 .equ bp_n, 0x6408             ; characters in bp_txt
 .equ bp_x, 0x6409             ; x of the number
@@ -97,6 +99,7 @@
 .equ tm_dt, 0x63c1            ; extra_menu's clock: 10 ms per tick now (1, more asleep)
 .equ bp_s, 0x6410             ; STEP1..STEP10
 .equ bp_dtl, 0x641a           ; bp_clk: 10 ms gone this time
+.equ bp_boot, 0x641b          ; 10 ms since starting (bp_mag 0x5aa4), up to START s
 .equ bp_txt, 0x6420           ; the number, 0-terminated
 
 bp_draw:
@@ -348,8 +351,14 @@ bp_pct:
     li    r6, #400            ; no reading yet (stock: < 0x190 = no battery): nothing to remember
     cmp   r7, r6
     blt   .ret
-    li    r6, #0x5aa5
-    st    [bp_mag], r6
+    ld    r7, [bp_mag]
+    li    r6, #0x5aa4
+    cmp   r7, r6
+    beq   .start
+    st    [bp_mag], r6        ; starting: bp_clk makes it 0x5aa5 after START s
+    mov   r7, #0
+    st    [bp_boot], r7
+.start:
     ld    r7, [bp_val]
     st    [bp_last], r7
 .ret:
@@ -413,10 +422,24 @@ bp_dt:
     mov   r7, #1
     ret
 
-; every tick from extra_menu's clock (or bp_tick), r7 = 10 ms gone: the settle timer counts up from a change
-; of asleep / awake to SETTLE s. Keeps r7; uses r6.
+; every tick from extra_menu's clock (or bp_tick), r7 = 10 ms gone: the start timer, and the settle timer counts
+; up from a change of asleep / awake to SETTLE s. Keeps r7; uses r6.
 bp_clk:
     st    [bp_dtl], r7
+    ld    r7, [bp_mag]        ; starting: never up from START s on
+    li    r6, #0x5aa4
+    cmp   r7, r6
+    bne   .tk_hold
+    ld    r7, [bp_boot]
+    ld    r6, [bp_dtl]
+    add   r7, r6
+    st    [bp_boot], r7
+    li    r6, #START*100
+    cmp   r7, r6
+    blt   .tk_hold
+    li    r7, #0x5aa5
+    st    [bp_mag], r7
+.tk_hold:
     call  bp_asleep
     ld    r6, [bp_slp]
     cmp   r6, r7
