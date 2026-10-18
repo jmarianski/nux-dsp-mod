@@ -169,10 +169,19 @@ rc_tickh:
 {r.text()}
 {data}
 .end
-.code
-{ray.FR_COPY0}
+.code 0x0f0b0
+{fr_copy0()}
 .end
 """
+
+
+# ray.FR_COPY0 for layout 0 only (doom.c's fmode is always 0): 25 words, in the bank-0 pool after code bank 0,
+# where they fit next to every other bundled patch (nek100-mod's canonical layout).
+def fr_copy0():
+    import ray
+    t = ray.FR_COPY0
+    return (t[:t.index("    ld    r7, [fr_mode]")] + t[t.index("    ld    r7, [fr_lo]"):t.index("    jmp   .fc_go")]
+            + t[t.index("    ld    r0, [fr_dst]"):])
 
 
 if __name__ == "__main__":

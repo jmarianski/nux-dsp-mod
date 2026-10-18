@@ -33,7 +33,9 @@ python3 tools/packdemo.py  --wad wad/DOOM1.WAD --map wad/DOOM1.WAD
 
 The music: the title plays Freedoom's intro once, the level loops E4M8; `--music E1M1` (any song lump of the WAD)
 picks another for the level. Those `--wad` builds stay private (the tools say so). The server and the tests take the same as `PIANODOOM_WAD` /
-`PIANODOOM_MAP`. Editing the map:
+`PIANODOOM_MAP`. The shareable build is also nek100-mod's `doom_demo` patch (its CLI and web patcher):
+`tools/exportpatch.py` writes it there (effects on the GM drums, Freedoom's license inside), then
+`python3 -m nuxdsp web NEK100_DSP_V1.0.7.bin` in nek100-mod. Editing the map:
 change `tools/makemap.py` and run it; the nodes come from `zdbsp` (`apt install zdbsp`, or without root
 `apt-get download zdbsp && dpkg-deb -x zdbsp_*.deb x`, then `--zdbsp x/usr/bin/zdbsp`). `maps/hangar.wad` also plays
 in any source port: `chocolate-doom -iwad freedoom1.wad -file maps/hangar.wad -warp 1 1`.
