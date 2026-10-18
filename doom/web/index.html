@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>doom-piano emulator</title>
+<style>
+  :root { --bg: #16181a; --fg: #d8dcd2; --dim: #8a9087; --lcd-off: #9fb08a; --lcd-on: #1d2618; --line: #33373a; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 16px; }
+  * { box-sizing: border-box; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  #lcd { width: 100%; max-width: 768px; aspect-ratio: 2 / 1; image-rendering: pixelated; display: block;
+           border: 10px solid #2b302a; border-radius: 6px; background: var(--lcd-off); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0; }
+  button, select { background: #262a2c; color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
+                   padding: 4px 10px; font: inherit; }
+  .dim { color: var(--dim); }
+  #log { font: 12px/1.3 ui-monospace, monospace; color: var(--dim); white-space: pre; height: 9em; overflow: auto;
+         border: 1px solid var(--line); padding: 6px; }
+  kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+  #navigation { max-width: 768px; border: 1px solid var(--line); border-radius: 4px; padding: 10px; }
+  #navigation summary { cursor: pointer; color: #9aceff; }
+  #map { width: 100%; display: block; margin-top: 10px; background: #101719; }
+  #navigation p { margin-bottom: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>doom-piano: emulator P16</h1>
+  <div class="row"><label>Silnik <select id="engine"><option value="doom">Doom Hangar (BSP)</option>
+    <option value="ray">Raycaster testowy</option></select></label><span id="status" role="status">Ładowanie…</span></div>
+  <canvas id="lcd" width="128" height="64" tabindex="0" aria-label="Ekran pianina 128 na 64 piksele"></canvas>
+  <div class="row">
+    <button id="reload">Przeładuj (R)</button>
+    <button id="pause" disabled>Pauza</button>
+    <label>VOL <input id="vol" type="range" min="0" max="10" value="7" aria-label="Głośność"></label>
+    <span id="stats" class="dim"></span>
+  </div>
+  <details id="navigation" hidden>
+    <summary>Mapa: droga do pierwszego przeciwnika (M)</summary>
+    <canvas id="map" width="768" height="480" aria-label="Mapa hangaru z graczem, drzwiami i przeciwnikami"></canvas>
+    <p class="dim">Biała strzałka: Ty · czerwień: żywi przeciwnicy · niebieska linia: trasa od startu do pierwszego żołnierza.
+      Żółte drzwi: podejdź przodem i naciśnij <kbd>F</kbd> / <kbd>D5</kbd>. Podgląd dostępny w symulatorze.</p>
+  </details>
+  <p id="budget" class="dim"></p>
+  <div class="row">
+    <button id="midi">Włącz MIDI</button>
+    <label>wyjście <select id="mout"><option value="">—</option></select></label>
+    <label>wejście <select id="min"><option value="">—</option></select></label>
+  </div>
+  <p class="dim">Klawisze: <kbd>←</kbd>/<kbd>→</kbd> obrót, <kbd>↑</kbd>/<kbd>↓</kbd> przód/tył, <kbd>Q</kbd>/<kbd>E</kbd> bokiem
+    (też <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>). Z pianina: B2 C3 C#3 D3 D#3 E3 F3, jak na urządzeniu.
+    <kbd>Spacja</kbd> strzał, <kbd>F</kbd> drzwi / przycisk (podejdź blisko i stań przodem), <kbd>Shift</kbd> bieg, <kbd>M</kbd> mapa.
+    <kbd>Enter</kbd> restart po śmierci lub wygranej, <kbd>R</kbd> przebudowa kodu i nowa gra.</p>
+  <p class="dim">Cel: dotrzyj do przycisku wyjścia (zachodnia ściana ostatniej sali) i użyj <kbd>F</kbd>. HUD: H — zdrowie, A — amunicja, K — pokonani przeciwnicy.
+    Pianino: C5 strzał, D5 użyj, E5 bieg, B0 restart. To uproszczone demo na poziomie łatwym: czterech przeciwników,
+    pistolet i strzelba, apteczki, amunicja oraz bonusy.</p>
+  <p class="dim">Dźwięk: „Włącz MIDI” → wybierz pianino jako wyjście. Muzyka gra przez jego syntezator po USB.
+    Pianino jako wejście pozwala sterować grą. Ukrycie karty wstrzymuje emulator.</p>
+  <div id="log" aria-label="Log emulatora"></div>
+</main>
+<script src="p16.js"></script>
+<script src="navigation.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
