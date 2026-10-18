@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "firmware"))
 sys.path.insert(0, str(ROOT.parent / "nek100-mod"))
 import budget
 import doom
+import wad
 from nuxdsp import fwmap, patcher, asm, container
 
 
@@ -94,6 +95,11 @@ if __name__ == "__main__":
     p.add_argument("--sfx", choices=["shot", "drums"], default="shot",
                    help="effects: the GM gunshot (program 127, soundbank slot 500) or the GM drums")
     p.add_argument("--silent", action="store_true", help="no music and no sound effects: the game sends nothing to the synth")
+    p.add_argument("--wad", help="textures, sprites, music (default: wad/freedoom1.wad; DOOM1.WAD builds stay private)")
+    p.add_argument("--map", help="the WAD whose E1M1 is played (default: maps/hangar.wad), e.g. DOOM1.WAD for id's")
     args = p.parse_args()
+    wad.use(args.wad, args.map)
+    if not wad.shareable():
+        print(f"note: {Path(wad.WAD).name} / {Path(wad.MAP).name} are not free: keep this build private")
     doom.SFX_DRUMS = args.sfx == "drums"
     build(args.firmware, ROOT / "build", silent_audio=args.silent, extra=args.extra)

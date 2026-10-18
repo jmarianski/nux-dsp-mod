@@ -23,8 +23,16 @@ The selector retains the earlier test raycaster.
 The title screen shows the DOOM logo (`art/doom_logo.txt`, 1-bit, from
 [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Doom_logo.png), public domain there as a text logo)
 marked "UNOFFICIAL PORT": DOOM is a trademark of id Software, and this project is not affiliated with or endorsed by
-id. Since the map and the assets are free, builds can be shared. `PIANODOOM_WAD=wad/DOOM1.WAD` swaps in your
-shareware assets and `PIANODOOM_MAP=wad/DOOM1.WAD` id's E1M1 (those builds stay private). Editing the map:
+id. Since the map and the assets are free, builds can be shared. Your own WAD works too: `--wad` takes the
+textures, sprites and music from it, `--map` the E1M1 it holds, e.g. id's original from the shareware WAD:
+
+```sh
+python3 tools/builddemo.py --wad wad/DOOM1.WAD --map wad/DOOM1.WAD
+python3 tools/packdemo.py  --wad wad/DOOM1.WAD --map wad/DOOM1.WAD
+```
+
+Those builds stay private (the tools say so). The server and the tests take the same as `PIANODOOM_WAD` /
+`PIANODOOM_MAP`. Editing the map:
 change `tools/makemap.py` and run it; the nodes come from `zdbsp` (`apt install zdbsp`, or without root
 `apt-get download zdbsp && dpkg-deb -x zdbsp_*.deb x`, then `--zdbsp x/usr/bin/zdbsp`). `maps/hangar.wad` also plays
 in any source port: `chocolate-doom -iwad freedoom1.wad -file maps/hangar.wad -warp 1 1`.
