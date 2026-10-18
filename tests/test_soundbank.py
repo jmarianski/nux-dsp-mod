@@ -13,7 +13,7 @@ from nuxdsp import container, envelope, fwmap, instrument, patcher, sf2, soundba
 FW, SBANK, SF2 = os.environ.get("NEK100_FW"), os.environ.get("NEK100_SBANK"), os.environ.get("NUX_TEST_SF2")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # cat_piano on sound 500 (attack-trimmed Cat Piano, samples ending on 256-word blocks, its SoundFont envelope)
-CAT_SHA = "527757b52de7765ecd00c66458f3c956b589c6388fe552085df9a97269e43c57"   # on the piano template (C: 2026-10-18)
+CAT_SHA = "8be2ac96da8c9a5b0233b343bafef99abdc9d349f7d4a06ae85980048d9abc9e"   # on the Grand piano template, pianomods (C: 2026-10-18)
 
 
 def cat():
@@ -34,11 +34,7 @@ def sample_blocks(bank, img, fwmap_, voice):
     banks = soundbank.voice_banks(container.words(img), fwmap_)
     out = []
     for z in soundbank.zones(bank, soundbank.instrument_addr(bank, *soundbank.voice_to_bank_prog(banks, voice))):
-        o = soundbank.find_sample_block(bank, z)
-        b = bank[o:o + 18]
-        hi = ((b[0] >> 6) & 3) | (b[1] << 2)
-        a = [(hi << 24) | (struct.unpack_from("<H", b, w)[0] << 8) | b[lo] for w, lo in ((10, 8), (2, 5), (16, 14))]
-        out.append((bank[o - 4], struct.unpack_from("<h", bank, o - 2)[0], *a))
+        out.append(soundbank.sample_block(bank, soundbank.find_sample_block(bank, z)))
     return out
 
 
@@ -125,7 +121,8 @@ class TestSoundbank(unittest.TestCase):
 
     def test_template_kind(self):
         sb = self.map.soundbank
-        self.assertEqual(sb["template_piano"], (3, 8))
+        self.assertEqual(sb["template_piano"], (1, 223))
+        self.assertEqual(sb["mods_piano"], (bytes.fromhex("803fffff"), bytes.fromhex("803f2dfd")))
         self.assertTrue(cat().piano)                                   # the cat preset: GM program 0
         self.assertEqual(soundbank.template_kind(cat(), sb), "template_piano")
         self.assertEqual(soundbank.template_kind(saw(), sb), "template_loop")     # not from a preset

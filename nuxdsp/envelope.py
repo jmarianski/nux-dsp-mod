@@ -106,11 +106,12 @@ def encode(env):
 
 
 def amp_env_at(rec, sb_off):
-    """offset in a zone record of its volume envelope (the 00 byte): after the sample block's 0e 7f and 06 .."""
-    at = sb_off + 18
-    if rec[at:at + 2] != b"\x0e\x7f" or rec[at + 2] != 0x06:
-        return None
-    return at + 6
+    """offset in a zone record of its volume envelope (the 00 byte): after the (18- or 22-byte stereo) sample
+    block's 0e 7f and 06 .."""
+    for at in (sb_off + 18, sb_off + 22):
+        if rec[at:at + 2] == b"\x0e\x7f" and rec[at + 2] == 0x06:
+            return at + 6
+    return None
 
 
 # SoundFont 2 generators (timecents, centibels)
