@@ -231,7 +231,8 @@ function sf2Instrument(sf, preset, velocity = 100) {
   });
   const seen = new Map();
   const size = out.reduce((s, z) => seen.has(z.key) ? s : (seen.set(z.key, 1), s + z.pcm.length), 0);
-  return {name, zones: out, info: sf.info, size};
+  const [, program, bank] = ph[preset];        // GM programs 0..7 in bank 0: pianos (their own template)
+  return {name, zones: out, info: sf.info, size, program, bank, piano: bank === 0 && program < 8};
 }
 function dspWord(dsp, a) { return u16(dsp, 2 * a); }
 // voices: target.voices (addresses from the map); dsp: the user's official DSP file
@@ -334,7 +335,7 @@ async function addInstruments(target, dsp, bank, items) {
   if (new Set(items.map(i => i.voice)).size !== items.length) throw "two instruments for the same sound";
   const banks = voiceBanks(v, dsp);
   const templates = {};
-  for (const kind of ["template", "template_loop"]) {      // one-shots, and instruments with loops
+  for (const kind of ["template", "template_loop", "template_piano"]) {   // one-shots, with loops, pianos
     const [tv, tzone] = v.soundbank[kind] || v.soundbank.template;
     const tinst = instrumentAddr(d, dirEntry(d, ...voiceToBankProg(banks, tv)));
     const tz = zoneAddrs(d, tinst)[tzone];
@@ -380,7 +381,8 @@ async function addInstruments(target, dsp, bank, items) {
   items.forEach(({pack, voice}, k) => {
     const base = (u32(out, 0xa6) - FB) * 2 + 0x10, page = Math.floor(base / 0x20000), n = pack.zones.length;
     if (n < 1 || n > 127) throw `${pack.name}: ${n} zones (1..127)`;
-    const T = templates[pack.zones.some(z => z.loop) ? "template_loop" : "template"], tz = T.tz;
+    const T = templates[pack.piano && v.soundbank.template_piano ? "template_piano"
+      : pack.zones.some(z => z.loop) ? "template_loop" : "template"], tz = T.tz;
     const zoneAt = base + 4 + 6 * n + 2, recLen = T.rec.length, size = 4 + 6 * n + 2 + n * recLen;
     if (base + size > (page + 1) * 0x20000 || out.subarray(base - 0x10, base + size).some(b => b !== 0x5e && b !== 0xd0))
       throw "no free room for the instrument in the parameter page";

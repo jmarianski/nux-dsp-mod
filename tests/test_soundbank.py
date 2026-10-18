@@ -13,7 +13,7 @@ from nuxdsp import container, envelope, fwmap, instrument, patcher, sf2, soundba
 FW, SBANK, SF2 = os.environ.get("NEK100_FW"), os.environ.get("NEK100_SBANK"), os.environ.get("NUX_TEST_SF2")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # cat_piano on sound 500 (attack-trimmed Cat Piano, samples ending on 256-word blocks, its SoundFont envelope)
-CAT_SHA = "dbbecaeca5d740bdbe92dbff41c497650f0c072a6eedfb1535ad273fb7d838de"
+CAT_SHA = "527757b52de7765ecd00c66458f3c956b589c6388fe552085df9a97269e43c57"   # on the piano template (C: 2026-10-18)
 
 
 def cat():
@@ -115,13 +115,27 @@ class TestSoundbank(unittest.TestCase):
                 self.assertTrue(S < L < E)
         tz = {k: soundbank.zones(self.bank, soundbank.instrument_addr(self.bank, *soundbank.voice_to_bank_prog(
             soundbank.voice_banks(container.words(self.img), self.map), self.map.soundbank[k][0])))[
-            self.map.soundbank[k][1]] for k in ("template", "template_loop")}
+            self.map.soundbank[k][1]] for k in soundbank.TEMPLATES}
         banks = soundbank.voice_banks(container.words(self.img), self.map)
-        for v, k in ((500, "template"), (499, "template_loop")):
+        for v, k in ((500, "template_piano"), (499, "template_loop")):
             z = soundbank.zones(out, soundbank.instrument_addr(out, *soundbank.voice_to_bank_prog(banks, v)))[0]
             self.assertEqual(len(soundbank.zone_record(out, z)[0]), len(soundbank.zone_record(self.bank, tz[k])[0]))
         self.assertEqual([V for _, V, *_ in sample_blocks(out, self.img, self.map, 499)],
                          [soundbank.tune_value(57, 4, 44100), soundbank.tune_value(64, -7, 22050)])
+
+    def test_template_kind(self):
+        sb = self.map.soundbank
+        self.assertEqual(sb["template_piano"], (3, 8))
+        self.assertTrue(cat().piano)                                   # the cat preset: GM program 0
+        self.assertEqual(soundbank.template_kind(cat(), sb), "template_piano")
+        self.assertEqual(soundbank.template_kind(saw(), sb), "template_loop")     # not from a preset
+        c = cat()
+        c.program = 24                                                  # a guitar: a one-shot
+        self.assertEqual(soundbank.template_kind(c, sb), "template")
+        c.program, c.bank = 0, 1
+        self.assertEqual(soundbank.template_kind(c, sb), "template")
+        self.assertEqual(soundbank.template_kind(cat(), {k: v for k, v in sb.items() if k != "template_piano"}),
+                         "template")
 
     def test_export_add(self):
         """an official sound exported to SoundFont and added back plays the same samples, tuning and envelope"""

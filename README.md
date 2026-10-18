@@ -47,7 +47,8 @@ root keys, tuning, sample rate and loops (sounds that sustain while the key is h
 the one at velocity 100 is used; of layers sounding together (e.g. a second one an octave up) each key takes the
 first; stereo is mixed to mono. The volume envelope (attack, decay, sustain, release) is the SoundFont's,
 converted to the device's own (its rates measured on the NEK-100). The rest of the zone settings come from a
-template sound of your own soundbank (a plucked one for one-shots, an organ for looped instruments), so the
+template sound of your own soundbank (a plucked one for one-shots, an organ for looped instruments, the Bright Piano
+for pianos, i.e. presets on General MIDI programs 1–8, which sound much closer to the SoundFont on it), so the
 instruments contain no NUX data; the SoundFont's filters, LFOs and chorus are **not supported yet** (a pad that is
 a filtered string sample sounds like the strings). It looks doable: the device's zones have a second envelope in
 the same format (flat in pianos and organs, falling in synth basses: most likely the filter's) and blocks that look
@@ -209,7 +210,8 @@ sampli. Z pliku wybierasz jeden preset; przenoszone są zakresy klawiszy, stroje
 bierze pierwszą, a stereo jest miksowane do mono.
 Obwiednia głośności (atak, opadanie, podtrzymanie, wybrzmienie) pochodzi z pliku SF2, przeliczona na obwiednię
 urządzenia (jej tempa zmierzone na NEK-100). Pozostałe ustawienia strefy pochodzą z brzmienia-szablonu Twojego soundbanku
-(szarpanego dla dźwięków bez pętli, organów dla tych z pętlą), więc instrumenty nie zawierają danych NUX. Filtrów, LFO i
+(szarpanego dla dźwięków bez pętli, organów dla tych z pętlą, a dla pianin, czyli presetów na programach General MIDI 1–8,
+Bright Piano, na którym brzmią dużo bliżej oryginału), więc instrumenty nie zawierają danych NUX. Filtrów, LFO i
 chorusa z SF2 **jeszcze nie obsługujemy** (pad zrobiony z przefiltrowanych smyczków zabrzmi jak smyczki). Wygląda to na
 wykonalne: strefy urządzenia mają drugą obwiednię w tym samym formacie (płaską w pianinach i organach, opadającą w
 syntezatorowych basach, więc najpewniej filtra) i bloki przypominające ustawienia LFO, ale ich znaczenia jeszcze nie

@@ -15,8 +15,9 @@ The soundbank (NEK100_SBANK_*.bin) is flashed from word 0x80000 on, so its point
     the end (before the "PackNameDate:" trailer), new instruments into the free rest of the parameter page.
 A sound number maps to (bank, program) through the DSP's voice_banks table. The zone settings (envelope, filter,
 ...) come from a template zone of the target (soundbank line of target.map): one for one-shots, one for instruments
-with loops (a sustaining one), except the volume envelope, which is the SF2's (envelope.py); nothing of the
-vendor's is in an instrument file.
+with loops (a sustaining one), one for pianos (GM programs 0..7, loops or not: C, 2026-10-18, SF2 pianos on
+3.Bright Piano's zone sound much closer to the computer than on Shamisen's or Organ 10's), except the volume
+envelope, which is the SF2's (envelope.py); nothing of the vendor's is in an instrument file.
 
 custom_voices (a DSP patch) shows the new names: fill_names() writes them into its table.
 """
@@ -39,6 +40,16 @@ LOOP_HALF = 1024                  # a loop must start in the first half of a blo
 
 class BankError(Exception):
     pass
+
+
+TEMPLATES = ("template", "template_loop", "template_piano")
+
+
+def template_kind(inst, sb):
+    """which template zone of the soundbank line an instrument copies"""
+    if getattr(inst, "piano", False) and "template_piano" in sb:
+        return "template_piano"
+    return "template_loop" if any(z.loop for z in inst.zones) else "template"
 
 
 def voice_banks(dsp_words, fwmap):
@@ -160,7 +171,7 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
     banks = voice_banks(container.words(dsp_image), fwmap)
     d = bytes(bank)
     templates = {}
-    for kind in ("template", "template_loop"):               # one-shots, and instruments with loops
+    for kind in TEMPLATES:                                   # one-shots, instruments with loops, pianos
         tvoice, tzone = sb.get(kind, sb["template"])
         tinst = instrument_addr(d, *voice_to_bank_prog(banks, tvoice))
         tz = zones(d, tinst)[tzone]
@@ -209,8 +220,7 @@ def add(bank, dsp_image, fwmap, items, check_sha=True):
         n = len(inst.zones)
         if not 1 <= n <= 127:
             raise BankError("%s: %d zones (1..127)" % (inst.name, n))
-        tz, hdr, rec, ptr_offs, page_b, sb_off = templates[
-            "template_loop" if any(z.loop for z in inst.zones) else "template"]
+        tz, hdr, rec, ptr_offs, page_b, sb_off = templates[template_kind(inst, sb)]
         head = bytearray(hdr)
         head[2] = 0x80 | n
         zone_at = base + 4 + 6 * n + 2

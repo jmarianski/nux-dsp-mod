@@ -35,8 +35,15 @@ class Zone:
 
 
 class Instrument:
-    def __init__(self, name, zones, info=None):
+    """program, bank: the SF2 preset's (GM program 0..7 in bank 0 = a piano: soundbank.py's piano template),
+    None when not from a SoundFont preset."""
+    def __init__(self, name, zones, info=None, program=None, bank=None):
         self.name, self.zones, self.info = name, zones, dict(info or {})
+        self.program, self.bank = program, bank
+
+    @property
+    def piano(self):
+        return self.bank == 0 and self.program is not None and self.program < 8
 
     @property
     def size(self):
@@ -152,7 +159,7 @@ class SoundFont:
                 out[-1].hi = k
             else:
                 out.append(Zone(k, k, z.root, z.cents, z.rate, z.pcm, z.loop, z.key, z.env))
-        return Instrument(name, out, self.info)
+        return Instrument(name, out, self.info, self.phdr[preset][1], self.phdr[preset][2])
 
     def _sample(self, iz):
         sid = iz[GEN_SAMPLE]
