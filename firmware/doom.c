@@ -19,7 +19,7 @@ void trace(unsigned value);
 /* MUSIC_SOURCE: inserted by ray.py / doom.py, shared by both engines. */
 
 int px, py, pz, pa, eye, cs, sn;
-int view_x, view_y, render_context, render_height[8];
+int view_x, view_y, view_a, render_context, render_height[8];
 unsigned render_state, render_seg, render_last, render_end;
 int render_actor, render_row, render_kind, render_pass, render_previous, render_previous_i;
 unsigned logic_epoch, callback_stage;
@@ -113,9 +113,8 @@ void view_vertex(unsigned v)
 int x1, z1, x2, z2, sx1, sx2, s1, s2;
 int ff, fc, fl, bf, bc, corner;
 unsigned back_sector;
-int tex_u1, tex_u2, tex_top, tex_width, tex_height;
-unsigned tex_base, tex_runs[8];
-int tex_on, tex_count, tex_scale, tex_fill;
+int tex_u1, tex_u2, tex_top, tex_width;
+unsigned tex_base, tex_col[8], thr[4], front_flats;
 unsigned middle_material, upper_material, lower_material;
 /* A descriptor is valid only for this segment's clipped endpoints and sector heights. */
 unsigned cached_material;
@@ -129,8 +128,11 @@ void seg_data(unsigned k)
     view_vertex(v1); x1 = vx; z1 = vz;
     view_vertex(v2); x2 = vx; z2 = vz;
     read_sector(front); ff = buf[0]; fc = buf[1]; fl = buf[2];
+    readmap(12, FLATS_AT + front, 1); front_flats = buf[0];
     if (back_sector != 0xffff) {
         read_sector(back_sector); bf = buf[0]; bc = buf[1];
+        readmap(12, FLATS_AT + back_sector, 1);
+        if (front_flats & buf[0] & 256) fc = bc;  /* sky to sky: no upper wall, the sky reaches down (vanilla) */
     }
     middle_material = upper_material = lower_material = 0;
     cached_material = 0;
@@ -167,10 +169,13 @@ int screen_y(int h, int s)
     return 32 - clamp(q, -1000, 1000);
 }
 
-int shade(int light, unsigned s)
+/* Sector light and wall scale -> 0..31, 16 drawing a gray as stored (tools/walltex.py light_factor). */
+int light_factor(int light, unsigned s)
 {
-    int b = ((light - 128) >> 4) + ((s >> 9) > 8 ? 8 : (s >> 9));
-    return b >= 10 ? 3 : b >= 6 ? 2 : b >= 3 ? 1 : 0;
+    int level, dark;
+    level = s >> 8; if (level > 47) level = 47;
+    dark = clamp((15 - (light >> 4)) * 8 - level, 0, 63);
+    return (GAIN * (64 - dark)) >> 6;
 }
 
 unsigned span(int lo, int hi)
@@ -180,29 +185,33 @@ unsigned span(int lo, int hi)
     return (255 << lo) & (255 >> (8 - hi));
 }
 
-int col, top, bot, sh, edge;
-void wall_page(int p, int a, int b, int lo, int hi)
+int col, top, bot, edge;
+
+/* Rows lo..hi-1 of the column in one gray: its Bayer pattern is the same every 4 rows. */
+void tone(int lo, int hi, unsigned g)
 {
     unsigned bits;
-    bits = 0;
-    if (tex_on) {
-        if (tex_fill && !(col & 1)) bits = span(lo - p * 8, hi - p * 8) & 0x55;
-    }
-    else if (sh == 3 || (sh == 2 && (col & 3)) || (sh == 1 && !(col & 1)) || (sh == 0 && !(col & 3)))
-        bits = span(lo - p * 8, hi - p * 8);
-    if (a >= lo && a < hi && (a >> 3) == p) bits |= 1 << (a & 7);
-    if (b - 1 >= lo && b - 1 < hi && ((b - 1) >> 3) == p) bits |= 1 << ((b - 1) & 7);
-    framebuffer[p * 128 + col] |= bits;
+    int p;
+    if (lo >= hi) return;
+    work += 2 + ((hi - lo) >> 3);
+    bits = (g >= thr[0]) | (g >= thr[1]) << 1 | (g >= thr[2]) << 2 | (g >= thr[3]) << 3;
+    bits = bits | bits << 4;
+    for (p = lo >> 3; p <= (hi - 1) >> 3; p++) framebuffer[p * 128 + col] |= bits & span(lo - p * 8, hi - p * 8);
 }
 
-void wall(int a, int b)
+/* Rows lo..hi-1 of the sky: pre-dithered, its row 16 + y on screen row y, turning with the view. */
+void sky(int lo, int hi)
 {
-    int lo, hi, p;
-    if (edge) return;
-    lo = a > top ? a : top; hi = b < bot ? b : bot;
+    unsigned b;
+    int p;
     if (lo >= hi) return;
-    work += (hi - lo) >> 2;
-    for (p = lo >> 3; p <= (hi - 1) >> 3; p++) wall_page(p, a, b, lo, hi);
+    work += 1 + ((hi - lo) >> 3);
+    readmap(12, SKYANG_AT + col, 1);
+    readmap(12, SKY_AT + (((view_a * 4 + buf[0]) & 255) >> 1) * 4, 4);
+    for (p = lo >> 3; p <= (hi - 1) >> 3; p++) {
+        b = (p + 2) & 7;
+        framebuffer[p * 128 + col] |= (buf[b >> 1] >> ((b & 1) << 3)) & span(lo - p * 8, hi - p * 8);
+    }
 }
 
 void load_material(unsigned material)
@@ -212,60 +221,34 @@ void load_material(unsigned material)
     tex_base = buf[0]; u = buf[1]; du = (int)buf[2] - u;
     tex_u1 = clip_u1 ? u + muldiv(du, clip_u1, 16384) : u;               /* clipped by the near plane: rare */
     tex_u2 = clip_u2 != 16384 ? u + muldiv(du, clip_u2, 16384) : u + du;
-    tex_width = buf[4] & 127; tex_height = buf[4] >> 8; tex_fill = buf[4] & 128; anchor = buf[5];
-    tex_top = (anchor == 1 ? bc + tex_height * 4 : anchor == 2 ? ff + tex_height * 4 : anchor == 3 ? bf : fc) + (int)buf[3];
+    tex_width = buf[4]; anchor = buf[5];
+    tex_top = (anchor == 1 ? bc : anchor == 2 ? ff : anchor == 3 ? bf : fc) + (int)buf[3];
     cached_material = material;
 }
 
-void material_column(unsigned material, int s)
-{
-    int u, n;
-    work++;
-    if (cached_material != material) { load_material(material); work += 2; }
-    tex_on = 1; tex_scale = s;
-    if (s < 1024) return;                       /* far: texture_runs draws no detail, the fill needs no column */
-    u = tex_u1 + muldiv(tex_u2 - tex_u1, muldiv(col - sx1, s2, sx2 - sx1), s);
-    n = tex_base + ((u >> 2) & tex_width) * 9;
-    readmap(12, n, 6); tex_count = buf[0];
-    for (u = 0; u < 5; u++) tex_runs[u] = buf[u + 1];
-    if (tex_count > 5) {
-        readmap(12, n + 6, 3);
-        for (u = 0; u < 3; u++) tex_runs[u + 5] = buf[u];
-    }
-    tex_on = 1; tex_scale = s;
-}
+/* Rows lo..hi-1 of texture column tex_col: 1/256 texel steps of z a row, a gray drawn where it is >= thr[y & 3]
+ * (firmware/mathasm.py; the C it replaced: git history). The locals only give the asm room to save registers. */
+void texels(int lo, int hi, unsigned v, unsigned z) { unsigned s0, s2, s3; /* ASM texels */ }
 
-void texture_run(int tile, int run, int lo, int hi)
-{
-    int a, b, p;
-    work++;
-    a = screen_y(tile - (tex_runs[run] & 255) * 4, tex_scale);
-    b = screen_y(tile - (tex_runs[run] >> 8) * 4, tex_scale);
-    if (a < lo) a = lo; if (b > hi) b = hi;
-    if (a >= b) return;
-    for (p = a >> 3; p <= (b - 1) >> 3; p++) framebuffer[p * 128 + col] |= span(a - p * 8, b - p * 8);
-}
-
-void texture_runs(int a, int b)
-{
-    int lo, hi, tile, v, n, run;
-    lo = a > top ? a : top; hi = b < bot ? b : bot;
-    if (lo >= hi || tex_scale < 1024) return; /* subpixel detail: keep a calm base tone */
-    v = tex_top - eye + muldiv(lo - 32, 8192, tex_scale);
-    tile = tex_top - (v >> 7) * 128;
-    for (n = 0; n < 6 && screen_y(tile, tex_scale) < hi; n++) {
-        for (run = 0; run < tex_count; run++) texture_run(tile, run, lo, hi);
-        tile -= 128;
-    }
-}
-
+/* Wall rows a..b-1 within the window: lit top and bottom rows, a dark line at a corner, the texture between. */
 void material_wall(int a, int b, unsigned material, int s)
 {
-    if (a >= bot || b <= top || edge) return;
-    if (material) material_column(material, s);
-    wall(a, b);
-    if (material) texture_runs(a, b);
-    tex_on = 0;
+    int lo, hi, u;
+    unsigned z;
+    lo = a > top ? a : top; hi = b < bot ? b : bot;
+    if (lo >= hi || edge) return;
+    if (lo == a) framebuffer[(a >> 3) * 128 + col] |= 1 << (a & 7);
+    if (hi == b) framebuffer[((b - 1) >> 3) * 128 + col] |= 1 << ((b - 1) & 7);
+    if (!material) { tone(lo, hi, 8); return; }
+    work += 3 + ((hi - lo) >> 1) + ((hi - lo) >> 3);
+    if (cached_material != material) { load_material(material); work += 2; }
+    u = tex_u1 + muldiv(tex_u2 - tex_u1, muldiv(col - sx1, s2, sx2 - sx1), s);
+    fr_lo = map_lo[12] + tex_base + ((u >> 2) & tex_width) * 8;
+    fr_hi = map_hi[12] + (fr_lo < map_lo[12]);
+    fr_dst = (unsigned)tex_col; fr_n = 8; fr_mode = 0;
+    farcopy();
+    z = muldiv(8192, 64, s);                    /* map units a row * 64: 1/256 texel a row */
+    texels(lo, hi, (tex_top - eye) * 64 + (lo - 32) * z, z);
 }
 
 void draw_column(void)
@@ -276,9 +259,13 @@ void draw_column(void)
     if (top >= bot) return;
     s = s1 + muldiv(s2 - s1, col - sx1, sx2 - sx1);
     yc = screen_y(fc, s); yf = screen_y(ff, s);
-    work += 2;
-    sh = shade(fl, s); edge = corner && col == sx1;
-    tex_on = 0;
+    work += 6;
+    edge = corner && col == sx1;
+    readmap(12, THR_AT + ((light_factor(fl, s) << 2) + (col & 3)) * 4, 4);
+    thr[0] = buf[0]; thr[1] = buf[1]; thr[2] = buf[2]; thr[3] = buf[3];
+    if (front_flats & 256) sky(top, yc < bot ? yc : bot);
+    else tone(top, yc < bot ? yc : bot, (front_flats >> 4) & 15);
+    tone(yf > top ? yf : top, bot, front_flats & 15);
     if (back_sector == 0xffff) {
         material_wall(yc, yf, middle_material, s); windows[col] = 0x8000 | s; open_columns--; return;
     }
@@ -310,7 +297,7 @@ void subsec(unsigned n)
 void frame_begin(void)
 {
     unsigned k;
-    view_x = px; view_y = py;
+    view_x = px; view_y = py; view_a = pa;
     cs = isin(pa + 64); sn = isin(pa);
     eye = pz + 41;
     for (k = 0; k < 8; k++) render_height[k] = dynamic_height[k];
@@ -396,7 +383,7 @@ void bsp_work(void)
 /* A tick's share of the frame, in work units of ~64 instructions: the asm arithmetic and the map reads count
  * themselves, the rest is a base price per operation (calibrated on E1M1 with tools/profile.cjs). The piano keeps
  * up with ~130k instructions a tick (the raycaster); beyond that the firmware falls behind on keys and the LCD. */
-#define FRAME_BUDGET 1150
+#define FRAME_BUDGET 1300
 
 unsigned tick_start;                            /* work when this tick began: logic and render share the budget */
 
