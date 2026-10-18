@@ -55,13 +55,13 @@ def linked_program(image, demo, result, place, target, summary, silent_audio=Fal
     return prog
 
 
-def build(firmware, out, silent_audio=False):
+def build(firmware, out, silent_audio=False, extra=()):
     m = fwmap.load()
     r = doom.compile_doom(silent_audio=silent_audio)
     ram = budget.check_ram(r.ram_used)
     text = doom.patch(silent_audio=silent_audio)
     demo = patcher.parse(text, str(out / "doom_demo.patch"))
-    patches = [patcher.load(name, m) for name in m.defaults] + [demo]
+    patches = [patcher.load(name, m) for name in list(m.defaults) + list(extra)] + [demo]
     canonical = patcher.canonical_layout(m)
     layout = {key: canonical[key] for p in patches for key, _lines, _n in patcher.code_blocks(p) if key in canonical}
     regions = patcher.allocate(patches, m, layout)
@@ -89,6 +89,8 @@ def build(firmware, out, silent_audio=False):
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--firmware", type=Path, default=ROOT.parent / "NEK100_DSP_V1.0.7.bin")
+    p.add_argument("--extra", nargs="*", default=["battery_percent"],
+                   help="optional nek100-mod patches to add (default: battery_percent; --extra alone: none)")
     p.add_argument("--silent", action="store_true", help="no music and no sound effects: the game sends nothing to the synth")
     args = p.parse_args()
-    build(args.firmware, ROOT / "build", silent_audio=args.silent)
+    build(args.firmware, ROOT / "build", silent_audio=args.silent, extra=args.extra)
