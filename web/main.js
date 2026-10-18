@@ -190,7 +190,8 @@ $("navigation").ontoggle = () => { if (navigation && m && $("navigation").open) 
 
 function restartMusic() {
   if (!m || paused || loading) return;
-  m.call(prog.entry.audio_restart === undefined ? "mu_restart" : "audio_restart");
+  const title = prog.entry.audio_intro !== undefined && m.rd(prog.symbols.game_mode) >= 3;
+  m.call(title ? "audio_intro" : prog.entry.audio_restart === undefined ? "mu_restart" : "audio_restart");
   m.wr(prog.symbols.mu_last, m.rd(prog.mmio.clock_lo));
   m.wr(prog.symbols.mu_us, 0);
   musicNeedsRestart = false;

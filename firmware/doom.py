@@ -46,6 +46,7 @@ SFX_DRUMS = False                               # builddemo --sfx drums: effects
 
 
 def compile_doom(m=None, silent_audio=False, far=None, sfx_drums=None):
+    import ray
     m = m or doommap.Map()
     # The fixed explicit stack must cover the deepest front-to-back BSP path.
     def depth(n):
@@ -63,7 +64,7 @@ def compile_doom(m=None, silent_audio=False, far=None, sfx_drums=None):
            + f"#define DEATH {sprites.DEATH}\n#define PICKUP_BASE {sprites.PICKUP_BASE}\n"
            + f"#define BALL_BASE {sprites.BALL_BASE}\n#define DYN_SLOTS {max(1, len(getattr(m, 'dynamics', [])))}\n"
            + f"#define SCREENS_AT {SCREENS_AT}\n#define MENU_X {screens.MENU_X}\n#define MENU_Y {screens.MENU_Y}\n"
-           + f"#define MENU_STEP {screens.MENU_STEP}\n"
+           + f"#define MENU_STEP {screens.MENU_STEP}\n#define INTRO_OFF {ray.intro_off()}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"
            + f"#define BLOCK_X {bx}\n#define BLOCK_Y {by}\n#define BLOCK_W {bw}\n#define BLOCK_H {bh}\n"
            + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define SERGEANT_BASE {sprites.SERGEANT_BASE}\n"

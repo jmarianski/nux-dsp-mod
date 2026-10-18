@@ -137,9 +137,9 @@ def build_doom(m=None, silent_audio=False):
     music_at = max(FAR_MUSIC, addr)             # a larger map's tables push the music up
     far.insert(0, {"addr": music_at, "words": music()})
     init[:0] = [[s["mu_shi"], music_at >> 16], [s["mu_slo"], music_at & 0xffff]]
-    wanted = ["__cc_init", "rc_start", "rc_tick", "rc_key", "frame", "mu_stop", "mu_restart", "umul32", "smul32", "fmul", "muldiv",
+    wanted = ["__cc_init", "rc_start", "rc_tick", "rc_key", "frame", "mu_stop", "mu_restart", "mu_clock", "umul32", "smul32", "fmul", "muldiv",
               "can_move", "move_player", "steer", "sector_at", "game_tick", "use_game", "fire_game", "ray_clear",
-              "dynamic_tick", "pickup_tick", "damage", "game_init", "read_sector", "audio_restart", "ray_fraction",
+              "dynamic_tick", "pickup_tick", "damage", "game_init", "read_sector", "audio_restart", "audio_intro", "ray_fraction",
               "frame_begin", "frame_work", "start_game", "screen_draw", "slot_tick", "screen_y", "bsp_work", "pickup_draw_work", "enemy_draw_work", "draw_overlay"]
     result = dict(program(r, wanted), name="doom", label="Hangar · demo", far=far, fr_init=init)
     # Engineering limits on decoded C/P16 work, including startup. Host natives

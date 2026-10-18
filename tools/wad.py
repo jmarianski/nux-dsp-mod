@@ -4,12 +4,13 @@
 Default: Freedoom Phase 1 (wad/freedoom1.wad, BSD licensed: https://freedoom.github.io), so builds can be shared;
 PIANODOOM_WAD=path picks another one (e.g. your shareware DOOM1.WAD, whose builds stay private).
 The map is our own, maps/hangar.wad (tools/makemap.py); PIANODOOM_MAP=path reads E1M1 from another WAD.
-The build tools take the same as --wad / --map (use()).
+The level's song is SONG (PIANODOOM_MUSIC=lump picks another), the title plays INTRO once.
+The build tools take the same as --wad / --map / --music (use()).
 
 Music stream: two words per event, played by the tick (10 ms):
     w0 = wait << 8 | status    wait = ticks after this event (0..255), status = MIDI status | channel (0: no event)
     w1 = d1 << 8 | d2          as synth_send takes it
-and a final w0 = 0x00ff: start over.
+and a final w0 = 0x00ff: start over, or 0x00fe: stop (a song played once).
 """
 import os
 import struct
@@ -17,6 +18,8 @@ import struct
 HERE = os.path.dirname(os.path.abspath(__file__))
 WAD = os.environ.get("PIANODOOM_WAD") or os.path.join(HERE, "..", "wad", "freedoom1.wad")
 MAP = os.environ.get("PIANODOOM_MAP") or os.path.join(HERE, "..", "maps", "hangar.wad")
+SONG = os.environ.get("PIANODOOM_MUSIC") or "D_E4M8"
+INTRO = "D_INTRO"
 
 MUS_CTRL = {1: 0, 2: 1, 3: 7, 4: 10, 5: 11, 6: 91, 7: 93, 8: 64, 9: 67}   # MUS controller -> MIDI CC (0 = program)
 FREE = [4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15]  # melodic channels: 0..3 are the keyboard's parts, 9 percussion
@@ -24,9 +27,12 @@ MIDI_FREE = [4, 5, 6, 10, 11, 12, 13, 14, 15]   # a MIDI song's: also clear of t
 MUS_SYS = {10: 120, 11: 123, 12: 126, 13: 127, 14: 121}
 
 
-def use(wad=None, map=None):
-    """Pick the WAD and the map's WAD for this run and the commands it starts (PIANODOOM_WAD / PIANODOOM_MAP)."""
-    global WAD, MAP
+def use(wad=None, map=None, music=None):
+    """Pick the WAD, the map's WAD and the level's song for this run and the commands it starts (PIANODOOM_WAD /
+    PIANODOOM_MAP / PIANODOOM_MUSIC)."""
+    global WAD, MAP, SONG
+    if music:
+        SONG = os.environ["PIANODOOM_MUSIC"] = music.upper() if music.upper().startswith("D_") else "D_" + music.upper()
     if wad:
         WAD = os.environ["PIANODOOM_WAD"] = os.path.abspath(wad)
     if map:
@@ -161,9 +167,15 @@ def mus_events(mus):
             t += d
 
 
-def mus_stream(mus, hz=100):
-    """MUS -> the piano's music stream (words)."""
-    ev = mus_events(mus)
+def mus_stream(mus, hz=100, once=False):
+    """MUS -> the piano's music stream (words); once: it stops at the end instead of starting over.
+    A melodic program change goes out after bank select 0 (GM): the songs send none, and a channel left in another
+    bank plays that bank's voice (bank 18's program 34 is FX Laugh where E4M8 wants the picked bass)."""
+    ev = []
+    for e in mus_events(mus):
+        if e[1] & 0xf0 == 0xc0 and e[1] & 15 != 9:
+            ev += [(e[0], 0xb0 | e[1] & 15, 0, 0), (e[0], 0xb0 | e[1] & 15, 32, 0)]
+        ev.append(e)
     words = []
     for k, (t, st, d1, d2) in enumerate(ev):
         now = t * hz // 140
@@ -174,12 +186,28 @@ def mus_stream(mus, hz=100):
         while wait:
             words += [min(wait, 255) << 8, 0]
             wait -= min(wait, 255)
-    return words + [0x00ff, 0]
+    return words + [0x00fe if once else 0x00ff, 0]
+
+
+def songs():
+    """-> (the level's song looped, then the title's played once) as one stream, and where the second starts."""
+    w = Wad()
+    try:
+        level = mus_stream(w.lump(SONG))
+    except KeyError:
+        if os.environ.get("PIANODOOM_MUSIC"):
+            raise
+        level = mus_stream(w.lump("D_E1M1"))   # the default's E4M8: not in the shareware DOOM1.WAD
+    try:
+        intro = mus_stream(w.lump(INTRO), once=True)
+    except KeyError:
+        intro = [0x00fe, 0]
+    return level + intro, len(level)
 
 
 if __name__ == "__main__":
     w = Wad()
-    for name in ("D_E1M1", "D_INTRO"):
+    for name in (SONG, INTRO):
         try:
             s = mus_stream(w.lump(name))
         except KeyError:

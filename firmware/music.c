@@ -1,4 +1,5 @@
-/* Music: the stream of tools/wad.py (two words an event: wait << 8 | status, d1 << 8 | d2; 0x00ff = again) */
+/* Music: the stream of tools/wad.py (two words an event: wait << 8 | status, d1 << 8 | d2; 0x00ff = again,
+ * 0x00fe = stop). The level's song starts at mu_shi:mu_slo, the title's INTRO_OFF words after it. */
 unsigned mu_shi, mu_slo, mu_hi, mu_lo, mu_wait;
 unsigned mbuf[16];
 int mu_i, mu_ok;
@@ -9,6 +10,7 @@ unsigned mu_dv;                                 /* VOL the channels were last sc
 
 #if SILENT_AUDIO
 void mu_restart(void) { mu_ok = 0; }
+void mu_intro(void) {}
 void mu_clock(void) {}
 void mu_stop(void) { mu_ok = 0; }
 #else
@@ -47,6 +49,12 @@ void mu_restart(void)
     mu_sum = mu_cnt = 0;
 }
 
+void mu_intro(void)                             /* after mu_restart: the title's song instead */
+{
+    mu_lo += INTRO_OFF;
+    if (mu_lo < INTRO_OFF) mu_hi++;
+}
+
 
 /* Channel c's volume under VOL: the music at 40% of what the song asks (the effects must be heard over it), the
  * effects' channel 8 at full. */
@@ -75,6 +83,10 @@ void mu_tick(void)
         st = w0 & 255;
         if (st == 255) {
             mu_restart();
+            return;
+        }
+        if (st == 254) {                        /* played once: silent until the next start */
+            mu_ok = 0;
             return;
         }
         if ((st & 0xf0) == 0xb0 && (w1 >> 8) == 7) {    /* channel volume: kept, sent scaled by VOL */

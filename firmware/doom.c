@@ -607,7 +607,7 @@ void rc_start(void)
     px = START_X; py = START_Y; pa = START_A;
     game_init();
     read_sector(sector_at(px, py)); pz = buf[0];
-    audio_restart();
+    audio_intro();
     ticks = nframe = logic_epoch = callback_stage = callback_count = 0;
     skill = 2; show_screen(3);                  /* the title; start_game begins the level */
 }

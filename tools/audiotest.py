@@ -2,7 +2,7 @@
 """Sound tests from the PC, straight into the piano's synthesizer over USB MIDI (no flashing).
 
     audiotest.py drums            a kick / snare / hi-hat bar on channel 10 in a few setups, one after another
-    audiotest.py music [SONG]     a song (default D_E1M1) from the same stream the game plays, timed by the PC
+    audiotest.py music [SONG]     a song (default wad.SONG) from the same stream the game plays, timed by the PC
     audiotest.py off              all notes off on every channel
 
 Usage: uv run python tools/audiotest.py drums
@@ -52,8 +52,13 @@ def drums(out):
         time.sleep(1.0)
 
 
+QUIET = 0.2   # the song's channel volumes scaled down: the game plays at 40% of them at full VOL, this is half that
+
+
 def music(out, song):
     words = wad.mus_stream(wad.Wad().lump(song))
+    for ch in range(4, 16):                     # as music.c's mu_restart: MIDI's default 100, scaled
+        out.send(mido.Message("control_change", channel=ch, control=7, value=round(100 * QUIET)))
     t = time.time()
     print("playing", song, "- Ctrl+C stops", flush=True)
     i = 0
@@ -64,6 +69,8 @@ def music(out, song):
         if st == 255:
             i = 0
             continue
+        if st & 0xF0 == 0xB0 and w1 >> 8 == 7:
+            w1 = 0x0700 | round((w1 & 127) * QUIET)
         if st:
             out.send(mido.Message.from_bytes([st, w1 >> 8, w1 & 255][:2 if st & 0xE0 == 0xC0 else 3]))
         t += (w0 >> 8) / 100
@@ -85,7 +92,7 @@ if __name__ == "__main__":
             if what == "drums":
                 drums(out)
             elif what == "music":
-                music(out, sys.argv[2] if len(sys.argv) > 2 else "D_E1M1")
+                music(out, sys.argv[2] if len(sys.argv) > 2 else wad.SONG)
             off(out)
         except KeyboardInterrupt:
             off(out)

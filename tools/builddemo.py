@@ -97,8 +97,9 @@ if __name__ == "__main__":
     p.add_argument("--silent", action="store_true", help="no music and no sound effects: the game sends nothing to the synth")
     p.add_argument("--wad", help="textures, sprites, music (default: wad/freedoom1.wad; DOOM1.WAD builds stay private)")
     p.add_argument("--map", help="the WAD whose E1M1 is played (default: maps/hangar.wad), e.g. DOOM1.WAD for id's")
+    p.add_argument("--music", help="the level's song, a lump of the WAD (default: E4M8; E1M1 if the WAD has none)")
     args = p.parse_args()
-    wad.use(args.wad, args.map)
+    wad.use(args.wad, args.map, args.music)
     if not wad.shareable():
         print(f"note: {Path(wad.WAD).name} / {Path(wad.MAP).name} are not free: keep this build private")
     doom.SFX_DRUMS = args.sfx == "drums"
