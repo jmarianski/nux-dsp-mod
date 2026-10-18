@@ -28,7 +28,7 @@
 <body>
 <main>
   <h1>doom-piano: emulator P16</h1>
-  <div class="row"><label>Silnik <select id="engine"><option value="doom">Doom E1M1 (BSP)</option>
+  <div class="row"><label>Silnik <select id="engine"><option value="doom">Doom Hangar (BSP)</option>
     <option value="ray">Raycaster testowy</option></select></label><span id="status" role="status">Ładowanie…</span></div>
   <canvas id="lcd" width="128" height="64" tabindex="0" aria-label="Ekran pianina 128 na 64 piksele"></canvas>
   <div class="row">
@@ -39,7 +39,7 @@
   </div>
   <details id="navigation" hidden>
     <summary>Mapa: droga do pierwszego przeciwnika (M)</summary>
-    <canvas id="map" width="768" height="480" aria-label="Mapa E1M1 z graczem, drzwiami i przeciwnikami"></canvas>
+    <canvas id="map" width="768" height="480" aria-label="Mapa hangaru z graczem, drzwiami i przeciwnikami"></canvas>
     <p class="dim">Biała strzałka: Ty · czerwień: żywi przeciwnicy · niebieska linia: trasa od startu do pierwszego żołnierza.
       Żółte drzwi: podejdź przodem i naciśnij <kbd>F</kbd> / <kbd>D5</kbd>. Podgląd dostępny w symulatorze.</p>
   </details>
@@ -53,7 +53,7 @@
     (też <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>). Z pianina: B2 C3 C#3 D3 D#3 E3 F3, jak na urządzeniu.
     <kbd>Spacja</kbd> strzał, <kbd>F</kbd> drzwi / przycisk (podejdź blisko i stań przodem), <kbd>Shift</kbd> bieg, <kbd>M</kbd> mapa.
     <kbd>Enter</kbd> restart po śmierci lub wygranej, <kbd>R</kbd> przebudowa kodu i nowa gra.</p>
-  <p class="dim">Cel: dotrzyj do przycisku wyjścia w E1M1 i użyj <kbd>F</kbd>. HUD: H — zdrowie, A — amunicja, K — pokonani przeciwnicy.
+  <p class="dim">Cel: dotrzyj do przycisku wyjścia (zachodnia ściana ostatniej sali) i użyj <kbd>F</kbd>. HUD: H — zdrowie, A — amunicja, K — pokonani przeciwnicy.
     Pianino: C5 strzał, D5 użyj, E5 bieg, B0 restart. To uproszczone demo na poziomie łatwym: czterech przeciwników,
     pistolet i strzelba, apteczki, amunicja oraz bonusy.</p>
   <p class="dim">Dźwięk: „Włącz MIDI” → wybierz pianino jako wyjście. Muzyka gra przez jego syntezator po USB.

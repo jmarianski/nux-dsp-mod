@@ -22,8 +22,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 
 def sources():
-    pats = ["firmware/*.c", "firmware/*.py", "cc/*.py", "tools/webbuild.py", "tools/wad.py", "tools/doommap.py",
-            "tools/budget.py", "tools/walltex.py", "tools/playthrough.py", "wad/*.WAD",
+    pats = ["firmware/*.c", "firmware/*.py", "cc/*.py", "tools/*.py", "wad/*.WAD", "wad/*.wad", "maps/*.wad", "art/*.txt",
             "../nek100-mod/nuxdsp/*.py", "../nek100-mod/nuxdsp/*.toml"]
     return [p for pat in pats for p in glob.glob(os.path.join(ROOT, pat))]
 
@@ -48,10 +47,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     if stale(out):
                         import importlib
                         importlib.invalidate_caches()
-                        for name in ("nuxdsp.isa", "nuxdsp.asm", "nuxdsp.sim", "nuxdsp.fwmap", "p16cc", "wad",
-                                     "walltex", "doommap", "fbtest", "ray", "doom", "budget", "playthrough", "webbuild"):
-                            if name in sys.modules:
-                                importlib.reload(sys.modules[name])
+                        # Every module of this repo and the sibling nuxdsp is imported afresh, in dependency order.
+                        ours = (ROOT, os.path.join(ROOT, "..", "nek100-mod"))
+                        for name, mod in list(sys.modules.items()):
+                            f = os.path.abspath(getattr(mod, "__file__", None) or "")
+                            if any(f.startswith(os.path.abspath(r) + os.sep) for r in ours):
+                                del sys.modules[name]
                         import webbuild
                         webbuild.main(["--engine", engine, out])
             except Exception:

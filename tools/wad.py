@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""DOOM1.WAD (kept local in wad/, not in git): lumps, and MUS music as an event stream for the piano's synthesizer.
+"""The game's WAD: lumps, and MUS music as an event stream for the piano's synthesizer.
+
+Default: Freedoom Phase 1 (wad/freedoom1.wad, BSD licensed: https://freedoom.github.io), so builds can be shared;
+PIANODOOM_WAD=path picks another one (e.g. your shareware DOOM1.WAD, whose builds stay private).
+The map is our own, maps/hangar.wad (tools/makemap.py); PIANODOOM_MAP=path reads E1M1 from another WAD.
 
 Music stream: two words per event, played by the tick (10 ms):
     w0 = wait << 8 | status    wait = ticks after this event (0..255), status = MIDI status | channel (0: no event)
@@ -10,10 +14,12 @@ import os
 import struct
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-WAD = os.path.join(HERE, "..", "wad", "DOOM1.WAD")
+WAD = os.environ.get("PIANODOOM_WAD") or os.path.join(HERE, "..", "wad", "freedoom1.wad")
+MAP = os.environ.get("PIANODOOM_MAP") or os.path.join(HERE, "..", "maps", "hangar.wad")
 
 MUS_CTRL = {1: 0, 2: 1, 3: 7, 4: 10, 5: 11, 6: 91, 7: 93, 8: 64, 9: 67}   # MUS controller -> MIDI CC (0 = program)
 FREE = [4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15]  # melodic channels: 0..3 are the keyboard's parts, 9 percussion
+MIDI_FREE = [4, 5, 6, 10, 11, 12, 13, 14, 15]   # a MIDI song's: also clear of the effects (7) and the style's drums (8)
 MUS_SYS = {10: 120, 11: 123, 12: 126, 13: 127, 14: 121}
 
 
@@ -36,8 +42,66 @@ class Wad:
         raise KeyError(name)
 
 
+def midi_events(mid):
+    """Standard MIDI file (Freedoom's music) -> the same events as mus_events: the tracks merged over the tempo
+    map, the melodic channels in use moved onto MIDI_FREE in order (MIDI 9 stays percussion)."""
+    fmt, ntracks, division = struct.unpack(">HHH", mid[8:14])
+    assert not division & 0x8000, "SMPTE time"
+    p, raw = 8 + struct.unpack(">I", mid[4:8])[0], []
+    for track in range(ntracks):
+        assert mid[p:p + 4] == b"MTrk"
+        end = p + 8 + struct.unpack(">I", mid[p + 4:p + 8])[0]
+        p, tick, status = p + 8, 0, 0
+
+        def var():
+            nonlocal p
+            v = 0
+            while True:
+                b = mid[p]; p += 1
+                v = v << 7 | b & 127
+                if not b & 128:
+                    return v
+        while p < end:
+            tick += var()
+            if mid[p] & 128:
+                status = mid[p]; p += 1
+            if status == 0xff:
+                kind = mid[p]; p += 1
+                n = var()
+                if kind == 0x51:
+                    raw.append((tick, track, -1, int.from_bytes(mid[p:p + 3], "big"), 0))
+                p += n
+            elif status in (0xf0, 0xf7):
+                p += var()
+            else:
+                n = 1 if status & 0xf0 in (0xc0, 0xd0) else 2
+                d = mid[p:p + n]; p += n
+                raw.append((tick, track, status, d[0], d[1] if n == 2 else 0))
+        p = end
+    raw.sort(key=lambda e: (e[0], e[2] != -1))  # stable: each track keeps its order, tempo first at a tick
+    melodic = sorted({e[2] & 15 for e in raw if e[2] & 0xf0 == 0x90 and e[2] & 15 != 9})   # channels with notes
+    assert len(melodic) <= len(MIDI_FREE), "more melodic channels than the piano has free"
+    moved = {**dict(zip(melodic, MIDI_FREE)), 9: 9}
+    out, last, us, tempo = [], 0, 0, 500000
+    for tick, _track, st, d1, d2 in raw:
+        us += (tick - last) * tempo / division; last = tick
+        if st == -1:
+            tempo = d1; continue
+        kind, ch = st & 0xf0, st & 15
+        if ch not in moved:
+            continue
+        mch = moved[ch]
+        if kind == 0x90 and d2 == 0:
+            kind = 0x80
+        if kind in (0x80, 0x90, 0xe0, 0xc0) or kind == 0xb0 and d1 in set(MUS_CTRL.values()) | set(MUS_SYS.values()):
+            out.append((round(us * 140 / 1e6), kind | mch, d1, 0 if kind in (0x80, 0xc0) else d2))
+    return out
+
+
 def mus_events(mus):
     """MUS -> [(time in 1/140 s, status, d1, d2)]."""
+    if mus[:4] == b"MThd":
+        return midi_events(mus)
     assert mus[:4] == b"MUS\x1a"
     length, start = struct.unpack("<HH", mus[4:8])
     p, t, out = start, 0, []

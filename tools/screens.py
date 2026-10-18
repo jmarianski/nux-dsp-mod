@@ -1,7 +1,9 @@
 """Full-screen pictures for the title and the skill menu, as framebuffer images (1024 words: page * 128 + x, bit
 y & 7, a set bit inked, dark on the LCD).
 
-TITLE   TITLEPIC from the WAD, averaged down to 128 x 64 and Floyd-Steinberg dithered, "PRESS ANY KEY" below
+TITLE   the DOOM logo (art/doom_logo.txt), "UNOFFICIAL PORT" and "PRESS ANY KEY": Freedoom's TITLEPIC is too busy
+        for 128 x 56 one-bit pixels. Another WAD's TITLEPIC, averaged down and Floyd-Steinberg dithered, "PRESS ANY
+        KEY" below
 MENU    "NEW GAME", "CHOOSE SKILL LEVEL:" and Doom's five skills; the firmware draws the cursor (MENU_X, MENU_Y)
 """
 import os
@@ -72,7 +74,28 @@ def pack(img):
     return [sum(img[8 * p + b][x] << b for b in range(8)) for p in range(8) for x in range(W)]
 
 
+def centered(img, y, s, scale=1):
+    text(img, (W - text_width(s, scale)) // 2, y, s, scale)
+
+
+LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "art", "doom_logo.txt")
+
+
+def title_logo():
+    rows = [r.strip() for r in open(LOGO) if r.strip() and not r.startswith("#")]
+    img = [[0] * W for _ in range(H)]
+    left = (W - len(rows[0])) // 2
+    for y, row in enumerate(rows):
+        for x, v in enumerate(row):
+            img[1 + y][left + x] = v == "#"
+    centered(img, 1 + len(rows) + 3, "UNOFFICIAL PORT")
+    centered(img, 58, "PRESS ANY KEY")
+    return pack(img)
+
+
 def title(w):
+    if any(name == "FREEDOOM" for name, _, _ in w.lumps):
+        return title_logo()
     gfx = walltex.Graphics(w)
     d = w.lump("TITLEPIC")
     import struct

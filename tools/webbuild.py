@@ -139,7 +139,7 @@ def build_doom(m=None, silent_audio=False):
               "can_move", "move_player", "steer", "sector_at", "game_tick", "use_game", "fire_game", "ray_clear",
               "dynamic_tick", "pickup_tick", "damage", "game_init", "read_sector", "audio_restart", "ray_fraction",
               "frame_begin", "frame_work", "start_game", "screen_draw", "slot_tick", "screen_y", "bsp_work", "pickup_draw_work", "enemy_draw_work", "draw_overlay"]
-    result = dict(program(r, wanted), name="doom", label="E1M1 · demo", far=far, fr_init=init)
+    result = dict(program(r, wanted), name="doom", label="Hangar · demo", far=far, fr_init=init)
     # Engineering limits on decoded C/P16 work, including startup. Host natives
     # and device firmware/RTOS time still require a hardware measurement.
     # The earlier device-tested raycaster peaks at 134294 decoded instructions/tick.

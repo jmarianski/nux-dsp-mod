@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import builddemo
 import playthrough
+import wad
 from nuxdsp import container, fwmap, patcher
 
 
@@ -167,7 +168,7 @@ def main():
     (output / "tests.txt").write_text(test_log + "\n")
     inputs = [*sorted((ROOT / "firmware").glob("*.c")), ROOT / "firmware" / "doom.py",
               ROOT / "firmware" / "ray.py", ROOT / "cc" / "p16cc.py", *sorted((ROOT / "tools").glob("*.py")),
-              ROOT / "web" / "p16.js", ROOT / "wad" / "DOOM1.WAD"]
+              ROOT / "web" / "p16.js", Path(wad.WAD), Path(wad.MAP)]
     validation = {"built_utc": now.isoformat(), "device": target.device, "status": "silent-hardware-diagnostic",
                   "official_sha256": digest(official.read_bytes()), "default_settings": settings,
                   "container_checks": {}, "tests": test_log.splitlines()[-1], "linked_firmware_replay": result,

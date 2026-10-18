@@ -170,7 +170,7 @@ int ray_clear(int tx, int ty, int use)
     return 0;
 }
 
-/* Effects on channel 7 (GM gunshot, applause at the exit; the music uses 4, 5, 6, 9, the style's drums 8): the
+/* Effects on channel 7 (GM gunshot, applause at the exit; the music keeps off it and the style's drums 8): the
  * pitch picks the sound, played low it is slower and deeper (the fireball). */
 #if SFX_DRUMS
 /* builddemo --sfx drums (a soundbank without the gunshot): GM drums on channel 9 with the music's, one per sound. */
@@ -508,7 +508,7 @@ void game_init(void)
     for (i = 0; i < DYNAMIC_N; i++) { readmap(9, i * 4, 4); dynamic_height[i] = buf[1]; }
     game_visible = 1;
 #if !SILENT_AUDIO
-    synth(0x0cc7, 127 << 8);                   /* GM gunshot on an unused E1M1 channel */
+    synth(0x0cc7, 127 << 8);                   /* GM gunshot on a channel the music leaves free */
 #endif
 }
 
