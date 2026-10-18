@@ -10,6 +10,9 @@ LCD pixel, as it moves rigidly with the view angle.
 
 walltex table layout (16-bit words, offsets from its start):
     THR_AT     thresholds: [light 0..31][x & 3][y & 3] -> the smallest gray left bright (not inked) there
+    FADE_AT    per scale index s >> 5: darkness added by the distance (fade)
+    BAYER_AT   [y & 3][x & 3]: bayer_limit
+    FLATPAT_AT floors [shift + 16][page 4..6][x & 3], ceilings [shift + 16][page 0..3][x & 3]: inked rows (flat_ink)
     SKYANG_AT  per screen column: the sky's column offset (atan of the column, 1024 per turn)
     SKY_AT     sky: 128 columns x 4 words, 64 rows of bits (row 16 + y on screen row y)
     FLATS_AT   per sector: floor gray | ceiling gray << 4 | 256 for a sky ceiling
@@ -27,10 +30,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 ROWS = 32                                       # texel rows a column: 128 map units
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 THR_AT, SKYANG_AT, SKY_AT = 0, 512, 640
-FLATS_AT = SKY_AT + 512
+FADE_N = 47 * 8 + 1                             # s >> 5 up to vanilla's brightest distance level
+FADE_AT = SKY_AT + 512
+BAYER_AT = FADE_AT + FADE_N
+FLATPAT_AT = BAYER_AT + 16                      # floor patterns [shift][page 4..6][x & 3], then ceilings [shift][page 0..3][x & 3]
+SHIFTS = 32                                     # shift -16..15 rows
+FLATS_AT = FLATPAT_AT + SHIFTS * (12 + 16)
 CONTRAST = 2.0                                  # local contrast boost over the 3x3 texel mean
 GAMMA = 0.6                                     # gray = 16 * (luminance / 255) ** GAMMA, before the contrast
 GAIN = 25                                       # light factor at full brightness: a 1-bit LCD looks darker
+FOG_NEAR, FOG_FAR = 256, 1536                   # distance fog: none before FOG_NEAR, black at FOG_FAR (the far plane)
 
 
 def threshold(light, x, y):
@@ -40,13 +49,61 @@ def threshold(light, x, y):
     return t // light + 1 if light else 16
 
 
-def light_factor(light, s):
-    """Sector light 0..255 and wall scale s (2^19 / z) -> 0..31, 16 drawing the gray as stored. Vanilla's colormap
-    choice: 4 maps darker for each light step below 15, half a map brighter for each scale unit (s / 256 here)."""
-    level = min(s >> 8, 47)
-    dark = (15 - (light >> 4)) * 8 - level      # in half colormaps
+def fade(idx):
+    """Darkness added at scale s = 32 * idx (z = 16384 / idx), in half colormaps: vanilla's half a map brighter for
+    each s / 256, and a linear fog from FOG_NEAR to FOG_FAR on top, so depth reads even in bright rooms."""
+    z = 16384 / idx if idx else 1e9
+    fog = 64 * (z - FOG_NEAR) / (FOG_FAR - FOG_NEAR)
+    return int(max(0, min(64, fog))) - min(idx >> 3, 47)
+
+
+def light_at(light, idx):
+    """Sector light 0..255 at scale index idx (s >> 5) -> 0..31, 16 drawing the gray as stored. Vanilla's colormap
+    choice: 4 maps darker for each light step below 15; then the distance (fade)."""
+    dark = (15 - (light >> 4)) * 8 + FADE[min(idx, FADE_N - 1)]
     dark = 0 if dark < 0 else 63 if dark > 63 else dark
     return GAIN * (64 - dark) >> 6
+
+
+def light_factor(light, s):
+    """Sector light and wall scale s (2^19 / z) -> 0..31."""
+    return light_at(light, s >> 5)
+
+
+FLOOR_REF, CEIL_REF = 41, 64                    # eye distances drawn unshifted
+
+
+def flat_level(k):
+    """Floors and ceilings are a fixed screen-space gradient, k rows from the horizon: the share of the 16 Bayer
+    cells left bright: all ink at the horizon (far), all bright at the screen's edge (near), linear in k as 1 / z."""
+    return 0 if k < 0 else min(16, k * 16 // 22)
+
+
+def flat_shift(dh, light, ceiling):
+    """The gradient's shift for a flat dh units from the eye: nearer (a stair up, a low ceiling) is lighter, as is a
+    brighter sector."""
+    t = ((CEIL_REF if ceiling else FLOOR_REF) - dh) // 4 + (light >> 5) - 5
+    return max(-16, min(15, t))
+
+
+def flat_ink(x, y, k, shift):
+    return BAYER[y & 3][x & 3] >= flat_level(k + shift)
+
+
+def bayer_limit(x, y):
+    """Gray g under light L is bright at (x, y) when g * L > this (threshold, without the division)."""
+    return BAYER[y & 3][x & 3] * 16 + 8
+
+
+FADE = [None] * FADE_N
+
+
+def set_fade():
+    """Recomputes FADE after FOG_NEAR, FOG_FAR changed."""
+    FADE[:] = [fade(i) for i in range(FADE_N)]
+
+
+set_fade()
 
 
 class Graphics:
@@ -179,6 +236,14 @@ def pack(m):
     for c in range(128):
         col = [m.sky[r][c] for r in range(64)]
         words += [sum(col[16 * k + j] << j for j in range(16)) for k in range(4)]
+    words += [v & 0xffff for v in FADE]
+    words += [bayer_limit(x, y) for y in range(4) for x in range(4)]
+    for ceiling, pages in ((False, range(4, 7)), (True, range(4))):
+        for shift in range(-16, 16):
+            for p in pages:
+                for x in range(4):
+                    words.append(sum(flat_ink(x, y, 31 - y if ceiling else y - 32, shift) << (y & 7)
+                                     for y in range(8 * p, 8 * p + 8)))
     assert len(words) == FLATS_AT
     words += m.flat_grays
     seg_at = len(words)

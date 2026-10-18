@@ -84,8 +84,8 @@ def test_bsp_pixels_match_reference(compiled, index, pos):
     import doommap
     out, _ = compiled
     fb = doommap.Renderer(doommap.Map()).frame(*pos)
-    packed = [sum(fb[p * 8 + bit][x] << bit for bit in range(8)) for p in range(8) for x in range(128)]
-    diff = [i for i, (a, b) in enumerate(zip(packed, out["frames"][index]["fb"])) if a != b]
+    packed = [sum(fb[p * 8 + bit][x] << bit for bit in range(8)) for p in range(7) for x in range(128)]
+    diff = [i for i, (a, b) in enumerate(zip(packed, out["frames"][index]["fb"][:896])) if a != b]  # page 7: HUD
     assert not diff, (pos, len(diff), diff[:20])
 
 
@@ -110,5 +110,5 @@ def test_door_texture_at_partial_openings(tmp_path, height):
                             input=json.dumps({"math": [], "positions": [[*pos, 0]]}),
                             capture_output=True, text=True, check=True)
     fb = doommap.Renderer(m).frame(*pos)
-    expected = [sum(fb[p * 8 + bit][x] << bit for bit in range(8)) for p in range(8) for x in range(128)]
-    assert json.loads(result.stdout)["frames"][0]["fb"] == expected
+    expected = [sum(fb[p * 8 + bit][x] << bit for bit in range(8)) for p in range(7) for x in range(128)]
+    assert json.loads(result.stdout)["frames"][0]["fb"][:896] == expected     # page 7: the HUD's, scratch until then
