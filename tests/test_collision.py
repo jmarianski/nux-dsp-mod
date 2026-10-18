@@ -55,7 +55,8 @@ def room(step=0, ceiling=128, blocking=False, diagonal=False):
     m.root = 0
     m.subsecs = [(0, 0, 1), (0, 0, 0)]
     m.segs = []
-    m.wall_surfaces = {}; m.wall_textures = {}
+    m.wall_surfaces = {}; m.wall_textures = {}; m.texture_heights = {}
+    m.sky = [[0] * 128 for _ in range(64)]; m.flat_grays = [0, 0]
     m.sectors = [(0, 128, 160), (step, ceiling, 160)]
     m.things = [(-128, 0, 0, 1, 7)]
     m.collision = [(*m.vertices[i], *m.vertices[(i + 1) % 4], 0, 0xffff) for i in range(4)]

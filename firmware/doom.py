@@ -12,6 +12,7 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 sys.path.insert(0, str(HERE.parent / "cc"))
 import doommap
 import mathasm
+import walltex
 import p16cc
 
 RAM = (0x6448, 0x662a)
@@ -74,6 +75,8 @@ def compile_doom(m=None, silent_audio=False, far=None):
     x, y, a = m.start()
     bx, by, bw, bh = m.block_info
     pre = (f"#define SILENT_AUDIO {int(silent_audio)}\n#define FAR {far or doommap.FAR}\n"
+           + f"#define THR_AT {walltex.THR_AT}\n#define SKYANG_AT {walltex.SKYANG_AT}\n#define SKY_AT {walltex.SKY_AT}\n"
+           + f"#define FLATS_AT {walltex.FLATS_AT}\n#define GAIN {walltex.GAIN}\n"
            + f"#define MAP_ROOT {m.root}\n#define START_X {x}\n#define START_Y {y}\n#define START_A {a}\n"
            + f"#define BLOCK_X {bx}\n#define BLOCK_Y {by}\n#define BLOCK_W {bw}\n#define BLOCK_H {bh}\n"
            + f"#define ENEMY_N {len(getattr(m, 'enemies', []))}\n#define PICKUP_N {len(getattr(m, 'pickups', []))}\n"

@@ -140,7 +140,40 @@ def screen_y():
              ".syf:", "mov   r7, #32", "sub   r7, r4", "ret", ".syw:"])
 
 
-FUNCTIONS = {"umul32": umul32, "smul32": smul32, "fmul": fmul, "muldiv": muldiv, "screen_y": screen_y}
+def _tx_store():
+    """framebuffer[((y - 1) >> 3) * 128 + col] |= bits (r0 = y, r2 = bits); then bits = 0, mask = 1."""
+    return ["mov   r1, r0", "li    r7, #0xffff", "add   r1, r7", "shr   r1, 3", "shl   r1, 7", "ld    r6, [col]",
+            "add   r1, r6", "li    r6, #framebuffer", "add   r1, r6", "ld    r6, [r1+0]", "or    r6, r2",
+            "st    [r1+0], r6", "mov   r2, #0", "mov   r3, #1"]
+
+
+def texels():
+    """texels(lo, hi, v, z): rows lo..hi-1 of column col, texture row (v >> 8) & 31 of tex_col (4-bit grays, four
+    a word) drawn where it is >= thr[y & 3]; v += z a row. A page's bits are gathered, then or-ed in once.
+    r0 = y, r2 = bits, r3 = this row's bit, r4 = v, r5 = z; r0, r2, r3 are saved in the frame's locals."""
+    f = "texels__f"
+    out = [f"st    [{f}+4], r0", f"st    [{f}+5], r2", f"st    [{f}+6], r3",
+           f"ld    r0, [{f}+0]", f"ld    r4, [{f}+2]", f"ld    r5, [{f}+3]", "mov   r2, #0", "mov   r3, #1",
+           "mov   r6, r0", "and   r6, #7",
+           ".txm:", "cmp   r6, #0", "beq   .txl", "shl   r3, 1", "li    r7, #0xffff", "add   r6, r7", "jmp   .txm",
+           ".txl:", f"ld    r7, [{f}+1]", "cmp   r0, r7", "blt   .txp", "jmp   .txe"]
+    out += [".txp:", "mov   r6, r4", "shr   r6, 10", "and   r6, #7",            # the word: row >> 2
+            "li    r1, #tex_col", "add   r1, r6", "ld    r7, [r1+0]",
+            "mov   r6, r4", "shr   r6, 8", "and   r6, #3",                       # the nibble: row & 3
+            "cmp   r6, #2", "blt   .txa", "shr   r7, 8", ".txa:",
+            "and   r6, #1", "cmp   r6, #0", "beq   .txb", "shr   r7, 4", ".txb:", "and   r7, #15",
+            "mov   r6, r0", "and   r6, #3", "li    r1, #thr", "add   r1, r6", "ld    r6, [r1+0]",
+            "cmp   r7, r6", "blt   .txo", "or    r2, r3", ".txo:",
+            "shl   r3, 1", "add   r4, r5", "add   r0, #1",
+            "mov   r6, r0", "and   r6, #7", "cmp   r6, #0", "bne   .txc"] + _tx_store()
+    out += [".txc:", f"ld    r7, [{f}+1]", "cmp   r0, r7", "blt   .txp",
+            "cmp   r2, #0", "beq   .txe"] + _tx_store()
+    out += [".txe:", f"ld    r0, [{f}+4]", f"ld    r2, [{f}+5]", f"ld    r3, [{f}+6]", "ret"]
+    return out
+
+
+FUNCTIONS = {"umul32": umul32, "smul32": smul32, "fmul": fmul, "muldiv": muldiv, "screen_y": screen_y,
+             "texels": texels}
 
 
 def insert(src):

@@ -72,6 +72,8 @@ class Map:
         self.lines = rec("LINEDEFS", "<HHHHHHH")        # v1 v2 flags special tag right left
         self.sides = rec("SIDEDEFS", "<hh8s8s8sH")      # ... sector
         self.sectors = [(f, c, l) for f, c, _, _, l, _, _ in rec("SECTORS", "<hh8s8sHHH")]
+        self.sector_flats = [(fp.rstrip(b"\0").decode("ascii").upper(), cp.rstrip(b"\0").decode("ascii").upper())
+                             for _, _, fp, cp, _, _, _ in rec("SECTORS", "<hh8s8sHHH")]
         self.things = rec("THINGS", "<hhHHH")
         raw_nodes = rec("NODES", "<hhhh8hHH")
         self.nodes = [(x, y, dx, dy, r, l) for x, y, dx, dy, *_, r, l in raw_nodes]
@@ -90,15 +92,13 @@ class Map:
             for slot, field, anchor in (("middle", 4, 2 if ld[2] & 16 else 0),
                                         ("upper", 2, 0 if ld[2] & 8 else 1),
                                         ("lower", 3, 0 if ld[2] & 16 else 3)):
-                texture_name = sd[field].rstrip(b"\0").decode("ascii")
+                texture_name = sd[field].rstrip(b"\0").decode("ascii").upper()
                 if texture_name != "-" and (slot != "middle" or back == 0xffff):
-                    surfaces[slot] = (walltex.material(texture_name, ld[3] == 1 and slot == "upper"),
-                                      sd[0] + off, sd[0] + off + length, sd[1], anchor)
+                    surfaces[slot] = (texture_name, sd[0] + off, sd[0] + off + length, sd[1], anchor)
             if surfaces:
                 self.wall_surfaces[len(self.segs)] = surfaces
             self.segs.append((v1, v2, front, back, 1 if off == 0 else 0))
-        self.wall_textures = {name: walltex.image(name)
-                              for name in sorted({s[0] for surfaces in self.wall_surfaces.values() for s in surfaces.values()})}
+        walltex.load(self, w)
         self.subsecs = [(first, n, self.segs[first][2]) for n, first in rec("SSECTORS", "<HH")]
         self.root = len(self.nodes) - 1
         self.collision = []
@@ -245,27 +245,20 @@ def position_floor(m, x, y, z):
     return floor if floor - z <= 24 and ceiling - floor >= 56 and ceiling - z >= 56 else None
 
 
-def shade(light, s):
-    """-> 0..3: how bright a wall column is drawn (light level and distance)."""
-    b = (light - 128 >> 4) + min(s >> 9, 8)
-    return 3 if b >= 10 else 2 if b >= 6 else 1 if b >= 3 else 0
-
-
-PATTERN = [lambda x, y: x % 4 == 0, lambda x, y: x % 2 == 0, lambda x, y: x % 4 != 0,   # vertical stripes:
-           lambda x, y: True]                                                           # calmer than dots
-
-
 class Renderer:
+    """Front-to-back columns. Within a column's window: the front sector's ceiling (a gray, or the sky), its floor,
+    and the wall textures, every pixel a lit 4-bit gray against a Bayer threshold (walltex)."""
     def __init__(self, m, far=FAR):
         self.m = m
         self.far = far                          # segs wholly beyond it are not drawn
+        self.sky_angles = walltex.sky_angles()
 
     def frame(self, px, py, pa):
         m = self.m
         self.fb = [[0] * W for _ in range(H)]
         self.top, self.bot, self.open = [0] * W, [H] * W, W
         self.eye = m.sectors[find_sector(m, px, py)][0] + EYE
-        self.px, self.py, self.c, self.s = px, py, isin(pa + 64), isin(pa)
+        self.px, self.py, self.pa, self.c, self.s = px, py, pa, isin(pa + 64), isin(pa)
         stack = [m.root]
         self.visited = 0
         while stack and self.open:
@@ -306,74 +299,79 @@ class Renderer:
             return
         s1, s2 = muldiv(8192, 64, z1), muldiv(8192, 64, z2)
         ff, fc, fl = m.sectors[front]
+        flats = m.flat_grays[front]
         bf, bc = (m.sectors[back][:2] if back != 0xFFFF else (0, 0))
-        def texture_column(slot, x, s):
+        if back != 0xFFFF and flats & m.flat_grays[back] & 256:
+            fc = bc                             # sky to sky: no upper wall, the sky reaches down (vanilla)
+        y = lambda h, s: 32 - clamp(mulsh(h - self.eye, s, 13), -1000, 1000)
+
+        def texture(slot, x, s, a, b, thr):
+            lo, hi = max(a, self.top[x]), min(b, self.bot[x])
+            if lo >= hi:
+                return
+            if corner and x == sx1:
+                return                          # a dark line where walls meet
+            if lo == a:
+                self.fb[a][x] = 1               # lit top and bottom rows: the geometry reads on 1 bit
+            if hi == b:
+                self.fb[b - 1][x] = 1
             surface = surfaces.get(slot)
             if not surface:
-                return None
-            name, u1, u2, yo, anchor = surface
+                self.tone(x, lo, hi, 8, thr)
+                return
+            name, u1, u2, _yo, anchor = surface
             image = m.wall_textures[name]
             du = u2 - u1
             cu1, cu2 = u1 + muldiv(du, clip1, 16384), u1 + muldiv(du, clip2, 16384)
             u = cu1 + muldiv(cu2 - cu1, muldiv(x - sx1, s2, sx2 - sx1), s)
-            texture_top = (fc, bc + len(image) * 4, ff + len(image) * 4, bf)[anchor] + yo
-            return image, (u >> 2) & (len(image[0]) - 1), texture_top, s, name not in ("door", "switch", "exit")
-        y = lambda h, s: 32 - clamp(mulsh(h - self.eye, s, 13), -1000, 1000)
+            c = (u >> 2) & (len(image[0]) - 1)
+            tex_top = (fc, bc, ff, bf)[anchor] + walltex.top_offset(m, surface)
+            z = min(muldiv(8192, 64, s), 32767)  # map units per pixel * 64: 1/256 texel per pixel
+            v = ((tex_top - self.eye) * 64 + (lo - 32) * z) & 0xffff
+            for yy in range(lo, hi):
+                if image[(v >> 8) & 31][c] >= thr[yy & 3]:
+                    self.fb[yy][x] = 1
+                v = (v + z) & 0xffff
+
         for x in range(max(sx1, 0), min(sx2, W)):
             top, bot = self.top[x], self.bot[x]
             if top >= bot:
                 continue
             s = s1 + muldiv(s2 - s1, x - sx1, sx2 - sx1)
             yc, yf = y(fc, s), y(ff, s)
-            sh = shade(fl, s)
-            edge = corner and x == sx1
+            light = walltex.light_factor(fl, s)
+            thr = [walltex.threshold(light, x, j) for j in range(4)]
+            if flats & 256:
+                self.sky(x, top, min(yc, bot))
+            else:
+                self.tone(x, top, min(yc, bot), flats >> 4 & 15, thr)
+            self.tone(x, max(yf, top), bot, flats & 15, thr)
             if back == 0xFFFF:
-                self.wall(x, yc, yf, top, bot, sh, edge, texture_column("middle", x, s))
+                texture("middle", x, s, yc, yf, thr)
                 self.top[x], self.bot[x] = H, 0
                 self.open -= 1
                 continue
             ybc, ybf = y(bc, s), y(bf, s)
             if bc < fc:
-                self.wall(x, yc, ybc, top, bot, sh, edge, texture_column("upper", x, s))
+                texture("upper", x, s, yc, ybc, thr)
             if bf > ff:
-                self.wall(x, ybf, yf, top, bot, sh, edge, texture_column("lower", x, s))
+                texture("lower", x, s, ybf, yf, thr)
             nt, nb = max(top, yc, ybc), min(bot, yf, ybf)
             if bc <= bf or nt >= nb:
                 nt, nb = H, 0
                 self.open -= 1
             self.top[x], self.bot[x] = nt, nb
 
-    def wall(self, x, a, b, top, bot, sh, edge, texture=None):
-        """Rows a..b-1 of column x, within the window top..bot-1: edges solid, inside the pattern."""
-        lo, hi = max(a, top), min(b, bot)
-        if edge:
-            return                              # a black line where walls meet
-        if texture and lo < hi:
-            image, u, texture_top, s, fill = texture
-            for y in range(lo, hi):
-                if fill and not x & 1 and not y & 1:
-                    self.fb[y][x] = 1
-            if s >= 1024:
-                v = texture_top - self.eye + muldiv(lo - 32, 8192, s)
-                tile = texture_top - (v >> 7) * 128
-                project = lambda h: 32 - clamp(((h - self.eye) * s) >> 13, -1000, 1000)
-                for _ in range(6):
-                    if project(tile) >= hi:
-                        break
-                    row = 0
-                    while row < len(image):
-                        if not image[row][u]:
-                            row += 1; continue
-                        start = row
-                        while row < len(image) and image[row][u]:
-                            row += 1
-                        for y in range(max(lo, project(tile - start * 4)), min(hi, project(tile - row * 4))):
-                            self.fb[y][x] = 1
-                    tile -= 128
-        for y in range(lo, hi):
-            ink = False if texture else PATTERN[sh](x, y)
-            if y == a or y == b - 1 or ink:
-                self.fb[y][x] = 1
+    def tone(self, x, lo, hi, g, thr):
+        for yy in range(lo, hi):
+            if g >= thr[yy & 3]:
+                self.fb[yy][x] = 1
+
+    def sky(self, x, lo, hi):
+        u = ((self.pa * 4 + self.sky_angles[x]) & 255) >> 1
+        for yy in range(lo, hi):
+            if self.m.sky[(yy + 16) & 63][u]:
+                self.fb[yy][x] = 1
 
 
 def png(fb, path, scale=4):
