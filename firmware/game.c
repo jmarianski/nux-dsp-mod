@@ -163,15 +163,29 @@ int ray_clear(int tx, int ty, int use)
     return 0;
 }
 
-void sound(int note)
+/* Effects on channel 8 (GM gunshot; the music uses 4, 5, 6, 9): the pitch picks the sound, played low it is slower
+ * and deeper (the fireball). */
+void sound_at(int note, int velocity)
 {
 #if SILENT_AUDIO
-    (void)note;
+    (void)note; (void)velocity;
 #else
     if (sfx_timer) synth(0x0888, sfx_note << 8);
-    synth(0x0998, (note << 8) | 100);
-    sfx_note = note; sfx_timer = 3;
+    synth(0x0998, (note << 8) | velocity);
+    sfx_note = note; sfx_timer = note < 48 ? 10 : 3;   /* a low, slow one rings longer */
 #endif
+}
+
+void sound(int note)
+{
+    sound_at(note, 100);
+}
+
+/* Fainter with the distance (map units, Manhattan): 110 alongside, 20 from 720 on. */
+int far_velocity(int distance)
+{
+    distance = 110 - (distance >> 3);
+    return distance < 20 ? 20 : distance;
 }
 
 void activate(int action)
@@ -219,7 +233,6 @@ void damage(int amount)
     int saved;
     saved = amount / 3; if (saved > armor) saved = armor;
     armor -= saved; health -= amount - saved; hurt = 12;    /* ~0.35 s: three frames or so */
-    sound(36);
     if (health <= 0) { health = 0; game_mode = 1; mu_stop(); }
 }
 
@@ -239,7 +252,7 @@ void fire_game(void)
 {
     int i, best, distance, dz, hp, hit;
     if (shot_cd || !ammo) return;
-    ammo--; shot_cd = weapon ? 12 : 7; flash = 2; sound(60);
+    ammo--; shot_cd = weapon ? 12 : 7; flash = 2; sound_at(weapon ? 52 : 60, 127);   /* ours: loud */
     best = -1; distance = 1025;
     for (i = 0; i < ENEMY_N; i++) {
         dz = target_distance(i);
@@ -277,7 +290,7 @@ void ball_launch(int i)
     ball_x = enemy_x[i]; ball_y = enemy_y[i];
     ball_v = ((vx & 255) << 8) | (vy & 255);
     ball_t = len / 10 + 8;
-    sound(55);
+    sound_at(42, far_velocity(len));          /* the gunshot played low: slower, a whoosh */
 }
 
 void ball_tick(void)
@@ -288,8 +301,10 @@ void ball_tick(void)
     vx = ball_v >> 8; if (vx > 127) vx -= 256;
     vy = ball_v & 255; if (vy > 127) vy -= 256;
     ball_x += vx; ball_y += vy;
-    if (absval(ball_x - px) < 20 && absval(ball_y - py) < 20) { damage(10); ball_t = 0x8006; return; }
-    if (!--ball_t) ball_t = 0x8006;
+    if (absval(ball_x - px) < 20 && absval(ball_y - py) < 20) {
+        damage(10); ball_t = 0x8006; sound_at(30, 127); return;      /* lower still: the burst */
+    }
+    if (!--ball_t) { ball_t = 0x8006; sound_at(30, far_velocity(absval(ball_x - px) + absval(ball_y - py))); }
 }
 
 int ball_frame(void)
@@ -312,8 +327,8 @@ void enemy_tick(void)
     if (distance > 1024 || !ray_clear(enemy_x[i], enemy_y[i], 0)) return;
     cooldown = (enemy_state[i] >> 7) & 63;
     if (!cooldown && distance < 640) {
-        if (!(enemy_state[i] & 0x4000)) { damage(8); cooldown = 12; }          /* zombie: a pistol shot */
-        else if (distance < 64) { damage(10); cooldown = 12; }              /* imp, close: its claws */
+        if (!(enemy_state[i] & 0x4000)) { damage(8); sound_at(62, far_velocity(distance)); cooldown = 12; }  /* zombie */
+        else if (distance < 64) { damage(10); sound_at(36, 100); cooldown = 12; }   /* imp, close: its claws */
         else if (!ball_t) { ball_launch(i); cooldown = 12; }               /* imp: a fireball to dodge */
     } else if (cooldown) cooldown--;
     enemy_state[i] = (enemy_state[i] & 0xc07f) | (cooldown << 7);
