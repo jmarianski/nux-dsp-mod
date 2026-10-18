@@ -28,7 +28,7 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "nek100-mod"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))   # nek100-mod
 from nuxdsp import isa  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------- lexer

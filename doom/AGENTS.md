@@ -1,8 +1,12 @@
-# doom-piano working rules
+# doom/ working rules
 
-- Preserve unrelated work. Keep changes within this repo unless a sibling dependency actually needs a fix.
+- Preserve unrelated work. This directory is part of nek100-mod (its parent): `nuxdsp/` is the assembler,
+  simulator and patcher it builds on; change it only when the game actually needs a fix there.
+- `tools/exportpatch.py` writes `../targets/nek100-dsp-1.0.7/patches/doom_demo.patch` (Freedoom + Hangar only);
+  then regenerate the web data from the parent (`python3 -m nuxdsp web NEK100_DSP_V1.0.7.bin`) and run its tests.
+  The firmware file is looked up next to nek100-mod or in `NEK100_FW`.
 - Iterate locally with `python3 tools/webserve.py` and http://localhost:8017/. R rebuilds firmware C/Python,
-  compiler, WAD/map and sibling ISA sources. Restart the server after changing `tools/webserve.py` itself.
+  compiler, WAD/map and the parent's nuxdsp sources. Restart the server after changing `tools/webserve.py` itself.
 - The browser runs compiled P16 code. Keep gameplay/rendering in C shared with the target; host natives simulate
   firmware farcopy, synth and diagnostics. Browser frame timing is not evidence of hardware timing or read integrity.
 - Run `.venv/bin/python -m pytest -q` (or `uv run pytest`). Node and local `wad/freedoom1.wad` are required for BSP

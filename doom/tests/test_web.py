@@ -8,7 +8,7 @@ import sys
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MOD = os.path.join(ROOT, "..", "nek100-mod")
+MOD = os.path.join(ROOT, "..")   # nek100-mod, this directory's parent
 pytestmark = [pytest.mark.skipif(not os.path.isdir(MOD), reason="needs nek100-mod"),
               pytest.mark.skipif(not shutil.which("node"), reason="needs node")]
 sys.path.insert(0, os.path.join(ROOT, "firmware"))
