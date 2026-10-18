@@ -1,0 +1,52 @@
+# Default layout for an 88-key piano (A0..C8). Middle C is C4 (MIDI 60).
+# Keys send Doom's stock controls, so no Doom config is needed.
+# Copy this file, edit it and run: pianodoom play --config my.toml
+
+[settings]
+# Part of the MIDI input port name; empty = the first port that is not "Through".
+port = ""
+# Hitting a movement key at least this hard also holds "run". 0 turns it off.
+forte_velocity = 100
+forte_action = "run"
+# Actions that get the forte bonus.
+forte_applies_to = ["forward", "backward", "turn_left", "turn_right", "strafe_left", "strafe_right"]
+
+# Left hand, around C3: like WASD, black keys are the top row.
+[keys]
+B2 = "strafe_left"
+C3 = "turn_left"
+D3 = "backward"
+E3 = "turn_right"
+F3 = "strafe_right"
+"C#3" = "forward"
+"D#3" = "forward"
+
+# Right hand, around C5.
+C5 = "fire"
+D5 = "use"
+E5 = "run"
+G5 = "automap"
+
+# Weapons on the white keys of octave 6.
+C6 = "weapon1"
+D6 = "weapon2"
+E6 = "weapon3"
+F6 = "weapon4"
+G6 = "weapon5"
+A6 = "weapon6"
+B6 = "weapon7"
+
+# Menu, at the bottom of the keyboard. Movement keys also move the menu cursor.
+A0 = "menu"
+B0 = "enter"
+C1 = "yes"
+D1 = "no"
+C8 = "pause"
+
+# MIDI control changes (pedals). Pressed when the value is 64 or more.
+[cc]
+64 = "fire"   # sustain pedal
+67 = "use"    # soft pedal
+
+# Actions -> evdev key names. Add your own or override these.
+[actions]
