@@ -78,7 +78,7 @@ Potrzebne są pyusb/libusb oraz dostęp do USB zgodnie z README nek100-mod.
 Te polecenia wykonujesz sam; przygotowanie paczki niczego nie wgrywa.
 
 DIAGNOSTYKA PO WGRANIU
-Przed wejściem do DOOM uruchom w repozytorium doom-piano:
+Przed wejściem do DOOM uruchom w katalogu nek100-mod/doom:
   .venv/bin/python tools/trace_listen.py NEK
 Do wyrenderowania trzech klatek (i przez co najmniej pierwsze 63 callbacki)
 wysyła etap przez USB MIDI: 0x601 start pętli, 0x602 logika,
@@ -119,8 +119,8 @@ SHA256SUMS.txt pozwala sprawdzić integralność plików po rozpakowaniu.
 
 
 def main():
-    official = ROOT.parent / "NEK100_DSP_V1.0.7.bin"
-    helpers = [ROOT.parent / name for name in ("RPC-DFUForWin.exe", "DREAM-Rpc.dll")]
+    official = builddemo.FIRMWARE
+    helpers = [builddemo.FIRMWARE.parent / name for name in ("RPC-DFUForWin.exe", "DREAM-Rpc.dll")]
     for path in [official, *helpers]:
         if not path.is_file():
             raise FileNotFoundError(path)

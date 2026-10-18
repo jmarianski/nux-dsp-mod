@@ -20,7 +20,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "firmware"))
-sys.path.insert(0, os.path.join(ROOT, "..", "nek100-mod"))
+sys.path.insert(0, os.path.join(ROOT, ".."))   # nek100-mod
 
 OPS = ["bad", "ret", "sub", "mov_r", "mov_i", "cmp_r", "cmp_i", "add_r", "add_i", "and_r", "and_i", "or_r",
        "shl", "shr", "ldc", "ld_abs", "ld_r1", "ld_fp", "st_abs", "st_r1", "st_fp", "li", "addi",

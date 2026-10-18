@@ -13,13 +13,13 @@ The test card is chosen to make mistakes visible: a filled square marks the top-
 rotation), the border shows the edges (off-by-one, missing pages), the 1-px checkerboard shows bit order
 within a page, and the stripes at the bottom show page order.
 
-Usage: python3 firmware/splash.py   (preview; needs ../nek100-mod next to this repo for its pixel font)
+Usage: python3 firmware/splash.py   (preview; nek100-mod's pixel font)
 """
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "..", "nek100-mod"))
+sys.path.insert(0, os.path.join(HERE, "..", ".."))   # nek100-mod
 from nuxdsp import pixfont  # noqa: E402
 
 W, H = 128, 64

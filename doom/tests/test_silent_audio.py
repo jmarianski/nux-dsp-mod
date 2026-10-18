@@ -1,5 +1,6 @@
 """The linked silent firmware must not call the instrument synthesizer."""
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -7,15 +8,16 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIRMWARE = Path(os.environ.get("NEK100_FW") or ROOT.parent.parent / "NEK100_DSP_V1.0.7.bin")   # as builddemo's
 pytestmark = pytest.mark.skipif(
-    not shutil.which("node") or not (ROOT.parent / "NEK100_DSP_V1.0.7.bin").exists(),
+    not shutil.which("node") or not FIRMWARE.exists(),
     reason="needs Node and the local official NUX firmware")
 
 
 def test_linked_silent_firmware_emits_no_synth_messages(tmp_path):
     import builddemo
 
-    summary = builddemo.build(ROOT.parent / "NEK100_DSP_V1.0.7.bin", tmp_path, silent_audio=True)
+    summary = builddemo.build(FIRMWARE, tmp_path, silent_audio=True)
     (tmp_path / "check.cjs").write_text(r"""
 const fs=require('node:fs');
 const {P16,rayNatives}=require(process.argv[2]);

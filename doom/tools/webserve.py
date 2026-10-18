@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 def sources():
     pats = ["firmware/*.c", "firmware/*.py", "cc/*.py", "tools/*.py", "wad/*.WAD", "wad/*.wad", "maps/*.wad", "art/*.txt",
-            "../nek100-mod/nuxdsp/*.py", "../nek100-mod/nuxdsp/*.toml"]
+            "../nuxdsp/*.py", "../nuxdsp/*.toml"]
     return [p for pat in pats for p in glob.glob(os.path.join(ROOT, pat))]
 
 
@@ -48,7 +48,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         import importlib
                         importlib.invalidate_caches()
                         # Every module of this repo and the sibling nuxdsp is imported afresh, in dependency order.
-                        ours = (ROOT, os.path.join(ROOT, "..", "nek100-mod"))
+                        ours = (ROOT, os.path.join(ROOT, "..", "nuxdsp"))
                         for name, mod in list(sys.modules.items()):
                             f = os.path.abspath(getattr(mod, "__file__", None) or "")
                             if any(f.startswith(os.path.abspath(r) + os.sep) for r in ours):

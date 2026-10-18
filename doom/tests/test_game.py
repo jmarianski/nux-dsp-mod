@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -7,6 +8,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIRMWARE = Path(os.environ.get("NEK100_FW") or ROOT.parent.parent / "NEK100_DSP_V1.0.7.bin")   # as builddemo's
 sys.path.insert(0, str(ROOT / "tools"))
 import wad  # noqa: E402
 pytestmark = pytest.mark.skipif(not shutil.which("node") or not Path(wad.WAD).exists(),
@@ -83,7 +85,7 @@ console.log(JSON.stringify(m.maxCallbackSteps));
 
 
 def test_actual_firmware_can_finish_the_map(tmp_path):
-    firmware = ROOT.parent / "NEK100_DSP_V1.0.7.bin"
+    firmware = FIRMWARE
     if not firmware.exists():
         pytest.skip("needs the local official NUX firmware")
     import builddemo

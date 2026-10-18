@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """Build and audit the local NEK-100 demo firmware. Does not flash the device.
 
-Usage: python3 tools/builddemo.py [--firmware ../NEK100_DSP_V1.0.7.bin]
+Usage: python3 tools/builddemo.py [--firmware ../../NEK100_DSP_V1.0.7.bin]
 Outputs proprietary/WAD-derived files only under the ignored build/ directory.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firmware"))
-sys.path.insert(0, str(ROOT.parent / "nek100-mod"))
+sys.path.insert(0, str(ROOT.parent))   # nek100-mod
 import budget
 import doom
 import wad
 from nuxdsp import fwmap, patcher, asm, container
+
+FIRMWARE = Path(os.environ.get("NEK100_FW") or ROOT.parent.parent / "NEK100_DSP_V1.0.7.bin")
 
 
 def linked_program(image, demo, result, place, target, summary, silent_audio=False):
@@ -89,7 +92,7 @@ def build(firmware, out, silent_audio=False, extra=()):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--firmware", type=Path, default=ROOT.parent / "NEK100_DSP_V1.0.7.bin")
+    p.add_argument("--firmware", type=Path, default=FIRMWARE)
     p.add_argument("--extra", nargs="*", default=["battery_percent"],
                    help="optional nek100-mod patches to add (default: battery_percent; --extra alone: none)")
     p.add_argument("--sfx", choices=["shot", "drums"], default="shot",

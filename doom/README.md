@@ -1,4 +1,4 @@
-# doom-piano
+# doom (formerly doom-piano)
 
 Play **Doom on a piano**. Any MIDI keyboard over USB works (made with a NUX NEK-100 in mind):
 piano keys and pedals become a virtual keyboard, so every Doom source port sees them like a real one.
@@ -10,8 +10,8 @@ piano keys and pedals become a virtual keyboard, so every Doom source port sees 
 python3 tools/webserve.py
 ```
 
-Open **http://localhost:8017/**. No Python packages are needed for the server/compiler; keep the sibling
-`../nek100-mod` checkout and put [Freedoom](https://freedoom.github.io) Phase 1 at `wad/freedoom1.wad`
+Open **http://localhost:8017/**. No Python packages are needed for the server/compiler (it uses nek100-mod, this
+directory's parent); put [Freedoom](https://freedoom.github.io) Phase 1 at `wad/freedoom1.wad`
 (BSD license: textures, sprites, title and music). The map is our own, **Hangar** (`maps/hangar.wad`, written by
 `tools/makemap.py`): its BSP geometry is rendered by `firmware/doom.c`, with gameplay in `firmware/game.c`, compiled
 for the piano's P16 CPU and executed in JavaScript. The canvas is the same 128×64, one-bit framebuffer. The
@@ -77,7 +77,7 @@ python3 tools/playthrough.py
 node tools/playthrough.cjs web/p16.js build/linked-game.json build/route.json
 ```
 
-`builddemo.py` requires the local official `../NEK100_DSP_V1.0.7.bin`, builds the patch with the target's normal
+`builddemo.py` requires the local official `NEK100_DSP_V1.0.7.bin` (next to nek100-mod, or `NEK100_FW`), builds the patch with the target's normal
 patches, verifies checksums and enforces the target far pool and the entire 0x40000-word / 512 KiB partition.
 It writes the firmware, exact memory report and an emulator program decoded from the linked firmware into
 ignored `build/`. Nothing is flashed. The last command replays the entire level using that actual artifact's
@@ -173,7 +173,7 @@ Common options: `--config FILE`, `--port NAME` (part of the MIDI input name), `-
 ## On the piano's own display (work in progress)
 
 The long-term goal is Doom running on the NEK-100 itself, drawn on its 128x64 LCD, as a patch for
-[nek100-mod](../nek100-mod).
+[nek100-mod](..).
 
 - Step 1, `fb_splash` (works on a real NEK-100): a full-screen test card copied into the framebuffer; the image
   stays until the next full redraw of the main screen.
@@ -186,15 +186,16 @@ The long-term goal is Doom running on the NEK-100 itself, drawn on its 128x64 LC
 - Step 3, `doom_ray` (`firmware/ray.c`, compiled by `cc/p16cc.py`, our C compiler for the DSP): a raycaster on the
   LCD, started from Extra > DOOM. C3/E3 turn, C#3 or D#3 forward, D3 back, B2/F3 strafe, any panel key leaves.
   Top-left: the last frame's time in ~ms (a second number = the C self-test failed on the device).
-  Build it as below with `firmware/ray.py` and `-p ../doom-piano/firmware/ray.patch` instead of fb_test.
+  Build it as below with `firmware/ray.py` and `-p doom/firmware/ray.patch` instead of fb_test (ray.patch is
+  generated, local: it carries the WAD's music).
 
 ```sh
 python3 firmware/fbtest.py                       # regenerates firmware/fb_test.patch (our own code + data)
-cd ../nek100-mod
-python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin ../doom-piano/build/NEK100_DSP_fbtest.bin \
+cd ..   # nek100-mod
+python3 -m nuxdsp build ../NEK100_DSP_V1.0.7.bin doom/build/NEK100_DSP_fbtest.bin \
     -p boot_preset -p touch_off -p sustain_in_preset -p version_tag -p octave_per_part -p extra_menu \
-    -p ../doom-piano/firmware/fb_test.patch
-python3 -m nuxdsp flash -y ../doom-piano/build/NEK100_DSP_fbtest.bin   # piano in update mode (needs pyusb)
+    -p doom/firmware/fb_test.patch
+python3 -m nuxdsp flash -y doom/build/NEK100_DSP_fbtest.bin   # piano in update mode (needs pyusb)
 ```
 
 Built files contain NUX code: keep them local (`build/` is ignored). Flash the official file to go back.
