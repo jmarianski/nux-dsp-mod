@@ -85,6 +85,23 @@ python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin NEK100_DSP_V1.0.7B_mod.bin \
 ```
 
 ### Where to get SoundFonts
+**Grander Piano** (`--grander SLOT`, on the page a box in step 3): from F#4 up the factory grand's samples are
+one-shots that fade 30 dB within a second, so high notes die out early even with the key or the pedal held. Grander
+Piano is 1.Grand Piano with those samples given a loop (0.6 s, starting about 1 s after the hit, its end crossfaded
+into the loop's start and levelled so that no repeat is heard), the level before it raised towards one falling with
+pitch, and decaying 3 times slower like `--sustain 3`. On sound 1 it replaces 1.Grand Piano in place and takes no
+room; on any other sound (e.g. `--grander 2`) it is a copy and 1.Grand Piano stays as it was, at the cost of 11 MB
+of the soundbank. It is named "Grander Piano" (custom_voices) unless you give `--grander 2,NAME,POLISH_NAME`; an empty
+name keeps the sound's own. The loop's level is evened out every 20 ms, so the beating of the strings does not
+pulse with each repeat; attacks quieter or louder than the zones around them (the factory C6 and D#6) are evened out
+by up to 3 dB; from C#3 to F4 the envelopes fall slower, up to the time of F#4. C3 and below are as they were.
+Chosen by ear on the NEK-100.
+
+```sh
+python3 -m nuxdsp build NEK100_DSP_V1.0.7.bin NEK100_DSP_V1.0.7B_mod.bin \
+    --sbank NEK100_SBANK_V1.0.4.bin --sbank-out NEK100_SBANK_V1.0.4_mod.bin --grander 2 --voice 500=cat_piano
+```
+
 
 - **[GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS)** (`GeneralUser-GS.sf2`, ~30 MB, 261
   instruments): a good all-round General MIDI bank, free to use. A good first choice.
@@ -101,8 +118,8 @@ last while the key is held, choose presets marked *looped*. For your own instrum
 share the result, check its license.
 
 `pack` makes a SoundFont from `r<midi>.wav` files (mono, 16-bit, 44.1 kHz), each sample at its root key, e.g.
-`r60.wav`. The soundbank grows by the size of the samples (the cat: 2 MB); how much room the instrument's flash
-has is not known yet, so start small.
+`r60.wav`. The soundbank grows by the size of the samples (the cat: 2 MB). Its flash partition holds 223 MB and the
+official soundbank takes 208 MB, so about 15 MB are left for everything added (the tools refuse a bigger result).
 Names: at most 11 characters, and with the sound number at most 15.
 
 > **Use at your own risk.** Unofficial, not affiliated with NUX or Dream. Modified firmware may void your
@@ -244,8 +261,9 @@ dalej FluidR3_GM (licencja MIT, w Linuksie pakiet `fluid-soundfont-gm`), pojedyn
 [bibliotece Polyphone](https://www.polyphone.io/en/soundfonts) (kategorie i filtr licencji) albo katalog
 [Musical Artifacts](https://musical-artifacts.com). Duży bank GM nie przeszkadza, bo do soundbanku trafiają tylko sample
 wybranego presetu, a strona pokazuje ich rozmiar. Do organów, smyczków i padów wybieraj presety oznaczone jako „z pętlą”.
-SoundFont z własnych sampli (np. z [Freesound](https://freesound.org)) robi `python3 -m nuxdsp pack` (opis wyżej). `nuxdsp export-sound` zapisuje fabryczne brzmienie jako SF2 do porównań; to sample NUX, więc taki plik zostaje u Ciebie, nie udostępniaj go. Soundbank rośnie o rozmiar sampli, a ile miejsca ma
-flash, jeszcze nie wiadomo, więc lepiej zaczynać od małych instrumentów.
+SoundFont z własnych sampli (np. z [Freesound](https://freesound.org)) robi `python3 -m nuxdsp pack` (opis wyżej). `nuxdsp export-sound` zapisuje fabryczne brzmienie jako SF2 do porównań; to sample NUX, więc taki plik zostaje u Ciebie, nie udostępniaj go. Soundbank rośnie o rozmiar sampli.
+Partycja flash mieści 223 MB, a oryginalny soundbank zajmuje 208 MB, więc na wszystko, co dodajesz, zostaje około 15 MB
+(narzędzia odmówią, jeśli wynik będzie większy).
 
 **Dłuższe wybrzmiewanie 1.Grand Piano** (`--sustain 3`, na stronie pole w kroku 3): fabryczny fortepian przy
 trzymanym klawiszu lub pedale wygasa w 9–25 s (a wysokie dźwięki warstwy velocity 75–84 w 2–3 s); opcja zwalnia to
@@ -254,6 +272,18 @@ tylko soundbank (wgrywasz go jak instrumenty); brzmienie dobrane na słuch na NE
 
 > **Na własne ryzyko.** To nieoficjalny projekt, niezwiązany z NUX ani Dream. Zmodyfikowany firmware może
 > naruszać warunki gwarancji. Zachowaj oryginalny plik: wgranie go z powrotem przywraca fabryczny stan.
+**Grander Piano** (`--grander SLOT`, na stronie pole w kroku 3): od F#4 w górę fabryczne sample fortepianu
+wybrzmiewają tylko raz i cichną o 30 dB w ciągu sekundy, więc wysokie dźwięki gasną szybko nawet przy trzymanym
+klawiszu albo pedale. Grander Piano to 1.Grand Piano, w którym te sample dostały pętlę: 0,6 s, zaczyna się ok. 1 s po
+uderzeniu, a jej koniec płynnie przechodzi w początek i ma wyrównany poziom, żeby nie było słychać powtórzeń.
+Poziom przed pętlą jest podniesiony do wartości, która maleje z wysokością dźwięku, a całość wybrzmiewa 3 razy wolniej, jak
+z `--sustain 3`. Na brzmieniu 1 zastępuje 1.Grand Piano i nie zajmuje miejsca. Na innym brzmieniu (np.
+`--grander 2`) jest kopią, a 1.Grand Piano zostaje bez zmian, kosztem 11 MB soundbanku. Nazywa się „Grander Piano”
+(custom_voices), chyba że podasz `--grander 2,NAZWA,NAZWA_PL`; pusta nazwa zostawia nazwę brzmienia. Poziom
+w pętli jest wyrównywany co 20 ms, żeby dudnienie strun nie pulsowało przy każdym powtórzeniu. Ataki cichsze lub
+głośniejsze od sąsiednich stref (fabrycznie C6 i D#6) są wyrównane o najwyżej 3 dB. Od C#3 do F4 obwiednie gasną
+wolniej, stopniowo do czasu z F#4. C3 i niżej zostają bez zmian. Brzmienie dobrane na słuch na NEK-100.
+
 
 **Przeglądarka:** otwórz **https://jmarianski.github.io/nux-dsp-mod/** albo `web/index.html` z pobranego repozytorium
 (działa offline, plik nie opuszcza przeglądarki). Wskaż plik DSP z oficjalnej paczki aktualizacji NUX:

@@ -140,33 +140,64 @@ def parse_voices(items):
     return out
 
 
+def parse_grander(spec):
+    """SLOT[,NAME[,NAME_PL]] -> (slot, name, Polish name), names "Grander Piano" unless given ("" keeps the
+    sound's own name: no custom_voices entry), or None"""
+    if spec is None:
+        return None
+    slot, *names = spec.split(",")
+    if not slot.isdigit() or not 1 <= int(slot) <= 500 or len(names) > 2:
+        raise SystemExit("error: --grander wants SLOT[,NAME[,NAME_PL]] with SLOT 1..500, got %r" % spec)
+    name = names[0] if names else "Grander Piano"
+    return int(slot), name, names[1] if len(names) > 1 else name
+
+
 def cmd_build(a):
     img, m = load_checked(a.firmware, a.target)
     voices = parse_voices(a.voice)
-    if (voices or a.sustain) and not (a.sbank and a.sbank_out):
-        raise SystemExit("error: --voice and --sustain need --sbank (the official soundbank file) and --sbank-out")
+    grander = parse_grander(a.grander)
+    if (voices or a.sustain or grander) and not (a.sbank and a.sbank_out):
+        raise SystemExit("error: --voice, --sustain and --grander need --sbank (the official soundbank file) and --sbank-out")
     if a.sustain and not (m.soundbank or {}).get("sustain"):
         raise SystemExit("error: --sustain: this target has no sustain sound")
+    if grander:
+        if not (m.soundbank or {}).get("grander"):
+            raise SystemExit("error: --grander: this target has no piano for it")
+        if grander[0] in [s for s, *_ in voices]:
+            raise SystemExit("error: --grander and --voice on the same sound")
+        if a.sustain and grander[0] == m.soundbank["grander"][0]:
+            raise SystemExit("error: --grander in place of sound %d already decays %d times slower; drop --sustain"
+                             % (grander[0], soundbank.GRANDER_SUSTAIN))
+    cv_names = [(s, n, npl) for s, _, n, npl in voices] + ([grander] if grander and grander[1] else [])
     names = list(a.patch or patcher.defaults(m))
-    if voices and "custom_voices" not in names:
+    if cv_names and "custom_voices" not in names:
         names.append("custom_voices")
     pats = patcher.resolve_patches(names, m)
     out, report = patcher.build(img, m, pats, patcher.parse_params(a.param))
     bank = None
+    if cv_names:
+        out = soundbank.fill_names(out, m, cv_names)
     if voices:
-        out = soundbank.fill_names(out, m, [(s, n, npl) for s, _, n, npl in voices])
         bank = soundbank.add(read(a.sbank), img, m, [(p, s) for s, p, _, _ in voices])
+    if (a.sustain or grander) and bank is None:
+        bank = read(a.sbank)
+        if container.sha256(bank) != m.soundbank["sha256"]:
+            raise SystemExit("error: not the official %s (SHA-256 mismatch)" % m.soundbank["name"])
+    if grander:                                   # before --sustain: the copy is of the vendor's piano
+        size = len(bank)
+        bank = soundbank.grander(bank, img, m, grander[0])
+        grander_mb = (len(bank) - size) / 2 ** 20
     if a.sustain:
-        if bank is None:
-            bank = read(a.sbank)
-            if container.sha256(bank) != m.soundbank["sha256"]:
-                raise SystemExit("error: not the official %s (SHA-256 mismatch)" % m.soundbank["name"])
         bank = soundbank.longer_sustain(bank, img, m, a.sustain)
     print("target    %s (%s)" % (m.id, describe(m)))
     for line in report:
         print(line)
     for s, p, n, npl in voices:
         print("sound %3d  %s%s (%d zones, %.0f kB)" % (s, n, " / " + npl if npl else "", len(p.zones), p.size / 1024))
+    if grander:
+        print("sound %3d  %s: sound %d's high keys ring on, decays %d times slower (%s)" % (
+            grander[0], grander[1] or "Grander Piano", m.soundbank["grander"][0], soundbank.GRANDER_SUSTAIN,
+            "in place" if grander[0] == m.soundbank["grander"][0] else "a copy, +%.1f MB" % grander_mb))
     if a.sustain:
         print("sound %3d  decays %g times slower" % (m.soundbank["sustain"][0], a.sustain))
     if bank is not None:
@@ -274,6 +305,11 @@ def main(argv=None):
                         "sound SLOT (1..500); repeatable, at most 4; needs --sbank and --sbank-out")
     s.add_argument("--sbank", help="the official soundbank file (e.g. NEK100_SBANK_V1.0.4.bin)")
     s.add_argument("--sbank-out", help="where to write the soundbank with the instruments")
+    s.add_argument("--grander", metavar="SLOT[,NAME[,NAME_PL]]",
+                   help="Grander Piano on sound SLOT: 1.Grand Piano whose high keys ring on while held, decaying 3 times "
+                        "slower; on 1 in its place (no room taken), elsewhere a copy (+11 MB, 1.Grand Piano stays); "
+                        "named \"Grander Piano\" unless NAME is given (an empty one keeps the sound's name); needs "
+                        "--sbank and --sbank-out")
     s.add_argument("--sustain", type=float, metavar="FACTOR",
                    help="1.Grand Piano decays FACTOR (1..10, e.g. 3) times slower while held; needs --sbank and --sbank-out")
     s = sub.add_parser("instruments", help="list the presets of a SoundFont (.sf2) and what of them can be used")

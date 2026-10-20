@@ -16,17 +16,21 @@ Format, one entry per line, `;` starts a comment that is kept as the entry descr
     farpool START END            free space above 0xffff (reached with a far `call`, d6c9..): used only by
                                  `.code START` blocks; may end past the official file, which then grows
     func    ADDR NAME            function entry
-    label   ADDR NAME            named location inside a function
+    label   ADDR NAME [SIZE]     named code location; with SIZE > 1 outside code, a program-data table
     var     ADDR NAME [SIZE]     RAM variable (word address), optional size in words
     glyphs  TABLE BITMAPS COUNT  file word addresses of the glyph/image table and its bitmap data
     soundbank NAME sha256 HEX template VOICE ZONE [loop VOICE ZONE] [piano VOICE ZONE] [pianomods FILTER VOLUME] [sustain VOICE FLOOR]
+                                 [grander VOICE KEY BLOCKLEN] [granderfall LAYER.ZONE:FACTOR,...] [end WORD]
                                  the official soundbank file instruments are added to, and the zone
                                  (sound number, zone index over all its layers) whose settings added
                                  instruments copy; instruments with loops copy the "loop" one when given,
                                  pianos (GM programs 0..7) the "piano" one, with its two velocity
                                  modulators (4 bytes each, hex: soundbank.vel_mods) replaced when
-                                 "pianomods" is given; "sustain": the sound longer_sustain() slows
-                                 (soundbank.py)
+                                 "pianomods" is given; "sustain": the sound longer_sustain() slows;
+                                 [grander VOICE KEY BLOCKLEN]: the piano grander() reshapes (zones from KEY
+                                 up, the bytes of its velocity-layer block); granderfall: zones below KEY
+                                 whose envelopes it slows further (soundbank.grander_fall_table); [end WORD]: the flash word the
+                                 soundbank must end before (the partition's end) (soundbank.py)
 """
 import os
 import shlex
@@ -123,7 +127,8 @@ def load(path=None):
                 m.glyphs = (int(t[1], 16), int(t[2], 16), int(t[3], 0))
             elif k == "soundbank":
                 m.soundbank = {"name": t[1], "sha256": t[3].lower(), "template": (int(t[5]), int(t[6]))}
-                for i in range(7, len(t) - 2, 3):
+                i = 7
+                while i < len(t):
                     if t[i] in ("loop", "piano"):
                         m.soundbank["template_" + t[i]] = (int(t[i + 1]), int(t[i + 2]))
                     elif t[i] == "sustain":
@@ -132,6 +137,20 @@ def load(path=None):
                         m.soundbank["mods_piano"] = tuple(bytes.fromhex(t[i + j]) for j in (1, 2))
                         if any(len(x) != 4 for x in m.soundbank["mods_piano"]):
                             raise ValueError("pianomods: two 4-byte hex values")
+                    elif t[i] == "grander":
+                        m.soundbank["grander"] = (int(t[i + 1]), int(t[i + 2]), int(t[i + 3], 0))
+                        i += 1
+                    elif t[i] == "granderfall":                # LAYER.ZONE:FACTOR,...
+                        m.soundbank["grander_fall"] = {
+                            tuple(int(x) for x in lz.split(".")): float(f)
+                            for lz, f in (e.split(":") for e in t[i + 1].split(","))}
+                        i -= 1
+                    elif t[i] == "end":
+                        m.soundbank["end"] = int(t[i + 1], 0)
+                        i -= 1
+                    else:
+                        raise ValueError("soundbank: unknown %r" % t[i])
+                    i += 3
             elif k == "ramdata":
                 m.ramdata = (int(t[1], 16), int(t[2], 16))
             elif k in ("func", "label", "var"):

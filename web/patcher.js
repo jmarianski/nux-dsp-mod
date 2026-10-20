@@ -401,6 +401,8 @@ async function addInstruments(target, dsp, bank, items) {
     });
   });
   const len = align(pos);
+  if (v.soundbank.end !== undefined && FB + len / 2 > v.soundbank.end)
+    throw `the soundbank would end ${((FB + len / 2 - v.soundbank.end) * 2 / 2 ** 20).toFixed(1)} MB past its partition`;
   const out = new Uint8Array(len + d.length - tail);
   out.set(d.subarray(0, tail)); out.set(d.subarray(tail), len);
   for (let i = tail; i < len; i += 2) { out[i] = 0xef; out[i + 1] = 0xad; }
@@ -451,7 +453,11 @@ async function addInstruments(target, dsp, bank, items) {
 function longerSustain(target, dsp, bank, factor) {
   const v = target.voices, [voice, floor] = v.soundbank.sustain;
   if (!(factor >= 1 && factor <= 10)) throw "sustain factor: 1..10";
-  const b = bank.slice(), inst = instrumentAddr(b, dirEntry(b, ...voiceToBankProg(voiceBanks(v, dsp), voice)));
+  const b = bank.slice();
+  slowDecay(b, instrumentAddr(b, dirEntry(b, ...voiceToBankProg(voiceBanks(v, dsp), voice))), floor, factor);
+  return b;
+}
+function slowDecay(b, inst, floor, factor) {
   for (const layer of zoneLayers(b, inst)) {
     if (layer.length < 2) continue;                      // the resonance layer: as it is
     for (const z of layer) {
@@ -459,6 +465,242 @@ function longerSustain(target, dsp, bank, factor) {
       if (at < 0 || (b[sb + at + 5] & 0xe0) !== 0x80) continue;   // holds while the key is held
       b[sb + at + 4] = envRate(Math.max(envSeconds(b[sb + at + 4]), floor) * factor, false);
     }
+  }
+}
+// --- Grander Piano (soundbank.py grander(): the same steps, the same order of + - * / sqrt, the same bytes)
+const G = {SUSTAIN: 3, HOP: 441, XF: 8820, WIN: 4410, LOOP: 26460, MIN_LOOP: 13230, START: 44100, LAST_START: 66150,
+           LIFT: 1000, PHASE: 256, FLAT: 4};
+function gEnergy(x, i, j) { let e = 0; for (let t = i; t < j; t++) e += x[t] * x[t]; return e; }
+function gPowers(x) {                                    // x ** (j / 64), j = 0..64, from square roots
+  const r = [x];
+  for (let m = 0; m < 6; m++) r.push(Math.sqrt(r[m]));
+  return Array.from({length: 65}, (_, j) => { let v = 1; for (let m = 0; m < 7; m++) if (j & (64 >> m)) v *= r[m]; return v; });
+}
+function gAlong(p, i, n) {                               // x ** (i / n) from gPowers(x), even in dB
+  const j = Math.floor(i * 64 / n);
+  return j === 64 ? p[j] : p[j] + (p[j + 1] - p[j]) * ((i * 64 - j * n) / n);
+}
+function gDot(x, i, y, j, n) { let d = 0; for (let t = 0; t < n; t++) d += x[i + t] * y[j + t]; return d; }
+// the loop start (from a, up to 1024 words on) most in phase with the sound before E at the crossfade's middle
+function gInPhase(c0, c1, s, a, z) {
+  const P = G.PHASE, m = Math.floor(Math.min(G.XF, Math.floor((z - a) / 3)) / 2) + P / 2, e = z - m;
+  const ee = gDot(c0, e, c0, e, P) + gDot(c1, e, c1, e, P);
+  let best = null, out = a;
+  for (let t = a; t < a + 1024; t++) {
+    if ((s + t) % 1024 >= 512 || t > G.LAST_START || z - t < G.MIN_LOOP) continue;
+    const tt = gDot(c0, t - m, c0, t - m, P) + gDot(c1, t - m, c1, t - m, P);
+    if (!tt || !ee) continue;
+    const r = (gDot(c0, e, c0, t - m, P) + gDot(c1, e, c1, t - m, P)) / Math.sqrt(ee * tt);
+    if (best === null || r > best) { best = r; out = t; }
+  }
+  return [out, best || 0];
+}
+function gReshape(c0, c1, s, level, boost = 1) {
+  const n = c0.length;
+  let a = Math.max(G.XF, Math.min(G.START, n - G.MIN_LOOP - 1024));
+  while ((s + a) % 1024 >= 512) a++;                     // L in the first half of its 1024-word block
+  let z = Math.min(a + G.LOOP, n - 1);
+  z -= (s + z + 1) % 512;                                // E on the last word of a 512-word block
+  if (a > G.LAST_START || z - a < G.MIN_LOOP) return null;
+  let r;
+  [a, r] = gInPhase(c0, c1, s, a, z);
+  r = Math.max(0, Math.min(1, r));
+  const k = Math.floor(a / G.HOP), en = (i, j) => gEnergy(c0, i, j) + gEnergy(c1, i, j);   // both channels' energy
+  const p = Array.from({length: k + 1}, (_, i) => en(i * G.HOP, (i + 2) * G.HOP));
+  const peak = Math.max(...p), top = p.indexOf(peak);
+  if (!peak) return null;
+  const q = [];                                          // the level, never rising again after the peak
+  let cur = peak;
+  p.forEach((e, i) => { if (i > top) cur = Math.min(cur, e); q.push(cur); });
+  const w = Math.min(G.WIN, Math.floor((z - a) / 4));
+  const atL = en(a, a + w) * (2 * G.HOP) / w;            // the level where the loop starts, not the lowest one
+  const lift = atL ? Math.sqrt(Math.min(G.LIFT, Math.max(1, level * peak / atL))) : Math.sqrt(G.LIFT);
+  const fall = gPowers(q[k] / peak), up = gPowers(lift);
+  const g = q.map(e => { let j = 0; while (j < 64 && fall[j + 1] >= e / peak) j++; return up[j]; });
+  const ee = en(z - w, z);
+  const rp = gPowers(ee ? Math.sqrt(en(a, a + w) / ee) : 1);
+  const gain = new Float64Array(z + 1);
+  for (let t = 0; t < a; t++) {
+    const i = Math.floor(t / G.HOP);
+    gain[t] = i >= k ? g[i] : g[i] + (g[i + 1] - g[i]) * ((t - i * G.HOP) / G.HOP);
+  }
+  const fl = [], H = G.HOP;                              // inside the loop, per 20 ms: back to its first window's level
+  let e0 = 0, r0 = 0;
+  for (let i = 0; i < Math.floor((z + 1 - a) / H) - 1; i++) {
+    const e = en(a + i * H, a + (i + 2) * H), ra = gAlong(rp, (i + 1) * H, z - a);
+    if (!fl.length) { e0 = e; r0 = ra; }
+    fl.push(e && e0 ? Math.sqrt(Math.max(1 / G.FLAT, Math.min(G.FLAT, e0 * r0 * r0 / (e * ra * ra)))) : 1);
+  }
+  for (let t = a; t <= z; t++) {
+    const u = t - a - H, i = u > 0 ? Math.floor(u / H) : 0;
+    const f = u <= 0 ? fl[0] : i >= fl.length - 1 ? fl[fl.length - 1] : fl[i] + (fl[i + 1] - fl[i]) * ((u - i * H) / H);
+    gain[t] = lift * gAlong(rp, t - a, z - a) * f;
+  }
+  const ys = [c0, c1].map(c => { const y = new Float64Array(z + 1); for (let t = 0; t <= z; t++) y[t] = c[t] * gain[t] * boost; return y; });
+  const xf = Math.min(G.XF, Math.floor((z - a) / 3));
+  for (const y of ys)                                    // crossfade into what precedes L, power kept for alike
+    for (let j = 0; j <= xf; j++) {                      // sounds (correlation r): equal-power ones swell in phase
+      const u = j / xf, v = 1 - u;
+      y[z - xf + j] = (y[z - xf + j] * v + y[a - xf + j] * u) / Math.sqrt(v * v + u * u + 2 * r * v * u);
+    }
+  const out = ys.map(y => {                              // (no further level fix: a step at each wrap)
+    y[z] = y[a];                                         // sample E = sample L
+    const o = new Uint8Array(2 * (z + 1));
+    for (let t = 0; t <= z; t++) put16(o, 2 * t, Math.max(-32768, Math.min(32767, Math.floor(y[t] + 0.5))) & 0xffff);
+    return o;
+  });
+  return {a, z, y0: out[0], y1: out[1]};
+}
+// {"S,L,E": gain}: attacks (first 30 ms, both channels' energy) to the median of the 5 zones around (soundbank.py)
+function gAttackBoosts(d, inst) {
+  const FB = 0x80000, A = 1323, MAX = 2, out = new Map();
+  const pcm = (a, n) => Int16Array.from({length: n}, (_, t) => u16(d, (a - FB) * 2 + 2 * t) << 16 >> 16);
+  for (const layer of zoneLayers(d, inst)) {
+    if (layer.length < 3) continue;
+    const info = layer.map(z => {
+      const o = findSampleBlock(d, z), [S, L, E] = sampleAddrs(d, o);
+      const chs = blockLen(d, o) === 22 ? [S, stereoX(d, o)] : [S, S], n = Math.min(A, E - S + 1);
+      let e = 0;
+      for (const q of chs) e += gEnergy(pcm(q, n), 0, n);
+      return {key: `${S},${L},${E}`, e: Math.floor(e * A / n), chs, n: E - S + 1};
+    });
+    info.forEach(({key, e, chs, n}, i) => {
+      if (out.has(key)) return;
+      out.set(key, 1);
+      const near = info.slice(Math.max(0, i - 2), i + 3).map(x => x.e).sort((x, y) => x - y);
+      const med = near[Math.floor(near.length / 2)];
+      if (0 < e && e < med) {
+        let top = 0;
+        for (const q of chs) for (const v of pcm(q, n)) top = Math.max(top, Math.abs(v));
+        out.set(key, Math.max(1, Math.min(Math.sqrt(Math.min(MAX, med / e)), 32767 / Math.max(top, 1))));
+      } else if (e > med) out.set(key, Math.sqrt(Math.max(1 / MAX, med / e)));
+    });
+  }
+  return out;
+}
+function zoneKeys(d, inst) {                             // per layer, per zone: [low key, high key]
+  let o = inst + 2 + (d[inst] & 4 ? 2 : 0) + 2 * d[inst + 1];
+  return zoneLayers(d, inst).map(layer => { let prev = -1; return layer.map(() => {
+    const hi = d[o + 3] === 0xff ? 127 : d[o + 3], r = [prev + 1, hi]; prev = hi; o += 6; return r; }); });
+}
+const stereoX = (d, o) => d[o + 13] * 0x1000000 + u16(d, o + 14) * 0x100 + d[o + 12];
+function sampleAddrs(d, o) {                             // [S, L, E] of the sample block at o (soundbank.py)
+  const k = blockLen(d, o) - 2, hi = ((d[o] >> 6) & 3) | (d[o + 1] << 2);
+  return [[10, 8], [2, 5], [k, k - 2]].map(([w, lo]) => hi * 0x1000000 + u16(d, o + w) * 0x100 + d[o + lo]);
+}
+function recordPtrs(d, z) {                              // in-page pointer words of a zone record, its end
+  const pageB = Math.floor(z / 2 / 0x10000) * 0x20000;
+  let marker = z;
+  while (!(d[marker] === 0xf0 && d[marker + 1] === 0xb5)) marker++;
+  const offs = [0];
+  for (let o = 4; o < marker - z + 2; o += 2) offs.push(o);
+  const ptrs = offs.map(o => u16(d, z - 2 + o) * 2 + pageB), top = Math.max(...ptrs), end = top + 26;
+  if (d[top + 2] !== 3 || d[top + 3] !== 4 || ptrs.some(p => p < z - 2 || p >= end)) throw `unexpected zone layout`;
+  return {offs, ptrs, end};
+}
+function cloneInstrument(b, gi, blkLen) {                // soundbank.py _clone
+  const FB = 0x80000, nl = b[gi + 1], hdr = 4 + 2 * nl;
+  let nz = 0;
+  for (let i = 0; i < nl; i++) nz += u16(b, gi + 4 + 2 * i) & 0x7f;
+  const pageB = Math.floor(gi / 2 / 0x10000) * 0x20000, blk0 = pageB + u16(b, gi + 2) * 2;
+  const base = (u32(b, 0xa6) - FB) * 2 + 0x10, page = Math.floor(base / 0x20000), blkAt = base + hdr + 6 * nz + 2;
+  const parts = [b.slice(gi, gi + hdr + 6 * nz), new Uint8Array(2)];
+  put16(parts[0], 2, (blkAt / 2) & 0xffff);
+  const blk = b.slice(blk0, blk0 + blkLen);
+  for (const o of [4, 8, 12, 16]) {
+    const p = pageB + u16(blk, o) * 2;
+    if (p < blk0 || p >= blk0 + blkLen) throw "the velocity-layer block points outside itself";
+    put16(blk, o, ((p - blk0 + blkAt) / 2) & 0xffff);
+  }
+  parts.push(blk);
+  let len = hdr + 6 * nz + 2 + blkLen;
+  const recs = new Map();
+  zoneAddrs(b, gi).forEach((z, i) => {
+    if (!recs.has(z)) {
+      const {offs, ptrs, end} = recordPtrs(b, z), r = b.slice(z - 2, end), at = base + len;
+      offs.forEach((o, j) => put16(r, o, ((ptrs[j] - (z - 2) + at) / 2) & 0xffff));
+      recs.set(z, at); parts.push(r); len += r.length;
+    }
+    put16(parts[0], hdr + 6 * i + 4, ((recs.get(z) + 2) / 2) & 0xffff);
+  });
+  if (base + len > (page + 1) * 0x20000 || b.subarray(base - 0x10, base + len).some(x => x !== 0x5e && x !== 0xd0))
+    throw "no free room for the copy of the piano in the parameter page";
+  let o = base;
+  for (const x of parts) { b.set(x, o); o += x.length; }
+  put32(b, 0xa6, FB + Math.floor((base + len + 1) / 2));
+  return base;
+}
+// bank with "Grander Piano" on sound VOICE: in place on the piano's own sound, else a copy (soundbank.py grander)
+function granderPiano(target, dsp, bank, voice, factor = G.SUSTAIN) {
+  const v = target.voices, sb = v.soundbank, FB = 0x80000;
+  if (!sb.grander) throw "this target has no piano for Grander Piano";
+  const [src, key, blkLen] = sb.grander, banks = voiceBanks(v, dsp), inPlace = voice === src;
+  let b = bank.slice();
+  const gi = instrumentAddr(b, dirEntry(b, ...voiceToBankProg(banks, src)));
+  if (b[gi] !== 0x44) throw `sound ${src}: not the piano Grander Piano knows`;
+  const W = a => (a - FB) * 2, boosts = gAttackBoosts(b, gi);
+  const pcm = (a, n) => Int16Array.from({length: n}, (_, t) => u16(b, W(a) + 2 * t) << 16 >> 16);
+  const mark = new TextEncoder().encode("PackNameDate:");
+  let tail = -1;
+  for (let i = b.length - mark.length; i >= 0 && tail < 0; i--) if (mark.every((c, j) => b[i + j] === c)) tail = i;
+  if (tail < 0) throw "soundbank trailer not found";
+  const shaped = new Map(), chunks = [];                  // copy: what goes after the bank's data
+  let len = tail;
+  const pad = n => { const x = new Uint8Array(2 * n); for (let i = 0; i < x.length; i += 2) { x[i] = 0xef; x[i + 1] = 0xad; }
+                     chunks.push(x); len += x.length; };
+  const push = x => { chunks.push(x); len += x.length; };
+  zoneLayers(b, gi).forEach((layer, li) => {
+    if (layer.length < 2) return;                        // the resonance layer: as it is
+    const keys = zoneKeys(b, gi)[li];
+    layer.forEach((z, zi) => {
+      const o = findSampleBlock(b, z), [S, L, E] = sampleAddrs(b, o), id = `${S},${L},${E}`, lo = keys[zi][0];
+      if (lo < key || shaped.has(id)) return;
+      if (blockLen(b, o) !== 22) throw `zone at ${z}: not stereo`;
+      const X = stereoX(b, o);
+      const r = gReshape(pcm(S, E - S + 1), pcm(X, E - S + 1), S % 1024, v.granderLevels[lo - key], boosts.get(id));
+      if (!r) { shaped.set(id, null); return; }          // too short for a loop: as it is
+      let Sn = S, Xn = X;
+      if (!inPlace) {                                    // left at S', right at X' = S' + k * 1024
+        if (len % 0x800) pad((0x800 - len % 0x800) / 2);
+        Sn = FB + (len + 4) / 2;
+        const p = (((S - Sn) % 1024) + 1024) % 1024;     // S' = S (mod 1024): the same alignment of L, E
+        pad(p); push(new Uint8Array(4)); Sn += p;
+        const off = Math.ceil((r.z + 1 + 64) / 1024) * 1024;
+        push(r.y0); pad(Sn + off - (FB + (len + 4) / 2)); push(new Uint8Array(4)); push(r.y1);
+        Xn = Sn + off;
+      } else {
+        b.set(r.y0, W(S)); b.set(r.y1, W(X));
+      }
+      shaped.set(id, [Sn, Sn + r.a, Sn + r.z, Xn]);
+    });
+  });
+  let inst = gi;
+  if (!inPlace) {
+    if (len % 0x800) pad((0x800 - len % 0x800) / 2);
+    const endW = FB + len / 2;
+    if (sb.end !== undefined && endW > sb.end)
+      throw `the soundbank would end ${((endW - sb.end) * 2 / 2 ** 20).toFixed(1)} MB past its partition`;
+    const out = new Uint8Array(len + b.length - tail);
+    out.set(b.subarray(0, tail));
+    let o = tail;
+    for (const x of chunks) { out.set(x, o); o += x.length; }
+    out.set(b.subarray(tail), len);
+    b = out;
+    put32(b, 8, endW); put32(b, 0x9c, endW);
+    inst = cloneInstrument(b, gi, blkLen);
+    const a = dirEntry(b, ...voiceToBankProg(banks, voice));   // the sound now plays the copy
+    b[a + 1] = Math.floor(inst / 0x20000); put16(b, a + 2, (inst / 2) & 0xffff);
+  }
+  for (const z of zoneAddrs(b, inst)) {
+    const o = findSampleBlock(b, z), nw = shaped.get(sampleAddrs(b, o).join(","));
+    if (!nw) continue;
+    setAddrs(b, o, 22, nw[0], nw[1], nw[2]);
+    b[o + 12] = nw[3] & 0xff; b[o + 13] = Math.floor(nw[3] / 0x1000000); put16(b, o + 14, Math.floor(nw[3] / 0x100) & 0xffff);
+  }
+  slowDecay(b, inst, sb.sustain ? sb.sustain[1] : 0, factor);
+  for (const [li, zi, f] of sb.grander_fall || []) {   // zones below the grander key falling slower still
+    const o = findSampleBlock(b, zoneLayers(b, inst)[li][zi]), at = o + ampEnvAt(b.subarray(o), 0);
+    b[at + 4] = envRate(envSeconds(b[at + 4]) * f, false);
   }
   return b;
 }
