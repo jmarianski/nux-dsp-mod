@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # the settle timer not yet run on hardware) and extra_menu's functions moved
 # above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
 # timed from the last sound not yet run on hardware.
-# touch_custom is experimental: exhaustive simulation and web/CLI parity, no hardware test yet.
+# touch_custom (opt-in): run on hardware with the default knee.
 ALL_SHA = "dc07c68cc5a9a433c9995fa4db85f7eaa0dd6fc00a3686527a3f22ac4d3b2d23"
 
 
