@@ -35,6 +35,18 @@ Other models (NEK-110, …) use the same DSP and a similar firmware. Adding one 
 
 All of them were tested on a real NEK-100. Presets saved with the stock firmware keep working.
 
+**Results: power draw** (NEK-100, measured at the wall socket with a watt meter, battery full, 2026-10-20):
+
+| State | Power |
+|---|---|
+| on, speaker on | 2.0–2.1 W (about 2.4 W playing at full volume) |
+| on, speaker off (`extra_menu` Speaker, or headphones) | about 1 W |
+| asleep (`extra_menu` Sleep) | about 0.5 W |
+| display backlight on or off | no measurable difference |
+
+The speaker amplifier takes about half of the power while the instrument is on, so switching it off after a silence
+saves the most; Sleep halves what is left. Turning the backlight off is about the look, not the battery.
+
 ## Add instruments
 
 Both the web page and the command line can put new instruments in place of any of the 500 sounds (up to 4).
@@ -236,6 +248,18 @@ DSP i podobny firmware. Jak dodać kolejny model, opisuje [docs/NEW_TARGET.md](d
 
 Wszystkie patche są przetestowane na prawdziwym NEK-100. Presety zapisane na oryginalnym
 firmware dalej działają.
+
+**Wyniki: pobór mocy** (NEK-100, pomiar watomierzem z gniazdka, bateria naładowana, 2026-10-20):
+
+| Stan | Pobór |
+|---|---|
+| włączony, głośnik włączony | 2,0–2,1 W (ok. 2,4 W przy grze na pełnej głośności) |
+| włączony, głośnik wyłączony (`extra_menu` Głośnik albo słuchawki) | ok. 1 W |
+| uśpienie (`extra_menu` Uśpienie) | ok. 0,5 W |
+| podświetlenie ekranu włączone lub wyłączone | bez mierzalnej różnicy |
+
+Wzmacniacz głośnika to mniej więcej połowa poboru na włączonym instrumencie, więc najwięcej daje wyłączanie go po
+ciszy, a uśpienie zmniejsza resztę o połowę. Gaszenie podświetlenia to kwestia wygody, nie baterii.
 
 **Własne instrumenty:** strona i linia poleceń potrafią wstawić nowe instrumenty w miejsce dowolnego z 500 brzmień
 (do 4). Trzeba im dać też oryginalny plik soundbanku z tej samej paczki aktualizacji (`NEK100_SBANK_V1.0.4.bin`)
