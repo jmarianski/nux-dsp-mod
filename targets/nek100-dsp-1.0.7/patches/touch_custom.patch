@@ -1,5 +1,5 @@
 .patch touch_custom
-.title "Touch CUSTOM: HARD2 with soft velocities preserved and earlier forte (experimental, simulated only)"
+.title "Touch CUSTOM: HARD2 with soft velocities preserved and earlier forte"
 .requires touch_off
 .param CUSTOM_KNEE 32 1 96 "Keep velocity up to this point; above it use min(127, 2*v-knee) on HARD2"
 

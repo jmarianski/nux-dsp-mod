@@ -126,6 +126,8 @@ a { color: var(--accent); }
     <h2>4. Build / Zbuduj</h2>
     <button id="build">Build and download / Zbuduj i pobierz</button>
     <div class="status" id="bstatus"></div>
+    <p class="desc" style="margin:10px 0 0">Your choices are remembered in this browser (not the files). / Wybory są
+      zapamiętane w tej przeglądarce (bez plików). <button class="small" id="reset">Reset to defaults / Przywróć domyślne</button></p>
   </div>
   <footer>Flash the result with the official NUX updater, the same way as an official DSP update, and check that it
   reports a non-zero amount programmed. · Source, documentation and how to add another model: see the
@@ -186,7 +188,55 @@ function renderPatches(t) {
       box.appendChild(d);
     }
   }
+  restorePatches(t);
 }
+// --- settings remembered between visits (localStorage; files are not stored). Own .sf2 files are not either.
+const STORE = "nuxdsp.settings.v1", FIELDS = ["sustain", "sustainf", "grander", "granderv", "granderName", "granderPl"];
+let restoring = false;
+function loadSettings() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } }
+function saveSettings() {
+  if (restoring) return;
+  const s = loadSettings();
+  s.fields = Object.fromEntries(FIELDS.map(id => [id, $(id).type === "checkbox" ? $(id).checked : $(id).value]));
+  if (target) {
+    const t = {patches: {}, params: {}, voices: []};
+    for (const e of document.querySelectorAll("[data-patch]")) t.patches[e.dataset.patch] = e.checked;
+    for (const e of document.querySelectorAll("[data-param]")) t.params[e.dataset.param] = e.value;
+    for (const d of document.querySelectorAll(".voice")) {
+      const q = k => d.querySelector(`[data-k=${k}]`);
+      if (!PACKS.some(p => p.id === q("src").value)) continue;      // own files: not kept
+      t.voices.push({src: q("src").value, preset: q("preset").value, slot: q("slot").value,
+                     name: q("name").value, name_pl: q("name_pl").value});
+    }
+    s.targets = Object.assign(s.targets || {}, {[target.input]: t});
+  }
+  try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (e) {}
+}
+function restoreFields() {
+  const f = loadSettings().fields || {};
+  for (const id of FIELDS) if (id in f) $(id).type === "checkbox" ? $(id).checked = f[id] : $(id).value = f[id];
+}
+function restorePatches(t) {
+  const saved = (loadSettings().targets || {})[t.input];
+  if (!saved) return;
+  for (const e of document.querySelectorAll("[data-patch]"))
+    if (e.dataset.patch in saved.patches) e.checked = saved.patches[e.dataset.patch];
+  for (const e of document.querySelectorAll("[data-param]"))
+    if (e.dataset.param in saved.params) e.value = saved.params[e.dataset.param];
+}
+async function restoreVoices(t) {
+  const saved = (loadSettings().targets || {})[t.input];
+  if (!saved || !t.voices) return;
+  restoring = true;
+  try { for (const v of saved.voices.slice(0, t.voices.max)) await addVoice(v); } finally { restoring = false; }
+}
+document.addEventListener("change", saveSettings);
+document.addEventListener("input", saveSettings);
+$("reset").addEventListener("click", () => {
+  try { localStorage.removeItem(STORE); } catch (e) {}
+  location.reload();
+});
+restoreFields();
 function status(el, ok, text, sha) {
   el.innerHTML = `<span class="${ok ? "ok" : "bad"}"></span>${sha ? '<br><span class="mono"></span>' : ""}`;
   el.firstChild.textContent = (ok ? "✓ " : "✗ ") + text;
@@ -219,7 +269,7 @@ function freeSlot() {
   while (used.includes(v)) v--;
   return v;
 }
-function addVoice() {
+function addVoice(init) {   // init: a remembered {src, preset, slot, name, name_pl}
   const names = soundNames(target.voices, input);
   const d = document.createElement("div");
   d.className = "voice";
@@ -297,12 +347,18 @@ function addVoice() {
     const v = Number(q("slot").value);
     q("was").textContent = v >= 1 && v <= 500 ? `replaces / zastępuje ${names[v - 1]}` : "1..500";
   };
-  q("del").addEventListener("click", () => { preview.stop(); d.remove(); voicesChanged(); });
+  q("del").addEventListener("click", () => { preview.stop(); d.remove(); voicesChanged(); saveSettings(); });
   q("slot").value = freeSlot();
   q("slot").addEventListener("input", showWas);
   $("voices").appendChild(d);
   fill(); showWas(); voicesChanged();
-  if (PACKS.length) pickFont(PACKS[0].id); else src.dispatchEvent(new Event("change"));
+  if (!PACKS.length) return src.dispatchEvent(new Event("change"));
+  return pickFont(init ? init.src : PACKS[0].id).then(() => {
+    if (!init) return saveSettings();
+    if ([...pre.options].some(o => o.value === init.preset)) { pre.value = init.preset; pickPreset(); }
+    for (const k of ["slot", "name", "name_pl"]) q(k).value = init[k];
+    showWas();
+  });
 }
 // --- preview: the chosen preset's samples with the zones, tuning and loops that go into the soundbank.
 // The volume envelope is the one written to the device (envEncode), with its times as nuxdsp/envelope.py models
@@ -420,6 +476,7 @@ async function load(f) {
       $("vcard").hidden = false;
       $("sname").textContent = `${target.voices.soundbank.name}.bin — or drop it here / albo upuść go tutaj`;
       voicesChanged();
+      restoreVoices(target);
     }
   } else if (id.dream) {
     status($("fstatus"), false, "A DSP firmware file, but not a supported version (yet). Already patched files " +
