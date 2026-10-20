@@ -20,7 +20,8 @@ class Runner:
         m = fwmap.load()
         p = patcher.load("extra_menu", m)
         self.params = dict({q.name: q.default for q in p.params}, **params)
-        _, lines, _ = patcher.code_blocks(p)[-1]
+        _, lines, _ = next(block for block in patcher.code_blocks(p)
+                           if any(line.startswith("amp_chk:") for line in block[1]))
         self.y = dict(m.symbols(), tl_amp=STUB, bp_clk=STUB, **self.params)
         words, self.labels = asm.assemble(lines, self.y, origin=0x1a280, label_prefix=p.name)
         for a, w in list(words.items()):   # port writes (d0cd/d0cc + mask): li r0 in the simulation

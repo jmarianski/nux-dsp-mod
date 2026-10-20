@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-from nuxdsp import asm, container, disasm, extract, fwmap, patcher, web
+from nuxdsp import asm, container, disasm, extract, fwmap, patcher, sim, web
 
 FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # the settle timer not yet run on hardware) and extra_menu's functions moved
 # above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
 # timed from the last sound not yet run on hardware.
-ALL_SHA = "5c13f1c852c76d366e08019b1af72a345f2c21132e1bb69a8f31bcb2b769b415"
+# touch_custom is experimental: exhaustive simulation and web/CLI parity, no hardware test yet.
+ALL_SHA = "dc07c68cc5a9a433c9995fa4db85f7eaa0dd6fc00a3686527a3f22ac4d3b2d23"
 
 
 def padded(w, n):
@@ -51,6 +52,39 @@ class TestFirmware(unittest.TestCase):
         w = container.words(self.img)
         self.assertEqual([a for a, v in words.items() if w[a] != v], [])
 
+    def test_curve_annotations_preserve_original_data(self):
+        src = disasm.Listing(self.img, self.map).render()
+        words, _ = asm.assemble(src.splitlines())
+        original = container.words(self.img)
+        for index in range(12):
+            name = "synth_curve_%02d" % index
+            self.assertIn(name + ":", src)
+            address = self.map.symbols()[name]
+            self.assertEqual(address, 0x12cb9 + 5 * index)
+            self.assertEqual([words[a] for a in range(address, address + 5)], original[address:address + 5])
+
+    def test_custom_is_opt_in_and_preserves_factory_curves(self):
+        self.assertNotIn("touch_custom", patcher.defaults(self.map))
+        image, _ = patcher.build(self.img, self.map, patcher.resolve_patches(["touch_off", "touch_custom"]))
+        self.assertEqual(image[2 * 0x128b0:2 * 0x12cf5], self.img[2 * 0x128b0:2 * 0x12cf5])
+        self.assertEqual(image[2 * 0x2d3e:2 * 0x2d3e + 32], self.img[2 * 0x2d3e:2 * 0x2d3e + 32])
+        self.assertEqual(container.words(image)[0x3f70], 0x0706)
+
+    def test_patch_screen_distinguishes_custom_from_off(self):
+        patch = patcher.load("extra_menu", self.map)
+        symbols = dict(self.map.symbols(), **{p.name: p.default for p in patch.params})
+        layout = patcher.canonical_layout(self.map)
+        for key, lines, _ in patcher.code_blocks(patch):
+            _, labels = asm.assemble(lines, symbols, origin=layout[key], label_prefix=patch.name, labels_only=True)
+            symbols.update(labels)
+        for names, custom in ((["extra_menu"], False), (["extra_menu", "touch_off"], False),
+                              (["extra_menu", "touch_off", "touch_custom"], True)):
+            image, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
+            machine = sim.Sim(container.words(image))
+            machine.r[7] = 13
+            machine.call(symbols["pp_inst"])
+            self.assertEqual(machine.r[7], int(custom))
+
     def test_build_all(self):
         out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(patcher.available()))
         self.assertEqual(container.sha256(out), ALL_SHA)
@@ -65,8 +99,15 @@ class TestFirmware(unittest.TestCase):
             # .weak entry points (its own and those of the patches it requires): as in a build without the patches
             # that define them
             weak = {name for q in [p] + [patcher.load(r) for r in p.requires] for name, _ in q.weaks}
+            conditional = {name for q in [p] + [patcher.load(r) for r in p.requires]
+                           for hook in q.hooks for name in hook.unless}
             rest = [m for m in patcher.available()
-                    if not weak & set(re.findall(r"^(\w+):", "\n".join(patcher.load(m).code), re.M))]
+                    if m not in conditional
+                    and not weak & set(re.findall(r"^(\w+):", "\n".join(patcher.load(m).code), re.M))]
+            # Removing an optional hook provider can also remove a prerequisite
+            # (e.g. extra_menu); compare against a valid dependency-closed subset.
+            while any(set(patcher.load(m).requires) - set(rest) for m in rest):
+                rest = [m for m in rest if not set(patcher.load(m).requires) - set(rest)]
             part, _ = patcher.build(self.img, self.map, patcher.resolve_patches(rest))
             pw = padded(container.words(part), len(ow))
             orig, fw = padded(orig, len(ow)), padded(fw, len(ow))
@@ -114,10 +155,16 @@ class TestFirmware(unittest.TestCase):
                 a += 0xf2cd if 0x3a2a <= a < 0x662a else r0
             for names in ([name] + patcher.load(name, self.map).requires, patcher.available(self.map)):
                 out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
-                self.assertNotEqual(container.words(out)[a], int(stock, 16), name)
+                if kind == "3":
+                    self.assertEqual(container.words(out)[a], int(stock, 16), name)
+                else:
+                    self.assertNotEqual(container.words(out)[a], int(stock, 16), name)
             others = [n for n in listed if n != name and name not in patcher.load(n, self.map).requires]
             out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(others))
-            self.assertEqual(container.words(out)[a], int(stock, 16), name)
+            if kind == "3":
+                self.assertNotEqual(container.words(out)[a], int(stock, 16), name)
+            else:
+                self.assertEqual(container.words(out)[a], int(stock, 16), name)
 
     def test_version_tag_uses_small_font_glyphs(self):
         # the info screen draws with the small font; lowercase there maps to big-font glyphs
@@ -164,6 +211,7 @@ class TestFirmware(unittest.TestCase):
                                 {"boot_preset": {"BOOT_PRESET": 4, "PRESET_LABELS": 2},
                                  "touch_off": {"OFF_VELOCITY": 90}}),
                      ({}, {"version_tag": {}, "polish_font": {}, "lang_pl": {}}),
+                     ({"CUSTOM_KNEE": 48}, {"touch_off": {}, "touch_custom": {"CUSTOM_KNEE": 48}}),
                      ({}, {"extra_menu": {}, "telemetry": {}}), ({}, {"extra_menu": {}}), ({}, {"telemetry": {}})]
             for params, sel in cases:
                 names = list(sel) or patcher.available()

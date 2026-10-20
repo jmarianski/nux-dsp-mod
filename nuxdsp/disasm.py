@@ -105,4 +105,13 @@ class Listing:
                     out.append("%s:" % self.labels[a])
                 text, h = self.fmt(a, x, lit)
                 out.append("    %-34s ; %05x%s" % (text, a, ("  " + h) if h else ""))
+        # A sized label outside the code ranges describes program-memory data.
+        # Preserve its raw words: annotations must not guess new ISA semantics.
+        for entry in self.map.by_kind("label"):
+            if entry.size <= 1 or any(s <= entry.addr < e for s, e in self.map.code):
+                continue
+            out += ["", ".org %#07x" % entry.addr, "; " + entry.comment, entry.name + ":"]
+            for a in range(entry.addr, entry.addr + entry.size, 8):
+                words = self.w[a:min(a + 8, entry.addr + entry.size)]
+                out.append("    .dw %s ; %05x" % (", ".join("%#06x" % v for v in words), a))
         return "\n".join(out) + "\n"

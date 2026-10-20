@@ -16,12 +16,18 @@ farpool START END                free space above 0xffff, reached by a far `call
                                  It may end past the official file: the output then grows (header length,
                                  checksum moved to the new last word)
 func    ADDR NAME ; text         function entry
-label   ADDR NAME ; text         named place inside a function
+label   ADDR NAME [SIZE] ; text  named code location; SIZE > 1 outside code emits that many program-data words in the local listing
 var     ADDR NAME [SIZE] ; text  RAM variable (RAM word address), optional size in words
 glyphs  TABLE BITMAPS COUNT      glyph/image table and its bitmaps (file word addresses)
 ```
 
 Descriptions marked `(C)` were confirmed on the instrument, `(H)` are hypotheses.
+
+The NEK-100 map names the 12 nine-point synth tables `synth_curve_00`..`synth_curve_11`,
+their pair readers and the exponential, pitch, sine and auxiliary tables. They are program-memory
+addresses, not RAM addresses. `disasm` includes their original packed words in the local listing,
+which still assembles back unchanged. Their indices are not established Touch mode names; in
+particular, do not rename a convex table HARD2 merely because its shape resembles a hard touch curve.
 
 ## How things were found (short version)
 

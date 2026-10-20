@@ -1,0 +1,110 @@
+.patch touch_custom
+.title "Touch CUSTOM: HARD2 with soft velocities preserved and earlier forte (experimental, simulated only)"
+.requires touch_off
+.param CUSTOM_KNEE 32 1 96 "Keep velocity up to this point; above it use min(127, 2*v-knee) on HARD2"
+
+; Stored Touch: 0..4 = vendor curves, 5 = OFF, 6 = CUSTOM.
+; Menu: OFF, LIGHT2, LIGHT1, NORMAL, HARD1, HARD2, CUSTOM.
+; MCU sees HARD2 (4) for CUSTOM; only key events are remapped, before internal synth + USB routing.
+; The knee is an INPUT MIDI velocity, not a pressure measurement or an audio level in dB.
+; Default: 1->1, 16->16, 32->32, 48->64, 64->96, 80..127->127. Zero stays zero.
+; No factory synth tables or Grander G1/G2 parameters are modified.
+
+.hook 0x03f70 expect 0x0704
+    mov   r7, #6
+.end
+.hook 0x03f85 expect 0xff80 0x0144
+    call  tc_load_pos
+.end
+.hook 0x03f9e expect 0xff90 0x0144
+    call  tc_store_pos
+.end
+.hook 0x05057 expect 0xd14a 0x27c7
+    call  tc_name_ptr
+.end
+.hook 0x020df expect 0xc7b7 0xc6b6
+    call  tc_cc_fix
+.end
+.hook 0x02833 expect 0xc1bf 0xc793
+    call  tc_vel_hook
+.end
+
+.code 0x1a280
+tc_load_pos:
+    ld    r7, [touch]
+    cmp   r7, #6
+    beq   .load_out
+    call  touch_load_pos
+.load_out:
+    ret
+
+tc_store_pos:
+    cmp   r7, #6
+    bne   .store_old
+    st    [touch], r7
+    ret
+.store_old:
+    call  touch_store_pos
+    ret
+
+tc_cc_fix:
+    call  cc_fix             ; redo the loads + OFF mapping; frame pointer is preserved by call
+    cmp   r7, #0x32
+    bne   .cc_out
+    cmp   r6, #6
+    bne   .cc_out
+    mov   r6, #4             ; CUSTOM's input is the vendor HARD2 curve
+.cc_out:
+    ret
+
+tc_name_ptr:
+    cmp   r1, #6
+    beq   .name_custom
+    call  touch_name_ptr
+    ret
+.name_custom:
+    li    r1, #text_buf      ; caller immediately dereferences this pointer cell, then draws the text
+    mov   r7, #0x43          ; CUSTOM (ASCII in either UI language)
+    st    [r1+0], r7
+    mov   r7, #0x55
+    st    [r1+1], r7
+    mov   r7, #0x53
+    st    [r1+2], r7
+    mov   r7, #0x54
+    st    [r1+3], r7
+    mov   r7, #0x4f
+    st    [r1+4], r7
+    mov   r7, #0x4d
+    st    [r1+5], r7
+    mov   r7, #0
+    st    [r1+6], r7
+    li    r7, #text_buf
+    st    [r1+7], r7
+    addi  r1, #7
+    ret
+.end
+
+.code 0x1a280
+tc_vel_hook:
+    ld    r1, [fp+15]
+    ld    r7, [r1+3]
+    cmp   r7, #9
+    bne   .delegate
+    ld    r7, [touch]
+    cmp   r7, #6
+    bne   .delegate
+    ld    r7, [r1+5]
+    cmp   r7, #CUSTOM_KNEE
+    blt   .delegate
+    beq   .delegate
+    shl   r7, 1
+    addi  r7, #-CUSTOM_KNEE
+    cmp   r7, #128
+    blt   .write
+    mov   r7, #127
+.write:
+    st    [r1+5], r7
+.delegate:
+    call  vel_hook           ; restores event/type, keeps OFF behavior and Doom's optional dm_key callback
+    ret
+.end
