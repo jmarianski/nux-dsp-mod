@@ -179,6 +179,48 @@ class TestSoundbank(unittest.TestCase):
                     self.assertAlmostEqual(t1 / max(t0, floor), 3, delta=0.3)
         self.assertRaises(soundbank.BankError, soundbank.longer_sustain, self.bank, self.img, self.map, 0)
 
+    def test_grander(self):
+        banks = soundbank.voice_banks(container.words(self.img), self.map)
+        src, key, _ = self.map.soundbank["grander"]
+        at = lambda bank, v: soundbank.instrument_addr(bank, *soundbank.voice_to_bank_prog(banks, v))
+        word = lambda bank, a: struct.unpack_from("<h", bank, (a - soundbank.FLASH_BASE_W) * 2)[0]
+
+        def loops(bank, v):
+            """per reshaped zone (not as in the vendor's piano): (S, L, E, X), checked as the vendor's loops are"""
+            inst, out = at(bank, v), []
+            for layer, keys in zip(soundbank.layers(bank, inst), soundbank._zone_keys(bank, inst)):
+                for z, (lo, _) in zip(layer, keys):
+                    o = soundbank.find_sample_block(bank, z)
+                    _, _, S, L, E = soundbank.sample_block(bank, o)
+                    X = soundbank._stereo_x(bank, o)
+                    if len(layer) > 1 and lo >= key and (S, L, E) not in vendor:
+                        self.assertEqual(E % 512, 511)
+                        self.assertLess(L % 1024, 512)
+                        self.assertEqual((X - S) % 1024, 0)
+                        self.assertEqual(word(bank, E), word(bank, L))          # sample E = sample L
+                        self.assertEqual(word(bank, X + E - S), word(bank, X + L - S))
+                        out.append((S, L, E, X))
+            return out
+        vendor = {soundbank.sample_block(self.bank, soundbank.find_sample_block(self.bank, z))[2:]
+                  for z in soundbank.zones(self.bank, at(self.bank, src))}
+        copy = soundbank.grander(self.bank, self.img, self.map, 2)
+        self.assertGreater(len(loops(copy, 2)), 80)                            # (zones; 45 samples)
+        g = at(self.bank, src)
+        self.assertEqual(at(copy, src), g)                                     # 1.Grand Piano as the vendor's
+        self.assertEqual(copy[g:g + 0x8000], self.bank[g:g + 0x8000])
+        self.assertEqual([len(x) for x in soundbank.layers(copy, at(copy, 2))], [len(x) for x in soundbank.layers(copy, g)])
+        in_place = soundbank.grander(self.bank, self.img, self.map, src)
+        self.assertEqual(len(in_place), len(self.bank))
+        here = set(loops(in_place, src))
+        self.assertEqual(len(here), len(set(loops(copy, 2))))
+        self.assertTrue({x[0] for x in here} <= {x[0] for x in vendor})        # the vendor's samples, reshaped
+        self.assertEqual(at(in_place, 2), at(self.bank, 2))
+        self.assertEqual(soundbank.grander_fall_table(self.bank, self.img, self.map), self.map.soundbank["grander_fall"])
+        small = fwmap.load()
+        small.soundbank = dict(small.soundbank, end=struct.unpack_from("<I", self.bank, 8)[0] + 0x100000)
+        self.assertRaises(soundbank.BankError, soundbank.grander, self.bank, self.img, small, 2)
+        self.assertEqual(len(soundbank.grander(self.bank, self.img, small, src)), len(self.bank))   # takes no room
+
     def test_names_need_the_patch(self):
         plain, _ = patcher.build(self.img, self.map, patcher.resolve_patches(["version_tag"]))
         self.assertRaises(soundbank.BankError, soundbank.fill_names, plain, self.map, [(500, "Cat Piano", "")])
@@ -205,7 +247,9 @@ class TestSoundbank(unittest.TestCase):
         cli, _ = patcher.build(self.img, self.map, patcher.resolve_patches(names))
         cli = soundbank.fill_names(cli, self.map, [(v, n, p) for v, _, _, n, p in voices])
         insts = [(sf2.load(k if k.endswith(".sf2") else instrument.bundled(k)).instrument(i), v) for v, k, i, *_ in voices]
-        cli_bank = soundbank.longer_sustain(soundbank.add(self.bank, self.img, self.map, insts), self.img, self.map, 3)
+        added = soundbank.add(self.bank, self.img, self.map, insts)
+        cli_bank = soundbank.longer_sustain(soundbank.grander(added, self.img, self.map, 7), self.img, self.map, 3)
+        in_place = soundbank.grander(added, self.img, self.map, 1)
         with tempfile.TemporaryDirectory() as d:
             for f in ("index.html", "patcher.js"):
                 shutil.copy(os.path.join(web.WEB_DIR, f), d)
@@ -215,12 +259,13 @@ class TestSoundbank(unittest.TestCase):
             sel = {n: {} for n in names}
             js = [{"voice": v, "pack": k, "preset": i, "name": n, "name_pl": p} for v, k, i, n, p in voices]
             o, ob = os.path.join(d, "o.bin"), os.path.join(d, "b.bin")
-            subprocess.check_call(["node", os.path.join(HERE, "web_check.js"), d, FW, o, json.dumps(sel),
-                                   SBANK, ob, json.dumps(js), "3"])
-            with open(o, "rb") as f:
-                self.assertEqual(f.read(), cli)
-            with open(ob, "rb") as f:
-                self.assertEqual(f.read(), cli_bank)
+            for sustain, grander, want in (("3", "7", cli_bank), ("0", "1", in_place)):
+                subprocess.check_call(["node", os.path.join(HERE, "web_check.js"), d, FW, o, json.dumps(sel),
+                                       SBANK, ob, json.dumps(js), sustain, grander])
+                with open(o, "rb") as f:
+                    self.assertEqual(f.read(), cli)
+                with open(ob, "rb") as f:
+                    self.assertTrue(f.read() == want, "web and CLI banks differ (Grander Piano on %s)" % grander)
 
     def test_committed_packs_are_current(self):
         for n in instrument.bundled_names():

@@ -72,9 +72,13 @@ def export_data(image, fwmap, names=None):
         from . import soundbank
         syms = fwmap.symbols()  # addresses only: the tables are read from the user's own file
         sb = {k: [x.hex() for x in v] if k.startswith("mods") else v for k, v in fwmap.soundbank.items()}
+        if "grander_fall" in sb:
+            sb["grander_fall"] = [[li, zi, f] for (li, zi), f in sorted(sb["grander_fall"].items())]
         data["voices"] = {"soundbank": sb, "cvTab": soundbank.table_addr(fwmap), "max": 4,
                           "ramdata": fwmap.ramdata[0], "voiceBanks": syms["voice_banks"],
                           "soundNames": syms["sound_names"]}
+        if "grander" in fwmap.soundbank:
+            data["voices"]["granderLevels"] = soundbank.grander_levels(fwmap)
     return data
 
 

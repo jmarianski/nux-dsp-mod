@@ -111,6 +111,16 @@ a { color: var(--accent); }
       1.Grand Piano: longer sustain, decays <input type="number" id="sustainf" value="3" min="1" max="10" step="0.5"
       style="width:4em"> times slower while held (needs the soundbank) / dłuższe wybrzmiewanie przy trzymanym klawiszu
       (potrzebny soundbank)</label>
+    <label style="display:block;margin-top:12px"><input type="checkbox" id="grander">
+      Grander Piano on sound / na brzmieniu <input type="number" id="granderv" value="2" min="1" max="500"
+      style="width:4.5em">, name / nazwa <input id="granderName" value="Grander Piano" maxlength="13" style="width:9em">
+      / <input id="granderPl" value="Grander Piano" maxlength="13" style="width:9em"></label>
+    <p class="desc" style="margin:4px 0 0 1.6em">1.Grand Piano whose high keys (from F#4 up) ring on while held, decaying
+      3 times slower. On sound 1 it replaces 1.Grand Piano in place (takes no room); on another sound it is a copy
+      (+11 MB of the soundbank, 1.Grand Piano stays as it is). An empty name keeps the sound's own. / 1.Grand Piano,
+      którego wysokie dźwięki (od F#4) wybrzmiewają przy trzymanym klawiszu, 3 razy wolniej. Na brzmieniu 1 zastępuje
+      1.Grand Piano (bez zajmowania miejsca); na innym to kopia (+11 MB soundbanku, 1.Grand Piano zostaje bez zmian).
+      Pusta nazwa zostawia nazwę brzmienia.</p>
   </div>
   <div class="card" id="bcard" hidden>
     <h2>4. Build / Zbuduj</h2>
@@ -433,31 +443,42 @@ $("build").addEventListener("click", async () => {
       sel[p.name][prm.name] = Number(document.querySelector(`[data-param="${p.name}.${prm.name}"]`).value);
   }
   try {
-    const voices = target.voices ? selectedVoices() : [];
-    const sustain = target.voices && target.voices.soundbank.sustain && $("sustain").checked ? Number($("sustainf").value) : 0;
+    const voices = target.voices ? selectedVoices() : [], sb = target.voices && target.voices.soundbank;
+    const sustain = sb && sb.sustain && $("sustain").checked ? Number($("sustainf").value) : 0;
+    const grander = sb && sb.grander && $("grander").checked ? Number($("granderv").value) : 0;
     let bank = null;
-    if (sustain && !sbank) throw `select the official ${target.voices.soundbank.name}.bin in step 3 / wskaż oryginalny soundbank w kroku 3`;
-    if (voices.length) {
-      if (!sbank) throw `select the official ${target.voices.soundbank.name}.bin in step 3 / wskaż oryginalny soundbank w kroku 3`;
-      sel.custom_voices = {};
-      for (const v of voices) {
-        if (!Number.isInteger(v.voice) || v.voice < 1 || v.voice > 500) throw "sound number: 1..500";
-        if (!v.name) throw "each instrument needs a name / każdy instrument musi mieć nazwę";
-        if (!v.pack) throw `sound ${v.voice}: choose a usable instrument / wybierz instrument, który da się użyć`;
-      }
+    if ((sustain || grander || voices.length) && !sbank)
+      throw `select the official ${sb.name}.bin in step 3 / wskaż oryginalny soundbank w kroku 3`;
+    for (const v of voices) {
+      if (!Number.isInteger(v.voice) || v.voice < 1 || v.voice > 500) throw "sound number: 1..500";
+      if (!v.name) throw "each instrument needs a name / każdy instrument musi mieć nazwę";
+      if (!v.pack) throw `sound ${v.voice}: choose a usable instrument / wybierz instrument, który da się użyć`;
     }
+    const names = voices.slice();
+    if (grander) {
+      if (!Number.isInteger(grander) || grander < 1 || grander > 500) throw "Grander Piano: sound number 1..500";
+      if (voices.some(v => v.voice === grander)) throw `sound ${grander}: Grander Piano and an instrument / Grander Piano i instrument na tym samym brzmieniu`;
+      if (sustain && grander === sb.grander[0])
+        throw `Grander Piano in place of sound ${grander} already decays slower: untick the longer sustain / odznacz dłuższe wybrzmiewanie`;
+      const name = $("granderName").value.trim();
+      if (name) names.push({voice: grander, name, name_pl: $("granderPl").value.trim()});
+    }
+    if (names.length) sel.custom_voices = {};
     const out = applyPatches(target, input, sel);
-    if (voices.length) {
-      fillNames(target, out, voices);
-      $("bstatus").textContent = "…";
-      bank = await addInstruments(target, input, sbank, voices);
+    if (names.length) fillNames(target, out, names);
+    $("bstatus").textContent = "…";
+    if (voices.length) bank = await addInstruments(target, input, sbank, voices);
+    if (grander) {
+      await new Promise(r => setTimeout(r));               // shows "…" during the few seconds it takes
+      bank = granderPiano(target, input, bank || sbank, grander);
     }
     if (sustain) bank = longerSustain(target, input, bank || sbank, sustain);
     const files = [[target.output, out]];
     if (bank) files.push([`${target.voices.soundbank.name}_mod.bin`, bank]);
     const desc = Object.entries(sel).map(([k, ps]) =>
       [k].concat(Object.entries(ps).map(([n, v]) => `${n}=${v}`)).join(" ")).join(", ") +
-      voices.map(v => `; ${v.voice}.${v.name}`).join("") + (sustain ? `; sustain ×${sustain}` : "");
+      voices.map(v => `; ${v.voice}.${v.name}`).join("") + (grander ? `; ${grander}.Grander Piano` : "") +
+      (sustain ? `; sustain ×${sustain}` : "");
     status($("bstatus"), true, `Built: ${desc}`, await sha256(out));
     const links = document.createElement("div");
     links.className = "links";
