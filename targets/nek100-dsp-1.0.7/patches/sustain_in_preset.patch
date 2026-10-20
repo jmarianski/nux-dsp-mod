@@ -1,7 +1,7 @@
 .patch sustain_in_preset
 .title "Store the Sustain value (pedal CC64 level of the main voice) in user presets"
 
-; All 31 preset words are used, but field 12 (touch) only needs values 0..5.
+; All 31 preset words are used, but field 12 (touch) only needs values 0..6 (6 with touch_custom).
 ; New layout: field12 = touch | (sustain + 1) << 8. High byte 0 (factory presets, presets
 ; saved with the original firmware) = keep the current sustain value.
 

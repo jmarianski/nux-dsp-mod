@@ -1182,7 +1182,7 @@ pp_screen:
     st    [text_buf+15], r7
 .p_count:
     ld    r7, [text_buf+14]
-    cmp   r7, #13
+    cmp   r7, #14
     blt   .p_count_go
     jmp   .p_counted
 .p_count_go:
@@ -1214,7 +1214,7 @@ pp_screen:
     st    [text_buf+15], r7   ; installed ones before it, minus 5 * page = its line
 .p_loop:
     ld    r7, [text_buf+14]
-    cmp   r7, #13
+    cmp   r7, #14
     blt   .p_go
     .dw   0xd0ce, 0x061f5
 .p_go:
@@ -1256,38 +1256,6 @@ pp_screen:
     st    [text_buf+14], r7
     jmp   .p_loop
 
-; r7 = entry -> r7 = 1 when that patch is in the firmware, r1 = the entry. Leaf, uses r4, r5, r6.
-pp_inst:
-    mov   r6, r7              ; 5 words an entry
-    shl   r7, 2
-    add   r7, r6
-    mov   r1, r7
-    addi  r1, #pp_tab
-    ldc   r7, [r1+0]          ; kind
-    cmp   r7, #2
-    beq   .q_yes
-    ldc   r6, [r1+2]          ; stock word
-    ldc   r5, [r1+1]          ; its address
-    mov   r4, r1
-    cmp   r7, #1
-    beq   .q_ram
-    mov   r1, r5
-    ldc   r7, [r1+0]
-    jmp   .q_cmp
-.q_ram:
-    mov   r1, r5
-    ld    r7, [r1+0]
-.q_cmp:
-    mov   r1, r4
-    cmp   r7, r6
-    beq   .q_no
-.q_yes:
-    mov   r7, #1
-    ret
-.q_no:
-    mov   r7, #0
-    ret
-
 pp_page_d:                    ; right key: other page
     .dw   0xd0ce, pp_flip
 pp_page_f:                    ; dial: other page
@@ -1307,7 +1275,7 @@ pp_flip:                      ; next page, redraw (past the last one -> pp_scree
     ccall draw_screen
     .dw   0xd0ce, 0x036a5
 
-pp_tab:                       ; kind (0 code word, 1 RAM word, 2 always), address, stock word, name, Polish name
+pp_tab:                       ; kind (0 changed code word, 1 changed RAM word, 2 always, 3 exact code word), address, reference word, name, Polish name
     .dw   0, 0x03f70, 0x0704, pp_n0, pp_p0      ; touch_off
     .dw   0, 0x02601, 0x25a3, pp_n1, pp_p1      ; boot_preset
     .dw   0, 0x022ee, 0x110c, pp_n2, pp_p2      ; sustain_in_preset
@@ -1321,6 +1289,10 @@ pp_tab:                       ; kind (0 code word, 1 RAM word, 2 always), addres
     .dw   0, 0x00c1c, 0xd7c8, pp_n10, pp_p10    ; telemetry
     .dw   0, 0x055b4, 0xc14c, pp_n11, pp_p11    ; battery_percent
     .dw   0, 0x007ea, 0xd7c8, pp_n12, pp_p12    ; doom_demo
+    .dw   3, 0x03f70, 0x0706, pp_n13, pp_p13    ; touch_custom
+pp_n13:
+pp_p13:
+    .dw   0x54, 0x4f, 0x55, 0x43, 0x48, 0x20, 0x43, 0x55, 0x53, 0x54, 0x4f, 0x4d, 0
 pp_p0:
     .dw   0x44, 0x4f, 0x54, 0x59, 0x4b, 0x20, 0x57, 0x59, 0x141, 0
 pp_n1:
@@ -2497,5 +2469,49 @@ nt_busy:
 .nu_yes:
     mov   r7, #1
     ret
+.end
+
+; r7 = entry -> installed (r7), entry pointer (r1). Uses r4, r5, r6.
+; Kept in the far pool to leave the near pool for the names and table.
+.code 0x1a280
+pp_inst:
+    mov   r6, r7
+    shl   r7, 2
+    add   r7, r6
+    mov   r1, r7
+    addi  r1, #pp_tab
+    ldc   r7, [r1+0]
+    cmp   r7, #2
+    beq   .q_yes
+    ldc   r6, [r1+2]
+    ldc   r5, [r1+1]
+    mov   r4, r1
+    cmp   r7, #1
+    beq   .q_ram
+    cmp   r7, #3
+    beq   .q_exact
+    mov   r1, r5
+    ldc   r7, [r1+0]
+    jmp   .q_cmp
+.q_ram:
+    mov   r1, r5
+    ld    r7, [r1+0]
+.q_cmp:
+    mov   r1, r4
+    cmp   r7, r6
+    beq   .q_no
+.q_yes:
+    mov   r7, #1
+    ret
+.q_no:
+    mov   r7, #0
+    ret
+.q_exact:
+    mov   r1, r5
+    ldc   r7, [r1+0]
+    mov   r1, r4
+    cmp   r7, r6
+    beq   .q_yes
+    jmp   .q_no
 .end
 

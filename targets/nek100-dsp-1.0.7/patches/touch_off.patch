@@ -5,22 +5,22 @@
 ; The MCU applies the touch curve; the DSP only stores the setting (0..4) and sends it as CC 0x32.
 ; OFF is stored as value 5: the MCU gets LIGHT2 (0) and the DSP replaces the note-on velocity.
 
-.hook 0x03f70 expect 0x0704             ; touch_setting: maximum value 4 -> 5
+.hook 0x03f70 expect 0x0704 unless touch_custom ; touch_setting: maximum value 4 -> 5
     mov   r7, #5
 .end
-.hook 0x03f85 expect 0xff80 0x0144      ; touch_setting: value -> menu position before "+delta"
+.hook 0x03f85 expect 0xff80 0x0144 unless touch_custom ; touch_setting: value -> menu position before "+delta"
     call  touch_load_pos
 .end
-.hook 0x03f9e expect 0xff90 0x0144      ; touch_setting: menu position -> value on store
+.hook 0x03f9e expect 0xff90 0x0144 unless touch_custom ; touch_setting: menu position -> value on store
     call  touch_store_pos
 .end
-.hook 0x05057 expect 0xd14a 0x27c7      ; draw_touch_name: name pointer
+.hook 0x05057 expect 0xd14a 0x27c7 unless touch_custom ; draw_touch_name: name pointer
     call  touch_name_ptr
 .end
-.hook 0x020df expect 0xc7b7 0xc6b6      ; send_internal_cc: load (cc, value)
+.hook 0x020df expect 0xc7b7 0xc6b6 unless touch_custom ; send_internal_cc: load (cc, value)
     call  cc_fix
 .end
-.hook 0x02833 expect 0xc1bf 0xc793      ; task_key_events: MIDI event branch, loads event + type
+.hook 0x02833 expect 0xc1bf 0xc793 unless touch_custom ; task_key_events: MIDI event branch, loads event + type
     call  vel_hook
 .end
 
