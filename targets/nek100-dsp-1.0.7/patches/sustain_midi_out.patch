@@ -18,28 +18,51 @@
 ; CC64 0, which releases that channel's sustain inside and outside alike, while the key stays drawn on;
 ; switching the key off or on sends its four messages again. The last message wins, everywhere.
 ;
-; The hook replaces the CC case's own synth_send call (with its argument words) by a far call: bank 0's
-; pools are full when every bundled patch is applied, so the code lives in bank 1, in the padding before
-; its code (farpool 0x19720, inside the file: it does not grow), as extra_menu's far helpers; bank 1 code
-; ccalls bank 0 functions in battery_percent (on the device). Nothing after the call uses fp or the registers: the case
-; ends with the jump to the task's exit (0x28fb). All the argument words are pushed before the first
-; ccall, so nothing has to survive one: each callee pops its own two words, synth_send's first.
+; The C-style calls are made from bank 0, as the Sustain key's are. A first version made them from bank 1
+; (a far pool): USB got the pedal, the dongle did not (checked on the device). port2_out_packet goes through
+; 0x1561, which picks its case from a table read with ldc and jumps through it (c749); from code reached by a
+; far call that evidently goes wrong (H: ldc or the jump follows the caller's bank), while usb_out_packet
+; has no such table. Only so_args, a leaf without ccall, stays in bank 1.
+;
+; The hook (0x28ef..0x28f8) gets the two words from so_args and, for any controller but 64, pushes them for
+; the stock ccall synth_send at 0x28f9 and its exit. CC64 jumps to so_cc64 (bank 0, 12 words: the last hole
+; of the bank-0 pools when every bundled patch is applied), which pushes the words three times, makes the two
+; output ccalls and jumps back to 0x28f9 for synth_send, whose words were pushed first. No fp or register
+; has to survive a ccall: each callee pops its own two words, and the case ends with the jump to the exit.
 
-.hook 0x028ef expect 0xc795 0x1f7f 0xc694 0xf698 0xa607 0x7e06 0xc792 0xd74c 0x0bb0 0x7e07 0xd7c8 0x1330
-    call  so_cc                          ; r1 = the event, loaded just before (0x28ed)
-    .dw   0x7809                         ; jmp to 0x28fb, the exit
-    .dw   0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800
+.hook 0x028ef expect 0xc795 0x1f7f 0xc694 0xf698 0xa607 0x7e06 0xc792 0xd74c 0x0bb0 0x7e07
+    call  so_args                        ; r1 = the event, loaded just before (0x28ed)
+    cmp   r1, #0x40
+    bne   .push
+    .dw   0xd0ce, so_cc64                ; ljmp so_cc64
+    .dw   0x7800, 0x7800                 ; (not reached)
+.push:
+    push  r6                             ; (replaced) as stock, for the ccall synth_send that follows
+    push  r7
+.end
+
+.code 0x0f0b0
+; CC64: r7 = CIN << 8 | status, r6 = 64 << 8 | value (so_args). Reached by a jump from the hook.
+so_cc64:
+    push  r6                             ; synth_send's words (at 0x28f9, last)
+    push  r7
+    push  r6                             ; port2_out_packet's
+    push  r7
+    push  r6                             ; usb_out_packet's (low word first, as sustain_switch)
+    push  r7
+    ccall usb_out_packet
+    ccall port2_out_packet
+    .dw   0xd0ce, 0x28f9                 ; ljmp to the stock ccall synth_send, then the exit
 .end
 
 .code 0x19720
-; r1 = the keyboard event (+2 channel, +4 controller, +5 value). r7 = CIN << 8 | status (0x0bb0 | channel,
-; as synth_send gets it), r6 = controller << 8 | value: the same two words go to synth_send and, for CC64,
-; as a USB-MIDI packet (low word pushed first) to usb_out_packet and port2_out_packet, as sustain_switch
-; sends the Sustain key's.
-so_cc:
-    ld    r7, [r1+5]                     ; (replaced) the value
+; r1 = the keyboard event (+2 channel, +4 controller, +5 value) -> r7 = CIN << 8 | status (0x0bb0 | channel,
+; as synth_send gets it), r6 = controller << 8 | value (the replaced instructions), r1 = the controller.
+; Leaf.
+so_args:
+    ld    r7, [r1+5]
     and   r7, #0x7f
-    ld    r6, [r1+4]                     ; the controller
+    ld    r6, [r1+4]
     shl   r6, 8
     or    r6, r7
     ld    r7, [r1+2]
@@ -47,21 +70,5 @@ so_cc:
     or    r7, r1
     mov   r1, r6
     shr   r1, 8
-    cmp   r1, #0x40
-    bne   .synth
-    push  r6                             ; CC64: port 2's words, then USB's, under synth_send's
-    push  r7
-    push  r6
-    push  r7
-    push  r6
-    push  r7
-    ccall synth_send
-    ccall usb_out_packet
-    ccall port2_out_packet
-    ret
-.synth:
-    push  r6                             ; (replaced) any other controller: only the synth, as stock
-    push  r7
-    ccall synth_send
     ret
 .end

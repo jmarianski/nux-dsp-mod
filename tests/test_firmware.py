@@ -19,8 +19,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
 # timed from the last sound not yet run on hardware.
 # touch_custom (opt-in): run on hardware with the default knee.
-# sustain_midi_out (opt-in): not yet run on hardware.
-ALL_SHA = "f9c1301d1f7716544b02d7871c36728b150388ffba7059de626b0a4fbdf86d0b"
+# sustain_midi_out (opt-in): first version run on hardware (USB yes, dongle no); this one (output ccalls from bank 0) not yet.
+ALL_SHA = "a08884ac5f7a100beac37f45765e4c90d4a00935534e05ad3d2c1fc686d87421"
 
 
 def padded(w, n):
