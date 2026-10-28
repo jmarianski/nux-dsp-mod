@@ -37,7 +37,9 @@ particular, do not rename a convex table HARD2 merely because its shape resemble
 - Touch (`touch`, 0..4) is only stored by the DSP and sent to the MCU as CC 0x32 — the MCU applies the
   velocity curve. Touch OFF therefore rewrites the note-on velocity in `task_key_events`, which affects
   both the internal sound and USB MIDI out.
-- Sustain (`sustain_cc64`, one value per part) is the CC64 value sent when the pedal is pressed.
+- Sustain (`sustain_cc64`, one value per part) is the CC64 value the Sustain key sends (`sustain_switch`, to
+  the synth, `usb_out_packet` and `port2_out_packet`). The pedal is not that: it is CC64 from the keyboard, which
+  `task_key_events` gives only to `synth_send` (0x28ed), so stock it never reaches MIDI out (`sustain_midi_out`).
 - The display (128×64 mono) is driven by the DSP. All UI graphics are one table of 243 glyphs/images
   (`glyphs` line in the map): 8 words per entry (u32 byte offset, size, width, height), bitmaps stored
   by columns, each column starting on a byte, MSB = top pixel. It holds three fonts (main 7×12, small
