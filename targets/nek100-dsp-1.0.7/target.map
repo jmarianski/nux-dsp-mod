@@ -28,7 +28,7 @@ func  0x005f8 main                    ; init_all(), then forever main_loop_tick(
 func  0x007dd tick_10ms               ; (C: 10 ms, 6000 ticks of idle measured as ~60 s) periodic timer callback: idle counter, power key, USB, popups
 func  0x00948 power_off               ; drops the power/amp/LCD output pins and loops forever
 func  0x00958 power_key_poll          ; input 0x28e0 bit 0x400 held 50 ticks -> power_off; idle_ticks >= 180000 (30 min) -> power_off (C: auto off, on battery); extra_menu: limit per power source, also on cable (C)
-func  0x0078a usb_poll                ; input 0x28e2 bit 1 (H: USB connected): after ~1 s sends the NUX identity SysEx
+func  0x0078a usb_poll                ; input 0x28e2 bit 1 (H: the NUX dongle plugged in): dongle_state 0 -> after ~1 s 1: nux_identity for 10 ticks -> 2: wait -> 3: dongle_config
 func  0x00b01 battery_tick            ; per tick: input 0x28e0 bit 2 low -> power_src=2 (charger plugged, checked: ADC rises in those windows; also zeroes idle_ticks, so no auto off on cable), else 1; low battery: blink icon ~14 s then power_off
 func  0x00a25 battery_adc_sample      ; one ADC reading (10 bit) into a 32-entry ring at 0x2a1a
 func  0x00aa4 battery_average         ; averages the ring sums into batt_adc; on battery counts readings below batt_levels[0]
@@ -42,20 +42,48 @@ func  0x02774 tasks_create            ; creates the RTOS tasks below via task_cr
 func  0x0c591 task_create             ; r2 = message queue, r5 = stack, r7 = entry point
 func  0x0c5aa task_send_msg           ; r2 = destination queue
 func  0x0282b task_key_events         ; task(msg_type @fp+14, msg @fp+15); type 0 = MIDI event from the keys (C)
-func  0x02d3e task_ext_events         ; task for events coming from outside (H: USB MIDI in)
+func  0x02d3e task_ext_events         ; task for events coming from outside (H: the dongle UART's RX, the same port as dongle_q)
 
 # --- MIDI ------------------------------------------------------------------------------------
 func  0x01330 synth_send              ; (status|channel, d1<<8|d2) -> internal synthesizer
 func  0x01340 midi_parse_byte         ; MIDI byte parser with running status
 func  0x020d8 send_internal_cc        ; (cc, value): CC on channel 1 into the port-1 queue (to the MCU, H)
 func  0x02e40 midi_out_packet         ; (port, packet): port 1 -> queue at port1_q, port 2 -> port2_out_packet
-func  0x02cbe port2_out_packet        ; (packet) USB-MIDI packet, high word CIN << 8 | status, low word d1 << 8 | d2 (H: the wireless dongle's way out)
-func  0x062cc usb_out_packet          ; (packet) the same packet to USB MIDI (H); sustain_switch, pitch bend and notes call both, a keyboard CC neither
+func  0x02cbe port2_out_packet        ; (packet) USB-MIDI packet, high word CIN << 8 | status, low word d1 << 8 | d2 -> packet_to_bytes -> dongle_q: the NUX dongle's way out (H strong: the dongle's NUX SysEx go the same way; not USB, tele5-7)
+func  0x062cc usb_out_packet          ; (packet) the same packet to USB MIDI (C); sustain_switch and notes call it and port2_out_packet, pitch bend and cc_out (pedals, CCs per part) only this one
 func  0x02e5b midi_out_byte
 func  0x0be50 port1_queue_put         ; put one byte into the port-1 ring buffer
 func  0x0be88 port1_put_usbpacket     ; split a USB-MIDI packet (CIN -> length) into port1_queue_put calls
-func  0x03377 sustain_switch          ; (v) v = 0: CC64 0 on parts 0..3; else CC64 sustain_cc64[k] (H: the Sustain soft key, panel_buttons 0x3428)
-label 0x033c4 sustain_switch_on       ; sustain_switch on: for k in 0..3: CC64 sustain_cc64[k] to synth_send, usb_out_packet and port2_out_packet (not the pedal: that is a keyboard CC, task_key_events 0x28ed)
+func  0x03377 sustain_switch          ; (v) v = 0: CC64 0 on parts 0..2; else CC64 sustain_cc64[k] (the Sustain soft key, panel_buttons 0x3428; C: k = 0..2 on USB and the dongle)
+label 0x033c4 sustain_switch_on       ; sustain_switch on: for k in 0..2: CC64 sustain_cc64[k] to synth_send, usb_out_packet and port2_out_packet (0x33b3) (not the pedal: mcu_pedal -> pedal_in -> cc_out)
+label 0x02242 mcu_pedal               ; mcu_cc, controller 0x74 from the MCU (0x21a8) = the sustain pedal: value 0 up, else 127 -> pedal_in(0, v, 0)
+func  0x01204 pedal_in                ; (pedal 0..2, v, ch): on a change of pedal_state (hysteresis 7, >= 0x78 -> 127) cc_all_parts(pedal_cc[pedal], v, ch)
+label 0x0dfb6 pedal_cc 3              ; ldc table: 64, 67, 66 (sustain, soft, sostenuto)
+var   0x02a3c pedal_state 3           ; last value of each pedal (pedal_in)
+func  0x00e60 cc_all_parts            ; (ctrl, v, ch): cc_out for every part (0..part_count-1) that takes this controller (bit maps 0x2ac0, 0x2c67; 1, 64, 66, 67 apart)
+func  0x00de0 cc_out                  ; (part, ch, ctrl, v): CC to synth_send and usb_out_packet (0x0e5d), only on a change (cache 0x2ad8); 64 scaled by the part's table at 0x2c66 (H)
+var   0x02c5b part_count              ; (H) parts in use: loop bound of cc_all_parts and others
+func  0x01561 packet_to_bytes         ; (packet, buf) -> number of MIDI bytes (case by CIN: ldc table 0xdfb7, jump c749); no state
+func  0x02cae dongle_q_init           ; dongle_q = 0x312c, ring set up (0x7a40); from tasks_create after the UART (0x30e8)
+func  0x02cb7 dongle_put_byte         ; (byte) -> dongle_q (the NUX SysEx senders)
+func  0x02d32 dongle_tx_next          ; one byte of dongle_q to the UART (io_events, event bit 2)
+var   0x0332c dongle_q                ; pointer to the byte ring at 0x312c (dongle UART TX)
+func  0x07a18 ring_put                ; (r2 ring, r7 byte) put a byte, start the transmitter when idle (H; hand-written)
+func  0x07ab0 uart_tx_next            ; (r2 ring) TX ready (I/O 0x2838): next byte out; 2 = ring empty (H)
+func  0x00cd5 io_events               ; (H) task loop: event bit 1 -> 0xbe63, bit 2 -> dongle_tx_next, bit 3 -> USB (0xbf70)
+func  0x006fd nux_identity            ; F0 4E 55 58 04 00 08 "NEK-100" 00 F7 -> dongle_q (usb_poll, dongle_state 1)
+func  0x0066f nux_cmd0                ; (v) F0 4E 55 58 00 .. F7, 0 or 1 by v -> dongle_q
+func  0x0063d nux_cmd6                ; (v) F0 4E 55 58 06 .. F7 -> dongle_q
+func  0x006a1 nux_cmd7_8              ; (v) F0 4E 55 58 .. F7 with 08 or 07 by v -> dongle_q
+func  0x006d4 nux_cmd2                ; F0 4E 55 58 02 00 1F F7 -> dongle_q
+func  0x0076c dongle_config           ; dongle_state 3, up to 10 times: nux_cmd0/6/7_8 with dongle_flag (+ nux_cmd2)
+func  0x00768 dongle_config_again     ; dongle_cfg_n = 0 (unplugged, dongle_flag changed)
+var   0x00004 dongle_flag             ; (H) a menu toggle (0x3518, 0x3ac0), sent to the dongle by dongle_config
+var   0x00014 dongle_cfg_n            ; dongle_config sends so far (stops at 10)
+var   0x00016 dongle_state            ; usb_poll's state, 0..3
+func  0x0bee8 irq_off                 ; (H) I/O 0x36 &= ~0xc00, returns the old value (usb_out_packet)
+func  0x0c238 usb_put_packet          ; (H) through the pointer at 0x73e5 into the USB ring 0x73ec
+func  0x0d6d0 synth_write             ; (H) synth_send's driver
 
 # --- presets ---------------------------------------------------------------------------------
 func  0x02290 collect_preset          ; (ptr) current settings -> 31-word preset
