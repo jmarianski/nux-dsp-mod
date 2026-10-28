@@ -1,0 +1,67 @@
+.patch sustain_midi_out
+.title "Sustain pedal on MIDI out: the pedal's CC64 also goes to USB and the wireless dongle, as the Sustain key's does"
+
+; Stock: the Sustain key (sustain_switch) sends, for each part k = 0..3, CC64 to the internal synth
+; (synth_send) and the same message as a USB-MIDI packet to usb_out_packet and port2_out_packet, so
+; it reaches a computer and the NUX wireless dongle (checked: an FM-1 receives it through the dongle).
+; Pitch bend from the keyboard goes out the same way. A control change from the keyboard (the pedal
+; is CC64 on the keyboard's channel) only goes to synth_send in task_key_events, so the pedal never
+; leaves the instrument.
+;
+; Here, after that synth_send, CC64 (and only CC64) is sent out once more through the same two
+; functions, in the same packet form the firmware uses: high word CIN << 8 | status (0x0bb0 | channel,
+; as synth_send gets it), low word controller << 8 | value. What goes out is exactly what the internal
+; synth got: same channel, same value.
+;
+; Pedal and Sustain key are not merged: each one's messages go out as they are, as inside. With the
+; key on, pressing the pedal sends CC64 127 (or what the keyboard sends) on its channel, and releasing it
+; CC64 0, which releases that channel's sustain inside and outside alike, while the key stays drawn on;
+; switching the key off or on sends its four messages again. The last message wins, everywhere.
+;
+; The hook replaces the CC case's own synth_send call (with its argument words) by a far call: bank 0's
+; pools are full when every bundled patch is applied, so the code lives in bank 1, in the padding before
+; its code (farpool 0x19720, inside the file: it does not grow), as extra_menu's far helpers; bank 1 code
+; ccalls bank 0 functions in battery_percent (on the device). Nothing after the call uses fp or the registers: the case
+; ends with the jump to the task's exit (0x28fb). All the argument words are pushed before the first
+; ccall, so nothing has to survive one: each callee pops its own two words, synth_send's first.
+
+.hook 0x028ef expect 0xc795 0x1f7f 0xc694 0xf698 0xa607 0x7e06 0xc792 0xd74c 0x0bb0 0x7e07 0xd7c8 0x1330
+    call  so_cc                          ; r1 = the event, loaded just before (0x28ed)
+    .dw   0x7809                         ; jmp to 0x28fb, the exit
+    .dw   0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800, 0x7800
+.end
+
+.code 0x19720
+; r1 = the keyboard event (+2 channel, +4 controller, +5 value). r7 = CIN << 8 | status (0x0bb0 | channel,
+; as synth_send gets it), r6 = controller << 8 | value: the same two words go to synth_send and, for CC64,
+; as a USB-MIDI packet (low word pushed first) to usb_out_packet and port2_out_packet, as sustain_switch
+; sends the Sustain key's.
+so_cc:
+    ld    r7, [r1+5]                     ; (replaced) the value
+    and   r7, #0x7f
+    ld    r6, [r1+4]                     ; the controller
+    shl   r6, 8
+    or    r6, r7
+    ld    r7, [r1+2]
+    li    r1, #0x0bb0
+    or    r7, r1
+    mov   r1, r6
+    shr   r1, 8
+    cmp   r1, #0x40
+    bne   .synth
+    push  r6                             ; CC64: port 2's words, then USB's, under synth_send's
+    push  r7
+    push  r6
+    push  r7
+    push  r6
+    push  r7
+    ccall synth_send
+    ccall usb_out_packet
+    ccall port2_out_packet
+    ret
+.synth:
+    push  r6                             ; (replaced) any other controller: only the synth, as stock
+    push  r7
+    ccall synth_send
+    ret
+.end

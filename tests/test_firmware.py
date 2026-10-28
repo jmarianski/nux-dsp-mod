@@ -19,7 +19,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
 # timed from the last sound not yet run on hardware.
 # touch_custom (opt-in): run on hardware with the default knee.
-ALL_SHA = "dc07c68cc5a9a433c9995fa4db85f7eaa0dd6fc00a3686527a3f22ac4d3b2d23"
+# sustain_midi_out (opt-in): not yet run on hardware.
+ALL_SHA = "f9c1301d1f7716544b02d7871c36728b150388ffba7059de626b0a4fbdf86d0b"
 
 
 def padded(w, n):
@@ -143,8 +144,9 @@ class TestFirmware(unittest.TestCase):
         path = os.path.join(self.map.patch_dir, "extra_menu.patch")
         with open(path) as f:
             rows = re.findall(r"\.dw\s+(\d), (0x[0-9a-f]+), (0x[0-9a-f]+), pp_n\d+, pp_p\d+\s+; (\w+)", f.read())
-        # short_welcome only changes an initial RAM value (a counter that runs down to 0): nothing to look at later
-        listed = [n for n in patcher.available(self.map) if n != "short_welcome"]
+        # short_welcome only changes an initial RAM value (a counter that runs down to 0): nothing to look at later;
+        # sustain_midi_out is not on the screen yet: its row and name need bank-0 pool space, which is used up
+        listed = [n for n in patcher.available(self.map) if n not in ("short_welcome", "sustain_midi_out")]
         self.assertEqual(sorted(r[3] for r in rows), sorted(listed))
         r0 = self.map.ramdata[0]
         for kind, addr, stock, name in rows:
