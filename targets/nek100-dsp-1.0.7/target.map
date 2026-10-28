@@ -8,7 +8,7 @@ input    NEK100_DSP_V1.0.7.bin
 output   NEK100_DSP_V1.0.7B_mod.bin
 download https://nuxaudio.com/product/nek100/
 defaults boot_preset touch_off sustain_in_preset version_tag octave_per_part extra_menu
-optional polish_font lang_pl custom_voices telemetry battery_percent touch_custom doom_demo sustain_midi_out
+optional polish_font lang_pl custom_voices telemetry battery_percent touch_custom doom_demo sustain_midi_out battery_gauge
 
 code    0x00400 0x0f0a3     ; code bank 0
 code    0x10400 0x128ab     ; code bank 1 (reached how? unknown)

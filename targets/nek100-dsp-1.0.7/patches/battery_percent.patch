@@ -49,6 +49,10 @@
 .param START 60 0 300 "Battery %: seconds after power-on or unplugging during which the value may also go up"
 .param CHARGING 34 0 80 "Battery %: how much higher the reading is with the charger plugged in"
 .param REDRAW 2 1 5 "Battery %: redraw when the ADC moved by more than this (stock 5)"
+; entry points of the optional battery_gauge patch (it shows a counted charge instead); without it they do nothing
+.weak bg_clk bp_nop           ; every tick, r7 = 10 ms gone (kept), r1 kept
+.weak bg_raw bp_nop           ; bp_pct: bp_val is the curve's value, before the never-up rule
+.weak bg_show bp_nop          ; bp_draw, after bp_pct: may change bp_val
 
 ; draw_battery, after `enter #2`: everything is ours, then its epilogue
 .hook 0x055b4 expect 0xc14c 0x0000 0xc14c 0x00bd
@@ -126,6 +130,7 @@ bp_draw:
     ret
 .bat:
     call  bp_pct
+    call  bg_show
     mov   r7, #0
     st    [bp_bolt], r7
     ld    r7, [power_src]
@@ -336,6 +341,7 @@ bp_pct:
     st    [bp_p], r7
     jmp   .tenth
 .done:
+    call  bg_raw
     ld    r7, [power_src]
     cmp   r7, #1
     beq   .mono
@@ -425,6 +431,7 @@ bp_dt:
 ; every tick from extra_menu's clock (or bp_tick), r7 = 10 ms gone: the start timer, and the settle timer counts
 ; up from a change of asleep / awake to SETTLE s. Keeps r7; uses r6.
 bp_clk:
+    call  bg_clk
     st    [bp_dtl], r7
     ld    r7, [bp_mag]        ; starting: never up from START s on
     li    r6, #0x5aa4
@@ -461,6 +468,9 @@ bp_clk:
 .tk_st:
     st    [bp_hold], r7
     ld    r7, [bp_dtl]
+    ret
+
+bp_nop:                       ; battery_gauge's entry points without it
     ret
 
 ; bp_val -> bp_txt, bp_x = 124 - its width (draw_text_impl advances 5 per digit, 4 after a '1')
