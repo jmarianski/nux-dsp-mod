@@ -19,8 +19,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # above 0xffff (run on hardware with it); extra_menu's clock (real time asleep), held keys and the Speaker
 # timed from the last sound not yet run on hardware.
 # touch_custom (opt-in): run on hardware with the default knee.
-# sustain_midi_out (opt-in): first version run on hardware (USB yes, dongle no); this one (output ccalls from bank 0) not yet.
-ALL_SHA = "a08884ac5f7a100beac37f45765e4c90d4a00935534e05ad3d2c1fc686d87421"
+# sustain_midi_out (opt-in): earlier versions hooked the wrong place (the pedal reached USB stock already, not the dongle);
+# this one (pedal's cc_out also to port2_out_packet) not yet run on hardware.
+ALL_SHA = "c48d69ed4cd6eee099db5547de668faabad6e65b520f0989c3016edde3bdc08c"
 
 
 def padded(w, n):

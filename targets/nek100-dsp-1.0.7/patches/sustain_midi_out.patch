@@ -1,74 +1,58 @@
 .patch sustain_midi_out
-.title "Sustain pedal on MIDI out: the pedal's CC64 also goes to USB and the wireless dongle, as the Sustain key's does"
+.title "Sustain pedal on MIDI out: the pedal's CC64 also goes to the wireless dongle, as the Sustain key's does"
 
-; Stock: the Sustain key (sustain_switch) sends, for each part k = 0..3, CC64 to the internal synth
-; (synth_send) and the same message as a USB-MIDI packet to usb_out_packet and port2_out_packet, so
-; it reaches a computer and the NUX wireless dongle (checked: an FM-1 receives it through the dongle).
-; Pitch bend from the keyboard goes out the same way. A control change from the keyboard (the pedal
-; is CC64 on the keyboard's channel) only goes to synth_send in task_key_events, so the pedal never
-; leaves the instrument.
+; The pedal is not a keyboard CC64. The MCU reports it on channel 16 as controller 0x74 (any value but 0:
+; down), and mcu_cc 0x2185 (0x21a6: cmp #0x74, long beq to 0x2242) calls pedal_in(0, 0 or 127, 0). pedal_in
+; 0x1204 keeps the state of the three pedals and, on a change, calls cc_all_parts(pedal_cc[0] = 64, value,
+; 0) 0x0e60, which calls cc_out(part, 0, 64, value) 0x0de0 for every part in use. cc_out sends the CC to
+; synth_send and, as a USB-MIDI packet, to usb_out_packet, and that is all: the pedal reaches USB (checked:
+; ch 0..2 per press, from the stock firmware already), never port2_out_packet, the NUX dongle's way out
+; (0x2cbe -> the byte queue at 0x312c that the dongle's NUX handshake also goes through).
 ;
-; Here, after that synth_send, CC64 (and only CC64) is sent out once more through the same two
-; functions, in the same packet form the firmware uses: high word CIN << 8 | status (0x0bb0 | channel,
-; as synth_send gets it), low word controller << 8 | value. What goes out is exactly what the internal
-; synth got: same channel, same value.
+; The Sustain key (sustain_switch 0x3377) sends, for each part k = 0..2, synth_send, usb_out_packet and then
+; port2_out_packet with the same packet: 0x33b3 loads it from its frame (fbe2 fffd fbf7), pushes the low word
+; then the high word, ccall 0x2cbe. Notes (route_note_on) end with port2_out_packet too. That is why the key
+; reaches the dongle and the pedal did not.
 ;
-; Pedal and Sustain key are not merged: each one's messages go out as they are, as inside. With the
-; key on, pressing the pedal sends CC64 127 (or what the keyboard sends) on its channel, and releasing it
-; CC64 0, which releases that channel's sustain inside and outside alike, while the key stays drawn on;
-; switching the key off or on sends its four messages again. The last message wins, everywhere.
+; Here cc_out, after its stock ccall usb_out_packet, does what the Sustain key does: for controller 64 (and
+; only 64) it loads the same packet from its own frame (stored at 0x0e57: high word at [bp-6], low at [bp-5])
+; and ccalls port2_out_packet with it. Same function, same packet form, same order, same task as the key
+; (task_key_events, through mcu_cc). Per part, as on USB: CC64 on channel 0, 1, 2 (B0|part, 64, 0 or 127).
+; cc_out sends only on a change (its per-part cache), so the dongle gets what USB gets.
 ;
-; The C-style calls are made from bank 0, as the Sustain key's are. A first version made them from bank 1
-; (a far pool): USB got the pedal, the dongle did not (checked on the device). port2_out_packet goes through
-; 0x1561, which picks its case from a table read with ldc and jumps through it (c749); from code reached by a
-; far call that evidently goes wrong (H: ldc or the jump follows the caller's bank), while usb_out_packet
-; has no such table. Only so_args, a leaf without ccall, stays in bank 1.
+; Pedal and Sustain key are not merged, as inside: each one's messages go out as they are, the last one
+; wins. With the key on, pressing the pedal sends CC64 127 on each part and releasing it CC64 0, which
+; releases the sustain inside and outside alike while the key stays drawn on.
 ;
-; The hook (0x28ef..0x28f8) gets the two words from so_args and, for any controller but 64, pushes them for
-; the stock ccall synth_send at 0x28f9 and its exit. CC64 jumps to so_cc64 (bank 0, 12 words: the last hole
-; of the bank-0 pools when every bundled patch is applied), which pushes the words three times, makes the two
-; output ccalls and jumps back to 0x28f9 for synth_send, whose words were pushed first. No fp or register
-; has to survive a ccall: each callee pops its own two words, and the case ends with the jump to the exit.
+; [bp+k] (d2cN/fbe2 with a 16-bit offset) is the frame of the C call (arguments from bp+2); it survives the
+; ccall usb_out_packet, as sustain_switch relies on at 0x33b3. The ccalls are made from bank 0.
 
-.hook 0x028ef expect 0xc795 0x1f7f 0xc694 0xf698 0xa607 0x7e06 0xc792 0xd74c 0x0bb0 0x7e07
-    call  so_args                        ; r1 = the event, loaded just before (0x28ed)
-    cmp   r1, #0x40
-    bne   .push
+.hook 0x00e57 expect 0xd3cc 0xfffb 0xd3cd 0xfffa 0x7e04 0x7e05 0xd7c8 0x62cc
+    .dw   0xd3cc, 0xfffb                 ; (as stock) the packet: low word at [bp-5]
+    .dw   0xd3cd, 0xfffa                 ; high word (CIN << 8 | status) at [bp-6]
+    push  r4                             ; usb_out_packet's words, as stock
+    push  r5
+    .dw   0xd0ce, so_usb                 ; ljmp so_usb (instead of the ccall)
+.end
+
+.code 0x09169
+; cc_out(part, ch, controller, value), its packet pushed. Reached by a jump from the hook.
+so_usb:
+    ccall usb_out_packet                 ; (replaced) as stock
+    .dw   0xd2cf, 0x0004                 ; ld r7, [bp+4]: the controller
     .dw   0xd0ce, so_cc64                ; ljmp so_cc64
-    .dw   0x7800, 0x7800                 ; (not reached)
-.push:
-    push  r6                             ; (replaced) as stock, for the ccall synth_send that follows
-    push  r7
 .end
 
 .code 0x0f0b0
-; CC64: r7 = CIN << 8 | status, r6 = 64 << 8 | value (so_args). Reached by a jump from the hook.
+; r7 = the controller. CC64: the packet once more, to port2_out_packet, as sustain_switch does. Then
+; cc_out's own epilogue (0x0e5f).
 so_cc64:
-    push  r6                             ; synth_send's words (at 0x28f9, last)
+    cmp   r7, #0x40
+    bne   .ret
+    .dw   0xfbe2, 0xfffa, 0xfbf7         ; r7 = [bp-6] (high word), r6 = [bp-5] (low word)
+    push  r6
     push  r7
-    push  r6                             ; port2_out_packet's
-    push  r7
-    push  r6                             ; usb_out_packet's (low word first, as sustain_switch)
-    push  r7
-    ccall usb_out_packet
     ccall port2_out_packet
-    .dw   0xd0ce, 0x28f9                 ; ljmp to the stock ccall synth_send, then the exit
-.end
-
-.code 0x19720
-; r1 = the keyboard event (+2 channel, +4 controller, +5 value) -> r7 = CIN << 8 | status (0x0bb0 | channel,
-; as synth_send gets it), r6 = controller << 8 | value (the replaced instructions), r1 = the controller.
-; Leaf.
-so_args:
-    ld    r7, [r1+5]
-    and   r7, #0x7f
-    ld    r6, [r1+4]
-    shl   r6, 8
-    or    r6, r7
-    ld    r7, [r1+2]
-    li    r1, #0x0bb0
-    or    r7, r1
-    mov   r1, r6
-    shr   r1, 8
-    ret
+.ret:
+    .dw   0xd5cc                         ; (as stock, 0x0e5f) return from cc_out, 4 arguments
 .end

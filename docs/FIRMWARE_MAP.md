@@ -38,8 +38,13 @@ particular, do not rename a convex table HARD2 merely because its shape resemble
   velocity curve. Touch OFF therefore rewrites the note-on velocity in `task_key_events`, which affects
   both the internal sound and USB MIDI out.
 - Sustain (`sustain_cc64`, one value per part) is the CC64 value the Sustain key sends (`sustain_switch`, to
-  the synth, `usb_out_packet` and `port2_out_packet`). The pedal is not that: it is CC64 from the keyboard, which
-  `task_key_events` gives only to `synth_send` (0x28ed), so stock it never reaches MIDI out (`sustain_midi_out`).
+  the synth, `usb_out_packet` and `port2_out_packet`). The pedal is not that: the MCU reports it on channel 16 as
+  controller 0x74 (`mcu_pedal`), and `pedal_in` → `cc_all_parts` → `cc_out` send CC64 per part to the synth and
+  `usb_out_packet` only, so stock it reaches USB but not the NUX dongle (`sustain_midi_out`).
+- MIDI out has two ways: `usb_out_packet` (USB device, ring at 0x73ec) and `port2_out_packet`, which turns the
+  packet into bytes (`packet_to_bytes`) for `dongle_q`, a UART byte ring that the NUX dongle's handshake also goes
+  through (`usb_poll`: `nux_identity`, then `dongle_config`). Notes and the Sustain key call both; pitch bend and
+  `cc_out` only the first.
 - The display (128×64 mono) is driven by the DSP. All UI graphics are one table of 243 glyphs/images
   (`glyphs` line in the map): 8 words per entry (u32 byte offset, size, width, height), bitmaps stored
   by columns, each column starting on a byte, MSB = top pixel. It holds three fonts (main 7×12, small
