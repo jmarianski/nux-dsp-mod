@@ -58,7 +58,7 @@ async function identify(bytes) {
 function applyPatches(target, bytes, selection) {
   const sel = target.patches.filter(p => p.name in selection);
   // code in a far pool past the end of the file: the file grows in 64-word blocks (as nuxdsp/patcher.py build)
-  const end = Math.max(0, ...sel.flatMap(p => [p.words, ...p.params.flatMap(prm => Object.values(prm.values))]
+  const end = Math.max(0, ...sel.flatMap(p => [p.words, ...p.params.flatMap(prm => prm.linear ? [prm.linear] : Object.values(prm.values))]
     .flatMap(ws => Object.keys(ws).map(a => +a + 1))));
   let out = new Uint8Array(bytes);
   if (end > out.length / 2 - 1) {
@@ -77,7 +77,9 @@ function applyPatches(target, bytes, selection) {
     for (const prm of p.params) {
       const v = selection[p.name][prm.name] ?? prm.default;
       if (!Number.isInteger(v) || v < prm.lo || v > prm.hi) throw `${prm.name} must be ${prm.lo}..${prm.hi}`;
-      Object.assign(words, prm.values[v]);
+      if (prm.linear)  // word = a + b * value (nuxdsp/web.py param_words)
+        for (const [a, [x, b]] of Object.entries(prm.linear)) words[a] = (x + b * v) & 0xffff;
+      else Object.assign(words, prm.values[v]);
     }
     for (const [other, diff] of Object.entries(p.with || {}))  // .weak entry points, `unless` hooks
       if (other in selection)

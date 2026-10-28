@@ -212,7 +212,8 @@ doom/              the doom_demo patch's source: our C compiler for the P16, the
 ```
 
 Tests: `python3 -m unittest discover -s tests -t .`. Set `NEK100_FW=/path/to/NEK100_DSP_V1.0.7.bin`
-for the firmware tests; the web test needs `node`. `doom/` has its own suite: `cd doom && uv run pytest -q`
+for the firmware tests; the web test needs `node`; `NUXDSP_SLOW=1` adds the slow ones (soundbank rendering,
+every patch subset). `doom/` has its own suite: `cd doom && uv run pytest -q`
 (Freedoom Phase 1 at `doom/wad/freedoom1.wad`); after changing it, `python3 doom/tools/exportpatch.py` writes
 `doom_demo.patch` and `python3 -m nuxdsp web NEK100_DSP_V1.0.7.bin` the web data.
 

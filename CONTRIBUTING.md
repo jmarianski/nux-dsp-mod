@@ -13,6 +13,8 @@ instruments.
 - **Another model or version**: see [docs/NEW_TARGET.md](docs/NEW_TARGET.md).
 - After changing a target's patches, regenerate its web data (`python3 -m nuxdsp web FILE.bin`) and
   update `ALL_SHA` in its firmware test. Run the tests:
-  `NEK100_FW=/path/to/NEK100_DSP_V1.0.7.bin python3 -m unittest discover -s tests -t .`
+  `NEK100_FW=/path/to/NEK100_DSP_V1.0.7.bin python3 -m unittest discover -s tests -t .` (about a minute); the slow
+  ones (soundbank rendering, every patch subset) only with `NUXDSP_SLOW=1`, before a commit that touches the
+  soundbank, the web page or the layout of patches.
 
 Firmware-dependent tests are skipped without the file, so CI runs only the rest. Run them locally.
