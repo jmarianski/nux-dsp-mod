@@ -85,7 +85,8 @@ class TestClock(unittest.TestCase):
 
 
 class TestKeys(unittest.TestCase):
-    def event(self, r, label, d1, d2):
+    def event(self, r, label, d1, d2, ch=0):
+        r.s.wr(EV + 2, ch)
         r.s.wr(EV + 4, d1)
         r.s.wr(EV + 5, d2)
         s = r.run(label, r6=0x1234, r7=0x5678)
@@ -133,6 +134,8 @@ class TestKeys(unittest.TestCase):
         self.assertEqual(r.s.rd(NT_PED), 0)
         self.event(r, "nt_cc", 0x40, 64)
         self.assertEqual(r.s.rd(NT_PED), 1)
+        self.event(r, "nt_cc", 0x40, 0, ch=15)  # the MCU's channel: controller 64 there is not the pedal
+        self.assertEqual(r.s.rd(NT_PED), 1)
 
 
 class TestSpeaker(unittest.TestCase):
@@ -176,10 +179,11 @@ class TestSpeaker(unittest.TestCase):
 
     def test_sustain_rings_on(self):
         tail = Runner().params["SUS_TAIL"] * 100
-        for ped, key in [(1, 0), (0, 1)]:
+        for ped, key, pedal in [(1, 0, 0), (0, 1, 0), (0, 0, 127)]:   # pedal: pedal_in's state (controller 0x74)
             r = self.setup(0)
             r.s.wr(NT_PED, ped)
             r.s.wr(r.y["sustain_on"], key)
+            r.s.wr(r.y["pedal_state"], pedal)
             self.assertEqual(self.tick(r, 600)[0], True)
             self.assertEqual(self.tick(r, tail - 2)[0], True)
             self.assertEqual(self.tick(r)[0], False)

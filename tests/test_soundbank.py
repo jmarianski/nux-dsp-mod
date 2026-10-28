@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from nuxdsp import container, envelope, fwmap, instrument, patcher, sf2, soundbank, web
+from tests import slow
 
 FW, SBANK, SF2 = os.environ.get("NEK100_FW"), os.environ.get("NEK100_SBANK"), os.environ.get("NUX_TEST_SF2")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -179,6 +180,7 @@ class TestSoundbank(unittest.TestCase):
                     self.assertAlmostEqual(t1 / max(t0, floor), 3, delta=0.3)
         self.assertRaises(soundbank.BankError, soundbank.longer_sustain, self.bank, self.img, self.map, 0)
 
+    @slow
     def test_grander(self):
         banks = soundbank.voice_banks(container.words(self.img), self.map)
         src, key, _ = self.map.soundbank["grander"]
@@ -226,6 +228,7 @@ class TestSoundbank(unittest.TestCase):
         self.assertRaises(soundbank.BankError, soundbank.fill_names, plain, self.map, [(500, "Cat Piano", "")])
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
+    @slow
     def test_web_matches_cli(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -254,7 +257,9 @@ class TestSoundbank(unittest.TestCase):
             for f in ("index.html", "patcher.js"):
                 shutil.copy(os.path.join(web.WEB_DIR, f), d)
             os.mkdir(os.path.join(d, "targets"))
-            web.write_target(self.img, self.map, d)
+            with open(os.path.join(d, "targets", self.map.id + ".js"), "w", encoding="utf-8") as f:
+                f.write(web.current_target_js(self.img, self.map))
+            web.update_index(d)
             web.write_packs(d)
             sel = {n: {} for n in names}
             js = [{"voice": v, "pack": k, "preset": i, "name": n, "name_pl": p} for v, k, i, n, p in voices]

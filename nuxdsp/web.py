@@ -2,11 +2,13 @@
 
 Each supported firmware gets web/targets/<id>.js. It contains only the words *we* write (our code,
 our hook instructions, our string characters), never original firmware words: the user's file is
-identified by its SHA-256. Parameters are exported as per-value word tables computed by the real
-builder, so the page cannot drift from the CLI. Regenerating needs the official file of that target
-only, so each model can be maintained by whoever owns it.
+identified by its SHA-256. Parameters are exported as per-value word tables, or as a linear rule per
+word checked at sample values, computed by the real builder, so the page cannot drift from the CLI.
+Regenerating needs the official file of that target only, so each model can be maintained by whoever
+owns it.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -26,6 +28,37 @@ def patch_words(image, fwmap, p, params=None, also=()):
     return {a: new[a] for a in sorted(owner) if owner[a] == p.name}  # the checksum word is recomputed in JS
 
 
+LINEAR_MIN = 64      # a parameter with more values than this is tried as linear first
+LINEAR_SAMPLES = 17  # values it is checked at (both ends, the default and evenly between)
+
+
+def param_words(image, fwmap, p, prm, base):
+    """{"linear": {addr: [a, b]}}: word = (a + b * value) & 0xffff, when every word the parameter changes
+    is that at LINEAR_SAMPLES values (built for real); else {"values": {value: {addr: word}}}, every value
+    built. A wide range (battery_gauge's rates, 1..3000) would take hours to build value by value."""
+    def words(v):
+        w = patch_words(image, fwmap, p, {prm.name: v})
+        if set(w) != set(base):
+            raise patcher.PatchError("%s: %s changes which words are written" % (p.name, prm.name))
+        return w
+    n = prm.hi - prm.lo + 1
+    if n > LINEAR_MIN:
+        w0, w1 = words(prm.lo), words(prm.lo + 1)
+        lin = {}
+        for a in base:
+            b = (w1[a] - w0[a]) & 0xffff
+            lin[a] = [(w0[a] - b * prm.lo) & 0xffff, b]
+        picks = {prm.lo + (n - 1) * i // (LINEAR_SAMPLES - 1) for i in range(LINEAR_SAMPLES)} | {prm.default}
+        if all(all(w[a] == (x + b * v) & 0xffff for a, (x, b) in lin.items())
+               for v in sorted(picks - {prm.lo, prm.lo + 1}) for w in [words(v)]):
+            return {"linear": {a: ab for a, ab in lin.items() if ab[1]}}
+    values = {}
+    for v in range(prm.lo, prm.hi + 1):
+        w = words(v)
+        values[v] = {a: x for a, x in w.items() if x != base[a]}
+    return {"values": values}
+
+
 def export_data(image, fwmap, names=None):
     data = {"id": fwmap.id, "device": fwmap.device, "firmware": fwmap.firmware, "input": fwmap.input,
             "output": fwmap.output, "download": fwmap.download, "sha256": fwmap.sha256, "words": len(container.words(image)),
@@ -37,18 +70,13 @@ def export_data(image, fwmap, names=None):
                  "default": p.name in fwmap.defaults}
         seen = set()
         for prm in p.params:
-            values = {}
-            for v in range(prm.lo, prm.hi + 1):
-                w = patch_words(image, fwmap, p, {prm.name: v})
-                if set(w) - set(base) or set(base) - set(w):
-                    raise patcher.PatchError("%s: %s changes which words are written" % (p.name, prm.name))
-                values[v] = {a: x for a, x in w.items() if x != base[a]}
-            touched = {a for d in values.values() for a in d}
+            exp = {"name": prm.name, "default": prm.default, "lo": prm.lo, "hi": prm.hi, "desc": prm.desc}
+            exp.update(param_words(image, fwmap, p, prm, base))
+            touched = set(exp.get("linear", {})) | {a for d in exp.get("values", {}).values() for a in d}
             if touched & seen:
                 raise patcher.PatchError("%s: parameters share words, not exportable" % p.name)
             seen |= touched
-            entry["params"].append({"name": prm.name, "default": prm.default, "lo": prm.lo, "hi": prm.hi,
-                                    "desc": prm.desc, "values": values})
+            entry["params"].append(exp)
         if p.weaks or any(h.unless for h in p.hooks):
             # .weak entry points and `unless` hooks: the words that change (null: not written) when another
             # patch is selected too
@@ -82,11 +110,53 @@ def export_data(image, fwmap, names=None):
     return data
 
 
+# the modules whose code decides what the export holds (a change to them changes the hash too)
+HASHED_MODULES = ("asm", "container", "fwmap", "isa", "patcher", "soundbank", "web")
+
+
+def source_hash(fwmap):
+    """SHA-256 of what a target's export is made from: the official file's hash, every file of the target
+    (target.map, patches) and the exporting code. The first line of web/targets/<id>.js carries it, so a
+    test can tell the committed file is current without exporting (a minute of builds)."""
+    h = hashlib.sha256(fwmap.sha256.encode())
+    files = [os.path.join(r, f) for r, _, fs in os.walk(fwmap.dir) for f in fs if "__pycache__" not in r]
+    pkg = os.path.dirname(os.path.abspath(__file__))
+    files += [os.path.join(pkg, m + ".py") for m in HASHED_MODULES]
+    base = os.path.dirname(pkg)
+    for path in sorted(files):
+        h.update(os.path.relpath(path, base).replace(os.sep, "/").encode() + b"\0")
+        with open(path, "rb") as f:
+            h.update(hashlib.sha256(f.read()).digest())
+    return h.hexdigest()
+
+
+def committed_hash(fwmap, web_dir=WEB_DIR):
+    """The sources hash on the first line of the committed web/targets/<id>.js, None without one."""
+    try:
+        with open(os.path.join(web_dir, "targets", fwmap.id + ".js"), encoding="utf-8") as f:
+            m = re.search(r"sources ([0-9a-f]{64})", f.readline())
+    except OSError:
+        return None
+    return m and m.group(1)
+
+
+def current_target_js(image, fwmap, web_dir=WEB_DIR):
+    """The committed web/targets/<id>.js when its sources hash is current, else a fresh export."""
+    if committed_hash(fwmap, web_dir) == source_hash(fwmap):
+        with open(os.path.join(web_dir, "targets", fwmap.id + ".js"), encoding="utf-8") as f:
+            return f.read()
+    return target_js(image, fwmap)
+
+
 def target_js(image, fwmap, names=None):
-    data = json.dumps(export_data(image, fwmap, names), separators=(",", ":"))
-    return ("// %s %s: generated by `python3 -m nuxdsp web` from targets/%s, do not edit.\n"
-            "(globalThis.NUXDSP_TARGETS = globalThis.NUXDSP_TARGETS || []).push(%s);\n"
-            % (fwmap.device, fwmap.firmware, fwmap.id, data))
+    # a line per patch (and per other top-level key): a change to one patch is a one-line diff
+    data = export_data(image, fwmap, names)
+    dump = lambda x: json.dumps(x, separators=(",", ":"))
+    lines = ["%s:%s" % (dump(k), dump(v)) for k, v in data.items() if k != "patches"]
+    lines.append('"patches":[\n' + ",\n".join(dump(e) for e in data["patches"]) + "]")
+    return ("// %s %s: generated by `python3 -m nuxdsp web` from targets/%s, do not edit. sources %s\n"
+            "(globalThis.NUXDSP_TARGETS = globalThis.NUXDSP_TARGETS || []).push({\n%s});\n"
+            % (fwmap.device, fwmap.firmware, fwmap.id, source_hash(fwmap), ",\n".join(lines)))
 
 
 def pack_js(name):
@@ -139,7 +209,8 @@ def update_index(web_dir=WEB_DIR):
 
 def write_target(image, fwmap, web_dir=WEB_DIR, names=None):
     path = os.path.join(web_dir, "targets", fwmap.id + ".js")
+    js = target_js(image, fwmap, names)  # before opening: an interrupted export leaves the old file
     with open(path, "w", encoding="utf-8") as f:
-        f.write(target_js(image, fwmap, names))
+        f.write(js)
     update_index(web_dir)
     return path

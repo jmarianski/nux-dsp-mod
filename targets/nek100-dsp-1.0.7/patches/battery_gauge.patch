@@ -1,0 +1,459 @@
+.patch battery_gauge
+
+.title "Battery % counted from what the instrument does (asleep, awake, speaker off, charging), kept across power-off and slowly corrected by the reading: no jump at power-on"
+.requires battery_percent extra_menu
+; battery_percent shows the reading along a curve; the reading recovers after a rest and starts low at power-on,
+; so the number jumps (telemetry 2026-10-26: 35% -> 56% at one power-on). Here the shown value is a charge q
+; (hundredths of a percent) that goes down every second by a rate for the state it is in, measured from the
+; telemetry log (three charges, 2026-10-16..26: asleep ~1.9 %/h, awake with the speaker ~4.6 %/h; the speaker off
+; in between, from the watt meter: 0.5 / 1.0 / 2.1 W) and up while charging (~3.1 h from empty to the 955
+; plateau), 100% when the charger reports full. Speaker off is telemetry's view of it (tl_ampoff); without
+; telemetry awake always counts as with the speaker.
+; Once a minute, with the reading trusted (on battery, START s after power-on or unplugging, HOLD s in the same
+; asleep / awake state), q moves towards the curve's value by 1/2^GAIN_SH of the difference (1/2^GAIN_LOW_SH below
+; LOW %, where the curve is steep and the end is near); further apart than JUMP % it takes the curve's value
+; (charged while switched off, a wrong rate).
+; Power-off by the power key or Auto Off (extra_menu's st_off; not on low battery) writes q to the flash page
+; 0x707 (0x701 + 6, next to the Autosave page; nothing uses it): magic, q, q + 0x5a5a. Power-on (st_boot) reads it;
+; the first minute's reading only checks it (JUMP), so the number shown at power-on is the one shown before.
+; Without a valid page the first minute shows battery_percent's value, then q starts from the curve.
+; On battery the shown number still never goes up; when it changes, battery_tick is made to redraw it (the last
+; drawn power source [0x0019] is spoilt, so its own check redraws on the next pass).
+; RAM 0x641c..0x641f and 0x6424..0x642f (battery_percent's area, unused by it; after init_all's copy they hold
+; small constants, never the magic).
+.param R_SLEEP 190 1 3000 "Battery gauge: drain asleep, hundredths of a percent per hour"
+.param R_AWAKE 460 1 3000 "Battery gauge: drain awake with the speaker on, hundredths of a percent per hour"
+.param R_SPKOFF 275 1 3000 "Battery gauge: drain awake with the speaker off (needs telemetry to tell), hundredths of % per hour"
+.param R_CHARGE 3200 100 20000 "Battery gauge: charging, hundredths of a percent per hour"
+.param JUMP 25 5 100 "Battery gauge: further from the curve than this many percent, take the curve's value"
+.param LOW 20 0 60 "Battery gauge: below this percent the correction is stronger"
+.param GAIN_SH 7 1 15 "Battery gauge: per minute, 1/2^this of the difference to the curve"
+.param GAIN_LOW_SH 4 1 15 "Battery gauge: the same below LOW"
+.param HOLD 300 0 3600 "Battery gauge: seconds in the same asleep / awake state before the reading is trusted"
+
+.code 0x1a280
+.equ bg_slp, 0x641c           ; asleep as last seen
+.equ bg_st, 0x641d            ; seconds in that state (up to HOLD)
+.equ bg_r1, 0x641e            ; caller's r1
+.equ bg_up, 0x641f            ; bg_diff: 1 the curve is above q
+.equ bg_q, 0x6424             ; charge, hundredths of a percent (0..10000)
+.equ bg_acc, 0x6425           ; drain: rate per second, a hundredth of a percent at 3600
+.equ bg_cacc, 0x6426          ; charging, the same
+.equ bg_sec, 0x6427           ; 10 ms ticks towards a second
+.equ bg_min, 0x6428           ; seconds towards a minute
+.equ bg_mag, 0x6429           ; BG_MAGIC once st_boot has set things up
+.equ bg_ok, 0x642a            ; 0 no q yet, 1 q from flash (to be checked), 2 running
+.equ bg_shown, 0x642b         ; on battery the lowest shown (0xffff none)
+.equ bg_drawn, 0x642c         ; the value last put on the status bar
+.equ bg_v, 0x642d             ; the curve's percent (bp_pct, before its never-up rule)
+.equ bg_d, 0x642e             ; |curve - q|; at boot a word read from flash
+.equ bg_dt, 0x642f            ; bg_clk's r7
+.equ BG_MAGIC, 0x6267
+.equ BG_CHECK, 0x5a5a
+.equ bg_bpval, 0x6402         ; battery_percent's bp_val
+.equ bg_bpmag, 0x6406         ; battery_percent's bp_mag (0x5aa5: START is over, on battery)
+.equ bg_tlm, 0x6330           ; telemetry's tl_magic (0x4c47 running)
+.equ bg_tla, 0x6335           ; telemetry's tl_ampoff (1 speaker off)
+.equ bg_lastsrc, 0x0019       ; battery_tick: power source last drawn
+
+; extra_menu's st_boot (after the flash is set up): read page 0x707
+bg_boot:
+    mov   r7, #0
+    st    [bg_ok], r7
+    st    [bg_acc], r7
+    st    [bg_cacc], r7
+    st    [bg_sec], r7
+    st    [bg_min], r7
+    st    [bg_slp], r7
+    st    [bg_st], r7
+    li    r7, #0xffff
+    st    [bg_shown], r7
+    st    [bg_drawn], r7
+    call  0x07b2d
+    mov   r7, #0
+    li    r6, #0x0707
+    call  0x07bf1             ; start reading page r6 at word r7
+    call  flash_get_word      ; r0 = next word (r0..r5 not kept)
+    mov   r7, r0
+    st    [bg_d], r7
+    call  flash_get_word
+    mov   r7, r0
+    st    [bg_q], r7
+    call  flash_get_word
+    mov   r7, r0
+    st    [bg_v], r7
+    call  0x07b2d
+    ld    r7, [bg_d]
+    li    r6, #BG_MAGIC
+    cmp   r7, r6
+    bne   .bt_none
+    ld    r7, [bg_q]
+    li    r6, #10001
+    cmp   r7, r6
+    blt   .bt_chk
+    jmp   .bt_none
+.bt_chk:
+    li    r6, #BG_CHECK
+    add   r7, r6
+    ld    r6, [bg_v]
+    cmp   r7, r6
+    bne   .bt_none
+    mov   r7, #1
+    st    [bg_ok], r7
+    li    r7, #0xffff         ; the boot screen drew the reading's number: redraw with the saved one
+    st    [bg_lastsrc], r7
+.bt_none:
+    li    r7, #BG_MAGIC
+    st    [bg_mag], r7
+    ret
+
+; extra_menu's st_off (power key, Auto Off), before the telemetry's last page: q to page 0x707. User5's RAM
+; copy is the buffer, as for Autosave (not needed any more at power-off).
+bg_save:
+    ld    r7, [bg_mag]
+    li    r6, #BG_MAGIC
+    cmp   r7, r6
+    bne   .sv_out
+    ld    r7, [bg_ok]
+    cmp   r7, #0
+    beq   .sv_out
+    ld    r7, [batt_low]      ; the battery may die while the page is written
+    cmp   r7, #0
+    bne   .sv_out
+    li    r7, #0xffff
+    li    r1, #user_presets+124
+    mov   r6, #0
+.sv_fill:
+    st    [r1+0], r7
+    add   r1, #1
+    add   r6, #1
+    cmp   r6, #31
+    blt   .sv_fill
+    li    r1, #user_presets+124
+    li    r7, #BG_MAGIC
+    st    [r1+0], r7
+    ld    r7, [bg_q]
+    st    [r1+1], r7
+    li    r6, #BG_CHECK
+    add   r7, r6
+    st    [r1+2], r7
+    push  #6                  ; page 0x701 + 6
+    push  #user_presets+124
+    ccall preset_write_flash
+.sv_out:
+    ret
+
+; battery_percent's bp_clk, every tick: r7 = 10 ms gone (kept); r1 kept
+bg_clk:
+    st    [bg_dt], r7
+    mov   r7, r1
+    st    [bg_r1], r7
+    ld    r7, [bg_mag]
+    li    r6, #BG_MAGIC
+    cmp   r7, r6
+    bne   .ck_out
+    ld    r7, [bg_sec]
+    ld    r6, [bg_dt]
+    add   r7, r6
+    st    [bg_sec], r7
+.ck_loop:
+    ld    r7, [bg_sec]
+    cmp   r7, #100
+    blt   .ck_out
+    li    r6, #-100
+    add   r7, r6
+    st    [bg_sec], r7
+    call  bg_second
+    jmp   .ck_loop
+.ck_out:
+    ld    r7, [bg_r1]
+    mov   r1, r7
+    ld    r7, [bg_dt]
+    ret
+
+; once a second: the state's rate, the settle counter, once a minute the correction
+bg_second:
+    call  bp_asleep           ; the settle counter
+    ld    r6, [bg_slp]
+    cmp   r6, r7
+    beq   .s_same
+    st    [bg_slp], r7
+    mov   r7, #0
+    st    [bg_st], r7
+    jmp   .s_src
+.s_same:
+    ld    r7, [bg_st]
+    li    r6, #HOLD
+    cmp   r7, r6
+    blt   .s_inc
+    jmp   .s_src
+.s_inc:
+    add   r7, #1
+    st    [bg_st], r7
+.s_src:
+    ld    r7, [power_src]
+    cmp   r7, #2
+    beq   .s_chg
+    cmp   r7, #1
+    bne   .s_min
+    call  bg_rate
+    ld    r6, [bg_acc]
+    add   r7, r6
+    st    [bg_acc], r7
+.s_dr:
+    ld    r7, [bg_acc]
+    li    r6, #3600
+    cmp   r7, r6
+    blt   .s_min
+    li    r6, #-3600
+    add   r7, r6
+    st    [bg_acc], r7
+    ld    r7, [bg_q]
+    cmp   r7, #0
+    beq   .s_dr
+    li    r6, #-1
+    add   r7, r6
+    st    [bg_q], r7
+    jmp   .s_dr
+.s_chg:
+    ld    r7, [charge_full]
+    cmp   r7, #1
+    bne   .s_cc
+    li    r7, #10000
+    st    [bg_q], r7
+    mov   r7, #0
+    st    [bg_cacc], r7
+    jmp   .s_min
+.s_cc:
+    ld    r7, [bg_cacc]
+    li    r6, #R_CHARGE
+    add   r7, r6
+    st    [bg_cacc], r7
+.s_up:
+    ld    r7, [bg_cacc]
+    li    r6, #3600
+    cmp   r7, r6
+    blt   .s_min
+    li    r6, #-3600
+    add   r7, r6
+    st    [bg_cacc], r7
+    ld    r7, [bg_q]
+    li    r6, #9900           ; at most 99% until the charger reports full
+    cmp   r7, r6
+    blt   .s_add
+    jmp   .s_up
+.s_add:
+    add   r7, #1
+    st    [bg_q], r7
+    jmp   .s_up
+.s_min:
+    ld    r7, [bg_min]
+    add   r7, #1
+    st    [bg_min], r7
+    cmp   r7, #60
+    blt   .s_out
+    mov   r7, #0
+    st    [bg_min], r7
+    call  bg_fix
+    call  bg_redraw
+.s_out:
+    ret
+
+; r7 = the drain now, hundredths of a percent per hour (on battery)
+bg_rate:
+    call  bp_asleep
+    cmp   r7, #0
+    beq   .r_awake
+    li    r7, #R_SLEEP
+    ret
+.r_awake:
+    ld    r7, [bg_tlm]
+    li    r6, #0x4c47
+    cmp   r7, r6
+    bne   .r_on
+    ld    r7, [bg_tla]
+    cmp   r7, #1
+    bne   .r_on
+    li    r7, #R_SPKOFF
+    ret
+.r_on:
+    li    r7, #R_AWAKE
+    ret
+
+; once a minute: the first one after power-on checks q (or sets it), later ones correct it
+bg_fix:
+    ld    r7, [power_src]
+    cmp   r7, #0
+    beq   .f_out
+    ld    r7, [batt_adc]
+    li    r6, #400            ; no reading yet
+    cmp   r7, r6
+    blt   .f_out
+    ld    r7, [bg_ok]
+    cmp   r7, #2
+    beq   .f_run
+    call  bp_pct              ; bg_v (on the charger without its offset)
+    ld    r7, [bg_ok]
+    cmp   r7, #1
+    bne   .f_set
+    call  bg_diff
+    li    r6, #JUMP*100
+    cmp   r7, r6
+    blt   .f_ok
+.f_set:
+    call  bg_vq
+.f_ok:
+    mov   r7, #2
+    st    [bg_ok], r7
+.f_out:
+    ret
+.f_run:
+    ld    r7, [power_src]
+    cmp   r7, #1
+    bne   .f_out
+    ld    r7, [bg_bpmag]
+    li    r6, #0x5aa5
+    cmp   r7, r6
+    bne   .f_out              ; just switched on or unplugged
+    ld    r7, [bg_st]
+    li    r6, #HOLD
+    cmp   r7, r6
+    blt   .f_out              ; just fell asleep or woke up
+    call  bp_pct
+    call  bg_diff
+    li    r6, #JUMP*100
+    cmp   r7, r6
+    blt   .f_gain
+    jmp   bg_vq
+.f_gain:
+    ld    r7, [bg_v]
+    cmp   r7, #LOW
+    blt   .f_low
+    ld    r7, [bg_q]
+    li    r6, #LOW*100
+    cmp   r7, r6
+    blt   .f_low
+    ld    r7, [bg_d]
+    shr   r7, GAIN_SH
+    jmp   .f_add
+.f_low:
+    ld    r7, [bg_d]
+    shr   r7, GAIN_LOW_SH
+.f_add:
+    ld    r6, [bg_up]
+    cmp   r6, #0
+    beq   .f_dn
+    ld    r6, [bg_q]
+    add   r7, r6
+    st    [bg_q], r7
+    ret
+.f_dn:
+    ld    r6, [bg_q]
+    sub   r6, r7
+    st    [bg_q], r6
+    ret
+
+; r7 = bg_d = |curve * 100 - q|, bg_up = 1 when the curve is above
+bg_diff:
+    ld    r7, [bg_v]
+    mov   r6, #100
+    mul   r6
+    ld    r6, [bg_q]
+    cmp   r7, r6
+    blt   .d_dn
+    sub   r7, r6
+    st    [bg_d], r7
+    mov   r6, #1
+    st    [bg_up], r6
+    ret
+.d_dn:
+    mov   r6, r7
+    ld    r7, [bg_q]
+    sub   r7, r6
+    st    [bg_d], r7
+    mov   r6, #0
+    st    [bg_up], r6
+    ret
+
+; q = the curve's value
+bg_vq:
+    ld    r7, [bg_v]
+    mov   r6, #100
+    mul   r6
+    st    [bg_q], r7
+    ret
+
+; battery_percent's bp_pct, before its never-up rule: the curve's percent
+bg_raw:
+    ld    r7, [bg_bpval]
+    st    [bg_v], r7
+    ret
+
+; r7 = q in whole percent, rounded (uses r6)
+bg_pct:
+    ld    r6, [bg_q]
+    add   r6, #50
+    mov   r7, #0
+.p_loop:
+    cmp   r6, #100
+    blt   .p_out
+    addi  r6, #-100
+    add   r7, #1
+    jmp   .p_loop
+.p_out:
+    ret
+
+; battery_percent's bp_draw, after bp_pct: bp_val = q (on battery never up)
+bg_show:
+    ld    r7, [bg_mag]
+    li    r6, #BG_MAGIC
+    cmp   r7, r6
+    bne   .w_out
+    ld    r7, [bg_ok]
+    cmp   r7, #0
+    beq   .w_out
+    ld    r7, [power_src]
+    cmp   r7, #0
+    beq   .w_out
+    call  bg_pct
+    ld    r6, [power_src]
+    cmp   r6, #1
+    beq   .w_bat
+    li    r6, #0xffff         ; charger: free again once unplugged
+    st    [bg_shown], r6
+    jmp   .w_set
+.w_bat:
+    ld    r6, [bg_shown]
+    cmp   r7, r6
+    blt   .w_low
+    mov   r7, r6
+    jmp   .w_set
+.w_low:
+    st    [bg_shown], r7
+.w_set:
+    st    [bg_bpval], r7
+    st    [bg_drawn], r7
+.w_out:
+    ret
+
+; once a minute: when the number to show changed, make battery_tick redraw it
+bg_redraw:
+    ld    r7, [bg_ok]
+    cmp   r7, #0
+    beq   .rd_out
+    call  bg_pct
+    ld    r6, [bg_drawn]
+    cmp   r7, r6
+    beq   .rd_out
+    ld    r6, [power_src]
+    cmp   r6, #1
+    bne   .rd_go
+    ld    r6, [bg_shown]
+    cmp   r6, r7
+    blt   .rd_out             ; on battery it would not go up
+.rd_go:
+    li    r7, #0xffff
+    st    [bg_lastsrc], r7
+.rd_out:
+    ret
+.end

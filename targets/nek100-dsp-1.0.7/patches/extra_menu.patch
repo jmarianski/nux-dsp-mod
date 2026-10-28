@@ -114,6 +114,8 @@
 .weak tl_key ex_ret
 .weak tl_amp ex_ret
 .weak bp_clk ex_ret           ; battery_percent: every tick, r7 = tm_dt
+.weak bg_boot ex_ret          ; battery_gauge: at power-on, reads its flash page
+.weak bg_save ex_ret          ; battery_gauge: at power-off (power key, Auto Off), writes it
 .weak dm_start ex_ret         ; doom-piano: Extra's item 7 exists when dm_start != ex_ret
 .weak dm_icon ex_ret          ;   draws item 7's icon (page 3)
 .weak dm_panel ex_ret         ;   key_event, before the dispatch: may change the key ([fp+3]) to none; r6 = r7 = 0 in and out
@@ -240,7 +242,7 @@
 .equ amp_cnt, 0x6a45         ; 10 ms since the last sound (at most 30000)
 .equ tm_now, 0x63c0           ; clock: 10 ms since power-on, wraps
 .equ tm_dt, 0x63c1            ; clock: 10 ms per tick now (1 or SLEEP_W)
-.equ nt_ped, 0x63c2           ; 1: the pedal (CC 64 from the keyboard) down
+.equ nt_ped, 0x63c2           ; 1: CC 64 from the keyboard down (the pedal itself is pedal_state: controller 0x74 from the MCU)
 .equ nt_s6, 0x63c3
 .equ nt_s7, 0x63c4
 .equ nt_m, 0x63c5             ; nt_bit: the key's bit
@@ -1035,6 +1037,7 @@ st_off:
     push  #user_presets+124
     ccall preset_write_flash
 .o_off:
+    call  bg_save
     call  tl_close
     ccall power_off
     ld    r7, [text_buf+13]
@@ -1048,6 +1051,7 @@ st_off:
 ; otherwise what boot_preset loaded stays). User5's RAM copy is the buffer and is read back after.
 st_boot:
     call  tl_boot
+    call  bg_boot
     mov   r7, #0              ; menu state, backlight counter (RAM is not cleared at power-on)
     st    [ex_ui], r7
     st    [ex_pg], r7
@@ -2301,6 +2305,8 @@ amp_chk:
     ld    r6, [nt_ped]        ; Sustain key or pedal: at least SUS_TAIL
     ld    r1, [sustain_on]
     or    r6, r1
+    ld    r1, [pedal_state]   ; the pedal: the MCU sends it as controller 0x74 on channel 16, mcu_cc -> pedal_in
+    or    r6, r1              ;   keeps it here (127 down, 0 up); it never comes as CC 64, so nt_ped misses it
     cmp   r6, #0
     beq   .m_lim
     li    r6, #SUS_TAIL*50
@@ -2404,6 +2410,9 @@ nt_cc:
     st    [nt_s6], r6
     st    [nt_s7], r7
     ld    r1, [fp+15]
+    ld    r7, [r1+2]
+    cmp   r7, #0xf            ; channel 16 is the MCU's (mcu_cc): there controller 64 is not the pedal (0x21f8)
+    beq   nt_ret
     ld    r7, [r1+4]
     cmp   r7, #0x40
     bne   nt_ret

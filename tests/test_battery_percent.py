@@ -15,6 +15,7 @@ DEFAULTS = {"EMPTY": 760, "STEP1": 23, "STEP2": 16, "STEP3": 12, "STEP4": 10, "S
 SL_MAGIC, SL_ON, BP_HOLD, BP_SLP, TM_DT = 0x6a3f, 0x6a41, 0x640f, 0x640e, 0x63c1
 BP_MAG, BP_BOOT = 0x6406, 0x641b
 SETTLED = DEFAULTS["SETTLE"] * 100
+STUB = 0x9000                                   # battery_gauge's entry points: a bare ret
 
 
 def sag(x, params):
@@ -44,9 +45,11 @@ class Runner:
         m = fwmap.load()
         p = patcher.load("battery_percent", m)
         self.params = dict(DEFAULTS, **params)
-        self.syms = dict(m.symbols(), **self.params)
+        self.syms = dict(m.symbols(), bg_clk=STUB, bg_raw=STUB, bg_show=STUB, **self.params)
         words, self.labels = asm.assemble(p.code, self.syms, origin=0x1a280, label_prefix=p.name)
-        self.s = sim.Sim(Code(words))
+        code = Code(words)
+        code[STUB] = 0xD1CA
+        self.s = sim.Sim(code)
 
     def pct(self, adc, src=1, asleep=False, hold=SETTLED):
         s, y = self.s, self.syms
