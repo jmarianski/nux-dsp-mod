@@ -17,8 +17,11 @@ def s16(v):
 
 
 class Sim:
-    def __init__(self, code_words, ram=None, fp=0x7000):
+    def __init__(self, code_words, ram=None, fp=0x7000, arity=None):
         self.code = code_words          # program memory (the image words)
+        self.arity = dict(arity or {})  # ccall target -> argument words it pops (others: SimError)
+        self.pushed = []                # words pushed for ccalls not made yet
+        self.ccalls = []                # (target, args in push order) of every ccall; the callee is not run
         self.ram = dict(ram or {})      # data memory
         self.r = [0] * 8
         self.fp = fp
@@ -76,6 +79,8 @@ class Sim:
                 r[a[0]] = self.code[(r[1] + a[1]) & 0xFFFF]
             elif op in ("ld", "st"):
                 reg, m = a
+                if m[0] == "fp" and self.fp is None:
+                    raise SimError("[fp+%d] after a ccall (at %#x)" % (m[1], pc))
                 ea = {"abs": 0, "r1": r[1], "fp": self.fp}[m[0]] + m[1]
                 if op == "ld":
                     r[reg] = self.rd(ea)
@@ -95,6 +100,20 @@ class Sim:
             elif op == "call":
                 stack.append(nxt)
                 nxt = a[0][1]
+            elif op == "push":
+                v = a[0][1] if isinstance(a[0], tuple) else r[a[0]]
+                self.pushed.append(v & 0xFFFF)
+            elif op == "ccall":
+                t = a[0][1]
+                if t not in self.arity:
+                    raise SimError("ccall %#x: arity unknown (at %#x)" % (t, pc))
+                n = self.arity[t]
+                if n > len(self.pushed):
+                    raise SimError("ccall %#x: %d arguments, %d pushed" % (t, n, len(self.pushed)))
+                args = self.pushed[len(self.pushed) - n:]
+                del self.pushed[len(self.pushed) - n:]
+                self.ccalls.append((t, args))
+                self.fp = None          # ccall clobbers fp: a later [fp+k] without recomputing it fails
             else:
                 raise SimError("%s not simulated (at %#x)" % (op, pc))
             pc = nxt
