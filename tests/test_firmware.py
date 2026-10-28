@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from nuxdsp import asm, container, disasm, extract, fwmap, patcher, sim, web
+from tests import slow
 
 FW = os.environ.get("NEK100_FW")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # touch_custom (opt-in): run on hardware with the default knee.
 # sustain_midi_out (opt-in): earlier versions hooked the wrong place (the pedal reached USB stock already, not the dongle);
 # this one (pedal's cc_out also to port2_out_packet) not yet run on hardware.
-ALL_SHA = "c48d69ed4cd6eee099db5547de668faabad6e65b520f0989c3016edde3bdc08c"
+ALL_SHA = "2bfce04e8717d086c06d6266e551e0a1e7cb1e2879f239d33fc854e95feecc20"
 
 
 def padded(w, n):
@@ -39,9 +40,9 @@ class TestFirmware(unittest.TestCase):
         cls._js = None
 
     def target_js(self):
-        # the web export builds every value of every parameter: once for all tests
+        # the committed export when current (sources hash), else built once for all tests
         if type(self)._js is None:
-            type(self)._js = web.target_js(self.img, self.map)
+            type(self)._js = web.current_target_js(self.img, self.map)
         return self._js
 
     def test_official(self):
@@ -91,6 +92,7 @@ class TestFirmware(unittest.TestCase):
         out, _ = patcher.build(self.img, self.map, patcher.resolve_patches(patcher.available()))
         self.assertEqual(container.sha256(out), ALL_SHA)
 
+    @slow
     def test_subsets_use_canonical_layout(self):
         full, _ = patcher.build(self.img, self.map, patcher.resolve_patches(patcher.available()))
         orig, fw = container.words(self.img), container.words(full)
@@ -135,8 +137,14 @@ class TestFirmware(unittest.TestCase):
         ow = container.words(out)
         orig = padded(container.words(self.img), len(ow))
         self.assertEqual(ow[0xc1c:0xc1e], orig[0xc1c:0xc1e])   # low battery: the stock power_off
+        # battery_gauge reads (never writes) tl_magic and tl_ampoff: the speaker's state, trusted only while
+        # tl_magic says the log runs; nothing else may touch the log's RAM
+        gauge = set(web.patch_words(self.img, self.map, patcher.load("battery_gauge", self.map))) \
+            if "battery_gauge" in names else set()
         for a in range(len(ow) - 1):   # no load or store of the log's RAM (0x6330..0x638f)
             if ow[a] != orig[a] and (ow[a] & 0xf8ef) == 0xf880:   # ld / st [abs] that we wrote
+                if a in gauge and ow[a + 1] in (0x6330, 0x6335) and not ow[a] & 0x10:   # ld, not st
+                    continue
                 self.assertFalse(0x6330 <= ow[a + 1] < 0x6390, "@%#x" % a)
 
     def test_extra_menu_detects_patches(self):
@@ -146,8 +154,10 @@ class TestFirmware(unittest.TestCase):
         with open(path) as f:
             rows = re.findall(r"\.dw\s+(\d), (0x[0-9a-f]+), (0x[0-9a-f]+), pp_n\d+, pp_p\d+\s+; (\w+)", f.read())
         # short_welcome only changes an initial RAM value (a counter that runs down to 0): nothing to look at later;
-        # sustain_midi_out is not on the screen yet: its row and name need bank-0 pool space, which is used up
-        listed = [n for n in patcher.available(self.map) if n not in ("short_welcome", "sustain_midi_out")]
+        # sustain_midi_out and battery_gauge are not on the screen yet: a row and a name need bank-0 pool space,
+        # which is used up
+        listed = [n for n in patcher.available(self.map)
+                  if n not in ("short_welcome", "sustain_midi_out", "battery_gauge")]
         self.assertEqual(sorted(r[3] for r in rows), sorted(listed))
         r0 = self.map.ramdata[0]
         for kind, addr, stock, name in rows:
@@ -215,7 +225,10 @@ class TestFirmware(unittest.TestCase):
                                  "touch_off": {"OFF_VELOCITY": 90}}),
                      ({}, {"version_tag": {}, "polish_font": {}, "lang_pl": {}}),
                      ({"CUSTOM_KNEE": 48}, {"touch_off": {}, "touch_custom": {"CUSTOM_KNEE": 48}}),
-                     ({}, {"extra_menu": {}, "telemetry": {}}), ({}, {"extra_menu": {}}), ({}, {"telemetry": {}})]
+                     ({}, {"extra_menu": {}, "telemetry": {}}), ({}, {"extra_menu": {}}), ({}, {"telemetry": {}}),
+                     # parameters exported as a linear rule (web.param_words), away from the values it was checked at
+                     ({"SUS_TAIL": 77, "SLEEP_GRACE": 123, "SLEEP_W": 201},
+                      {"extra_menu": {"SUS_TAIL": 77, "SLEEP_GRACE": 123, "SLEEP_W": 201}})]
             for params, sel in cases:
                 names = list(sel) or patcher.available()
                 sel = sel or {n: {} for n in names}
@@ -261,10 +274,10 @@ class TestFirmware(unittest.TestCase):
                 self.assertEqual(f.read(), cli)
 
     def test_committed_web_data_is_current(self):
-        path = os.path.join(web.WEB_DIR, "targets", self.map.id + ".js")
-        with open(path, encoding="utf-8") as f:
-            self.assertEqual(f.read(), self.target_js(),
-                             "run: python3 -m nuxdsp web %s" % self.map.input)
+        # by the sources hash on its first line, not by exporting again (a minute of builds); that the
+        # export itself is right is test_web_matches_cli's (the page against the CLI)
+        self.assertTrue(web.committed_hash(self.map) == web.source_hash(self.map),
+                        "web/targets/%s.js is stale, run: python3 -m nuxdsp web %s" % (self.map.id, self.map.input))
 
     def test_detected_by_sha(self):
         self.assertEqual(fwmap.find(container.sha256(self.img)).id, self.map.id)
